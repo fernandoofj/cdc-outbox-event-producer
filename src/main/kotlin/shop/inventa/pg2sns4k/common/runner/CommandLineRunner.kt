@@ -1,0 +1,67 @@
+package shop.inventa.pg2sns4k.common.runner
+
+import com.amazonaws.auth.AWSStaticCredentialsProvider
+import com.amazonaws.auth.BasicAWSCredentials
+import com.amazonaws.client.builder.AwsClientBuilder
+import com.amazonaws.services.sns.AmazonSNSClientBuilder
+import com.fasterxml.jackson.databind.ObjectMapper
+import io.awspring.cloud.messaging.core.NotificationMessagingTemplate
+import shop.inventa.pg2sns4k.common.aws.sns.SNSTransactionalProducer
+import shop.inventa.pg2sns4k.common.jackson.MappingJackson2MessageConverterCustom
+import shop.inventa.pg2sns4k.common.replication.config.PostgresConfiguration
+import shop.inventa.pg2sns4k.common.replication.config.ReplicationConfiguration
+import shop.inventa.pg2sns4k.common.workflow.SlotReaderSNSProducer
+import java.io.FileInputStream
+import java.util.Properties
+
+@Suppress("TooGenericExceptionCaught")
+class CommandLineRunner : Runnable {
+
+    override fun run() {
+
+        val properties = Properties()
+
+        val inputStream = FileInputStream("src/main/resources/application.properties")
+        properties.load(inputStream)
+
+        val host = properties.getProperty("spring.datasource.host")
+        val port = properties.getProperty("spring.datasource.port")
+        val username = properties.getProperty("spring.datasource.username")
+        val password = properties.getProperty("spring.datasource.password")
+        val database = properties.getProperty("spring.datasource.database")
+        val slotName = properties.getProperty("replication.datasource.slot")
+        val awsAccessKey = properties.getProperty("cloud.aws.credentials.access-key")
+        val secretKey = properties.getProperty("cloud.aws.credentials.secret-key")
+        val region = properties.getProperty("cloud.aws.region.static")
+        val localStackUrl = properties.getProperty("cloud.aws.localstack.url")
+
+        val notificationMessagingTemplate = NotificationMessagingTemplate(
+            AmazonSNSClientBuilder
+                .standard()
+                .withEndpointConfiguration(
+                    AwsClientBuilder.EndpointConfiguration(localStackUrl, region)
+                )
+                .withCredentials(
+                    AWSStaticCredentialsProvider(
+                        BasicAWSCredentials(awsAccessKey, secretKey)
+                    )
+                )
+                .build()
+        ).apply {
+            messageConverter = MappingJackson2MessageConverterCustom(ObjectMapper()).jackson2MessageConverter()
+        }
+
+        SlotReaderSNSProducer(
+            PostgresConfiguration(host, port, database, username, password),
+            ReplicationConfiguration(slotName),
+            SNSTransactionalProducer(notificationMessagingTemplate)
+        ).startStreaming()
+    }
+
+    companion object {
+        @JvmStatic
+        fun main(args: Array<String>) {
+            CommandLineRunner().run()
+        }
+    }
+}

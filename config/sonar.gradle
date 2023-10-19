@@ -1,0 +1,9 @@
+sonarqube {
+    properties {
+        property "sonar.projectName", "kotlin-postgres-cdc-to-sns-module"
+        property "sonar.projectKey", "inventa-shop_kotlin-postgres-cdc-to-sns-module"
+        property "sonar.organization", "inventa-shop"
+        property "sonar.host.url", "https://sonarcloud.io"
+        property "sonar.kotlin.detekt.reportPaths", "build/reports/detekt/detekt.xml"
+    }
+}
