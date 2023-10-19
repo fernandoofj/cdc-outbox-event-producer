@@ -1,1 +1,1 @@
-rootProject.name = "pg2sns4k"
+rootProject.name = "kotlin-postgres-cdc-to-sns-module"
