@@ -63,11 +63,11 @@ class PostgresConnector(
                 if (rs.next()) {
                     val lsn: String = rs.getString(1)
                     return LogSequenceNumber.valueOf(lsn)
-                } else {
-                    return LogSequenceNumber.INVALID_LSN
                 }
             }
         }
+
+        return LogSequenceNumber.INVALID_LSN
     }
 
     fun setStreamLsn(lsn: LogSequenceNumber?) {
