@@ -1,0 +1,1 @@
+# kotlin-postgres-cdc-to-sns-module
