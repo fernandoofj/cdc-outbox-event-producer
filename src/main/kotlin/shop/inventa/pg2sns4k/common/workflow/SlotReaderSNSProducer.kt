@@ -10,6 +10,7 @@ import shop.inventa.pg2sns4k.common.aws.sns.SNSTransactionalProducer
 import shop.inventa.pg2sns4k.common.aws.sns.dto.SNSMessage
 import shop.inventa.pg2sns4k.common.replication.config.PostgresConfiguration
 import shop.inventa.pg2sns4k.common.replication.config.ReplicationConfiguration
+import shop.inventa.pg2sns4k.common.replication.connector.DefaultConnectionProvider
 import shop.inventa.pg2sns4k.common.replication.connector.PostgresConnector
 import shop.inventa.pg2sns4k.common.replication.model.MessageChange
 import shop.inventa.pg2sns4k.common.replication.model.SlotMessage
@@ -152,7 +153,7 @@ class SlotReaderSNSProducer(
         postgresConfiguration: PostgresConfiguration,
         replicationConfiguration: ReplicationConfiguration
     ): PostgresConnector {
-        return PostgresConnector(postgresConfiguration, replicationConfiguration)
+        return PostgresConnector(postgresConfiguration, replicationConfiguration, DefaultConnectionProvider())
     }
 
     companion object {

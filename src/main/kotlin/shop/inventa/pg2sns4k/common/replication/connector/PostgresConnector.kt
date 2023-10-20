@@ -10,14 +10,14 @@ import shop.inventa.pg2sns4k.common.replication.config.PostgresConfiguration
 import shop.inventa.pg2sns4k.common.replication.config.ReplicationConfiguration
 import java.nio.ByteBuffer
 import java.sql.Connection
-import java.sql.DriverManager
 import java.sql.SQLException
 import java.util.Properties
 import java.util.concurrent.TimeUnit
 
-class PostgresConnector(
+open class PostgresConnector(
     private val postgresConfiguration: PostgresConfiguration,
-    private val replicationConfiguration: ReplicationConfiguration
+    private val replicationConfiguration: ReplicationConfiguration,
+    private val connectionProvider: ConnectionProvider
 ) : AutoCloseable {
     private val queryConnection: Connection?
     private val streamingConnection: Connection?
@@ -25,19 +25,15 @@ class PostgresConnector(
 
     init {
         logger.debug("Connecting to {}", postgresConfiguration.getUrl())
-        queryConnection = createConnection(
-            postgresConfiguration.getUrl(),
-            postgresConfiguration.getQueryConnectionProperties()
-        )
-        streamingConnection = createConnection(
-            postgresConfiguration.getUrl(),
-            postgresConfiguration.getReplicationProperties()
-        )
+        queryConnection =
+            createConnection(postgresConfiguration.getUrl(), postgresConfiguration.getQueryConnectionProperties())
+        streamingConnection =
+            createConnection(postgresConfiguration.getUrl(), postgresConfiguration.getReplicationProperties())
         logger.debug("Connected to postgres")
         val pgConnection = streamingConnection.unwrap(PGConnection::class.java)
         val pgReplicationConnection = pgConnection.replicationAPI
         try {
-            logger.info("Attempting to create replication slot {}", replicationConfiguration.slotName)
+            logger.info("Attempting to create replication slot ${replicationConfiguration.slotName}")
             pgReplicationConnection.createReplicationSlot()
                 .logical()
                 .withOutputPlugin(replicationConfiguration.outputPlugin)
@@ -46,7 +42,7 @@ class PostgresConnector(
             logger.info("Created replication slot")
         } catch (e: SQLException) {
             when (e.sqlState) {
-                ALREADY_EXISTS_SQL_STATE -> logger.info("Slot {} already exists", replicationConfiguration.slotName)
+                ALREADY_EXISTS_SQL_STATE -> logger.info("Slot ${replicationConfiguration.slotName} already exists")
                 else -> throw e
             }
         }
@@ -70,7 +66,7 @@ class PostgresConnector(
         return LogSequenceNumber.INVALID_LSN
     }
 
-    fun setStreamLsn(lsn: LogSequenceNumber?) {
+    fun setStreamLsn(lsn: LogSequenceNumber) {
         pgReplicationStream!!.setAppliedLSN(lsn)
         pgReplicationStream.setFlushedLSN(lsn)
     }
@@ -102,6 +98,10 @@ class PostgresConnector(
                 logger.error("Unable to close postgres query connection", sqlException)
             }
         }
+    }
+
+    private fun createConnection(url: String, properties: Properties): Connection {
+        return connectionProvider.getConnection(url, properties)
     }
 
     private fun getPgReplicationStream(
@@ -163,10 +163,6 @@ class PostgresConnector(
             )
             .withSlotOptions(replicationConfiguration.getSlotOptions())
             .withSlotName(replicationConfiguration.slotName).start()
-    }
-
-    private fun createConnection(url: String?, properties: Properties?): Connection {
-        return DriverManager.getConnection(url, properties)
     }
 
     companion object {
