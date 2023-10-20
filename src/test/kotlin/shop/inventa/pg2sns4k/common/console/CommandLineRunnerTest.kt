@@ -1,4 +1,4 @@
-package shop.inventa.pg2sns4k.common.runner
+package shop.inventa.pg2sns4k.common.console
 
 import com.amazonaws.auth.AWSStaticCredentialsProvider
 import com.amazonaws.auth.BasicAWSCredentials
@@ -15,7 +15,7 @@ import java.io.FileInputStream
 import java.util.Properties
 
 @Suppress("TooGenericExceptionCaught")
-class CommandLineRunner : Runnable {
+class CommandLineRunnerTest : Runnable {
 
     override fun run() {
 
@@ -24,12 +24,12 @@ class CommandLineRunner : Runnable {
         val inputStream = FileInputStream("src/main/resources/application.properties")
         properties.load(inputStream)
 
-        val host = properties.getProperty("spring.datasource.host")
-        val port = properties.getProperty("spring.datasource.port")
-        val username = properties.getProperty("spring.datasource.username")
-        val password = properties.getProperty("spring.datasource.password")
-        val database = properties.getProperty("spring.datasource.database")
-        val slotName = properties.getProperty("replication.datasource.slot")
+        val host = properties.getProperty("datasource.host")
+        val port = properties.getProperty("datasource.port")
+        val username = properties.getProperty("datasource.username")
+        val password = properties.getProperty("datasource.password")
+        val database = properties.getProperty("datasource.database")
+        val slotName = properties.getProperty("datasource.replication.slot")
         val awsAccessKey = properties.getProperty("cloud.aws.credentials.access-key")
         val secretKey = properties.getProperty("cloud.aws.credentials.secret-key")
         val region = properties.getProperty("cloud.aws.region.static")
@@ -61,7 +61,7 @@ class CommandLineRunner : Runnable {
     companion object {
         @JvmStatic
         fun main(args: Array<String>) {
-            CommandLineRunner().run()
+            CommandLineRunnerTest().run()
         }
     }
 }
