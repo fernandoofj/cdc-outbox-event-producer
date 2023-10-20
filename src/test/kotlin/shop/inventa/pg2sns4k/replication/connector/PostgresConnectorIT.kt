@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import shop.inventa.pg2sns4k.common.IntegrationBase
-import shop.inventa.pg2sns4k.replication.config.ReplicationConfiguration
 import java.sql.Connection
 import java.util.Properties
 import kotlin.test.assertEquals
@@ -18,8 +17,9 @@ internal class PostgresConnectorIT : IntegrationBase() {
     private lateinit var auxiliarConnection: Connection
 
     @BeforeAll
-    fun setUpInternal() {
-        super.setUp()
+    override fun setUp() {
+
+        super.setUpInternal()
 
         auxiliarConnection =
             createConnection(postgresConfiguration.getUrl(), postgresConfiguration.getQueryConnectionProperties())
@@ -29,11 +29,11 @@ internal class PostgresConnectorIT : IntegrationBase() {
     }
 
     @AfterAll
-    fun tearDownInternal() {
+    override fun tearDown() {
         auxiliarConnection.close()
         postgresConnector.close()
 
-        super.tearDown()
+        super.tearDownInternal()
     }
 
     @Test

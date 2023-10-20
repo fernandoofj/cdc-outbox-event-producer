@@ -6,6 +6,7 @@ import com.amazonaws.client.builder.AwsClientBuilder
 import com.amazonaws.services.sns.AmazonSNSClientBuilder
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.awspring.cloud.messaging.core.NotificationMessagingTemplate
+import shop.inventa.pg2sns4k.jackson.MappingJackson2MessageConverterCustom
 import shop.inventa.pg2sns4k.replication.config.PostgresConfiguration
 import shop.inventa.pg2sns4k.replication.config.ReplicationConfiguration
 import shop.inventa.pg2sns4k.workflow.SlotReaderSNSProducer
@@ -46,7 +47,7 @@ class CommandLineRunnerTest : Runnable {
                 )
                 .build()
         ).apply {
-            messageConverter = shop.inventa.pg2sns4k.jackson.MappingJackson2MessageConverterCustom(ObjectMapper()).jackson2MessageConverter()
+            messageConverter = MappingJackson2MessageConverterCustom(ObjectMapper()).jackson2MessageConverter()
         }
 
         SlotReaderSNSProducer(

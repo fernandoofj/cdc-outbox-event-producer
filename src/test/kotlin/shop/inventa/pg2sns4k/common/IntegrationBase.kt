@@ -5,8 +5,6 @@ import com.github.dockerjava.api.model.ExposedPort
 import com.github.dockerjava.api.model.HostConfig
 import com.github.dockerjava.api.model.PortBinding
 import com.github.dockerjava.api.model.Ports
-import org.junit.jupiter.api.AfterAll
-import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.TestInstance
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
@@ -28,14 +26,17 @@ abstract class IntegrationBase {
     protected val replicationConfiguration = ReplicationConfiguration("catalog_slot")
     protected lateinit var postgresConfiguration: PostgresConfiguration
 
-    protected fun setUp() {
-        postgresConfiguration = postgresContainer.buildPostgresConfiguration()
+    abstract fun setUp()
+    abstract fun tearDown()
+
+    protected fun setUpInternal() {
         configureContainer()
         postgresContainer.start()
+        postgresConfiguration = postgresContainer.buildPostgresConfiguration()
         Thread.sleep(2000)
     }
 
-    protected fun tearDown() {
+    protected fun tearDownInternal() {
         postgresContainer.stop()
     }
 

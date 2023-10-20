@@ -49,17 +49,15 @@ open class PostgresConnector(
         pgReplicationStream = getPgReplicationStream(replicationConfiguration, pgReplicationConnection)
     }
 
-    fun readPending(): ByteBuffer? = pgReplicationStream?.let{ it.readPending() }
+    fun readPending(): ByteBuffer? = pgReplicationStream?.let { it.readPending() }
 
     fun currentLSN(): LogSequenceNumber {
         queryConnection?.let {
-            it.createStatement().use { st ->
-                st.executeQuery(CURRENT_WAL_LSN_QUERY).use { rs ->
-                    if (rs.next()) {
-                        val lsn: String = rs.getString(1)
-                        return LogSequenceNumber.valueOf(lsn)
-                    }
-                }
+            val statement = it.createStatement()
+            val resultSet = statement.executeQuery(CURRENT_WAL_LSN_QUERY)
+            if (resultSet.next()) {
+                val lsn: String = resultSet.getString(1)
+                return LogSequenceNumber.valueOf(lsn)
             }
         }
 
