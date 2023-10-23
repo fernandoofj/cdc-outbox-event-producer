@@ -1,0 +1,74 @@
+version: '3.9'
+services:
+  postgres:
+    image: 'debezium/postgres:14-alpine'
+    volumes:
+      - postgres-volume:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres_cdc
+    networks:
+      - local
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      - localstack
+      - postgres
+    environment:
+      - DB_URL=jdbc:postgresql://postgres:5432/postgres_cdc?useSSL=false
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=postgres
+      - AWS_ACCESS_KEY=ACCESS-KEY
+      - AWS_SECRET_KEY=SECRET-KEY
+      - SPRING_PROFILE=local
+      - LOCALSTACK_URL=http://localstack:4566
+    networks:
+      - local
+
+  localstack:
+    image: localstack/localstack
+    ports:
+      - "127.0.0.1:4510-4559:4510-4559"  # external service port range
+      - "127.0.0.1:4566:4566"            # LocalStack Edge Proxy
+    environment:
+      - DEBUG=${DEBUG- }
+      - DATA_DIR=${DATA_DIR- }
+      - LAMBDA_EXECUTOR=${LAMBDA_EXECUTOR- }
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - HOSTNAME=localstack
+      - HOSTNAME_EXTERNAL=localstack
+    volumes:
+      - "${TMPDIR:-/tmp/localstack}:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./shell-scripts/localstack:/etc/localstack/init/ready.d"
+    networks:
+      - local
+
+  mockserver:
+    image: mockserver/mockserver
+    ports:
+      - 1080:1080
+    environment:
+      MOCKSERVER_WATCH_INITIALIZATION_JSON: "true"
+      MOCKSERVER_PROPERTY_FILE: /config/mockserver.properties
+      MOCKSERVER_INITIALIZATION_JSON_PATH: /config/initializerJson.json
+    volumes:
+      - type: bind
+        source: ./shell-scripts/mockserver
+        target: /config
+    networks:
+      - local
+
+volumes:
+  postgres-volume:
+
+networks:
+  local:
+    driver: bridge
