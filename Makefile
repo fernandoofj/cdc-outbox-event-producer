@@ -1,4 +1,4 @@
-.PHONY: assemble docker-build docker-deps migrate local
+.PHONY: assemble docker-build docker-deps local
 
 assemble:
 	./gradlew clean assemble
@@ -7,11 +7,8 @@ docker-build:
 	docker-compose build
 
 docker-deps:
-	docker-compose up localstack postgres mockserver -d
+	docker-compose up localstack postgres -d
 	sleep 3 # wait for deps to be up
 
-migrate:
-	./gradlew migrateLocal
-
-local: assemble docker-build docker-deps migrate
-	docker-compose up app || docker-compose down -v # clean everything on exit
+local: assemble docker-build docker-deps
+	docker-compose down -v # clean everything on exit

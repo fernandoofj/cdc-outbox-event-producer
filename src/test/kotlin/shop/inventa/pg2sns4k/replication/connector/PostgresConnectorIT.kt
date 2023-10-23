@@ -1,8 +1,5 @@
 package shop.inventa.pg2sns4k.replication.connector
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.SerializationFeature
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.BeforeAll
@@ -19,7 +16,6 @@ internal class PostgresConnectorIT : IntegrationBase() {
 
     @BeforeAll
     override fun setUp() {
-
         super.setUpBegin()
 
         postgresConnector =
@@ -36,9 +32,9 @@ internal class PostgresConnectorIT : IntegrationBase() {
     @Test
     fun `read pending data`() {
         // given
-        val snsMessageString = defaultMapper().writeValueAsString(SNSMessageMother.build())
+        val snsMessageString = objectMapper.writeValueAsString(SNSMessageMother.build())
         val emitMessageCommand =
-            "SELECT pg_logical_emit_message(true, 'catalogue-collection-business-events', '$snsMessageString')"
+            "SELECT pg_logical_emit_message(true, 'test-business-events', '$snsMessageString')"
 
         // when
         val beforeLSN = postgresConnector.currentLSN()
@@ -52,14 +48,5 @@ internal class PostgresConnectorIT : IntegrationBase() {
         assertNull(beforeCommandResultBytes)
         assertNotNull(afterCommandResultBytes)
         assertNotEquals(beforeLSN, afterLSN)
-    }
-
-    companion object {
-        private fun defaultMapper(): ObjectMapper {
-            val objectMapper = ObjectMapper()
-            objectMapper.registerModule(JavaTimeModule())
-            objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-            return objectMapper
-        }
     }
 }

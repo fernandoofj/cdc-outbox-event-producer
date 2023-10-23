@@ -6,7 +6,7 @@ import java.util.UUID
 
 class SlotReaderCallback constructor(
     private val slotReaderSNSProducer: SlotReaderSNSProducer,
-    private val postgresConnector: PostgresConnector,
+    private val postgresConnector: PostgresConnector
 ) {
 
     fun onFailure(topicName: String, t: Throwable) {

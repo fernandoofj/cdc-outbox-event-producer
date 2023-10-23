@@ -51,7 +51,8 @@ class SlotReaderSNSProducer(
             }
         } catch (sqlException: SQLException) {
             logger.error(
-                "Received the following error pertaining to the replication stream, reattempting...", sqlException
+                "Received the following error pertaining to the replication stream, reattempting...",
+                sqlException
             )
             if (sqlException.sqlState == RECOVERY_MODE_SQL_STATE) {
                 logger.info("Sleeping for five seconds")
@@ -63,7 +64,8 @@ class SlotReaderSNSProducer(
             }
         } catch (ioException: IOException) {
             logger.error(
-                "Received an IO Exception while processing the replication stream, reattempting...", ioException
+                "Received an IO Exception while processing the replication stream, reattempting...",
+                ioException
             )
         } catch (exception: Exception) {
             logger.error("Received exception of type ${exception.javaClass}", exception)
@@ -90,14 +92,13 @@ class SlotReaderSNSProducer(
     }
 
     private fun readSlotWriteToSNSHelper(postgresConnector: PostgresConnector): Boolean {
-
         var isMessageReaded = false
 
         var msg = postgresConnector.readPending()
 
         msg?.let {
-            isMessageReaded = true
             processReadedData(it)
+            isMessageReaded = true
         } ?: {
             val currentTimeMillis = System.currentTimeMillis()
             val updateIdleSlotIntervalMillis =
@@ -107,8 +108,8 @@ class SlotReaderSNSProducer(
                 val lsn = postgresConnector.currentLSN()
                 msg = postgresConnector.readPending()
                 msg?.let {
-                    isMessageReaded = true
                     processReadedData(it)
+                    isMessageReaded = true
                 }
                 logger.info("Fast forwarding stream lsn to $lsn due to stream inactivity")
                 postgresConnector.setStreamLsn(lsn)

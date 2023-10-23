@@ -10,7 +10,6 @@ class SNSTransactionalProducer(
 ) : shop.inventa.pg2sns4k.aws.sns.SNSProducer {
 
     override fun <T : Any> send(topicName: String, message: SNSMessage<T>) {
-
         notificationMessagingTemplate.convertAndSend(topicName, message.body, message.headers)
     }
 }

@@ -1,50 +1,56 @@
 package shop.inventa.pg2sns4k.common
 
-import com.github.dockerjava.api.command.CreateContainerCmd
-import com.github.dockerjava.api.model.ExposedPort
-import com.github.dockerjava.api.model.HostConfig
-import com.github.dockerjava.api.model.PortBinding
-import com.github.dockerjava.api.model.Ports
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import org.junit.jupiter.api.TestInstance
-import org.testcontainers.containers.PostgreSQLContainer
-import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
-import org.testcontainers.utility.DockerImageName
+import shop.inventa.pg2sns4k.aws.common.AWSParamaters
 import shop.inventa.pg2sns4k.replication.config.PostgresConfiguration
 import shop.inventa.pg2sns4k.replication.config.ReplicationConfiguration
 import shop.inventa.pg2sns4k.replication.connector.DefaultConnectionProvider
+import java.io.FileInputStream
 import java.sql.Connection
 import java.util.Properties
-import java.util.function.Consumer
 
 @Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 abstract class IntegrationBase {
 
-    @Container
-    protected val postgresContainer = PostgreSQLContainer<Nothing>(
-        DockerImageName.parse("debezium/postgres:14-alpine")
-            .asCompatibleSubstituteFor("postgres")
-    )
-    protected val replicationConfiguration = ReplicationConfiguration("catalog_slot")
-    protected lateinit var postgresConfiguration: PostgresConfiguration
+    private lateinit var properties: Properties
     private lateinit var auxiliarConnection: Connection
+
+    protected lateinit var objectMapper: ObjectMapper
+    protected lateinit var postgresConfiguration: PostgresConfiguration
+    protected lateinit var replicationConfiguration: ReplicationConfiguration
+    protected lateinit var awsParamaters: AWSParamaters
 
     abstract fun setUp()
     abstract fun tearDown()
 
     protected fun setUpBegin() {
-        configureContainer()
-        postgresContainer.start()
-        postgresConfiguration = postgresContainer.buildPostgresConfiguration()
-        Thread.sleep(1500)
+        properties = loadProperties()
+        objectMapper = defaultMapper()
+
+        postgresConfiguration = properties.buildPostgresConfiguration()
+        replicationConfiguration = properties.buildReplicationConfiguration()
+        awsParamaters = properties.buildAwsParameters()
+
         auxiliarConnection =
             createConnection(postgresConfiguration.getUrl(), postgresConfiguration.getQueryConnectionProperties())
+
+        val createSlotCommand = "SELECT pg_create_logical_replication_slot(" +
+            "'${replicationConfiguration.slotName}'," +
+            "'${replicationConfiguration.outputPlugin}')"
+        executeCommand(createSlotCommand)
     }
 
     protected fun tearDownEnd() {
+        val dropSlotCommand = "SELECT pg_drop_replication_slot('${replicationConfiguration.slotName}')"
+        executeCommand(dropSlotCommand)
+
+        properties.clear()
         auxiliarConnection.close()
-        postgresContainer.stop()
     }
 
     protected fun executeCommand(command: String): Boolean {
@@ -54,38 +60,42 @@ abstract class IntegrationBase {
         return isSuccess
     }
 
-    protected fun createConnection(url: String, properties: Properties) =
-        DefaultConnectionProvider().getConnection(url, properties)
+    companion object {
 
-    private fun configureContainer() {
-        val containerPort = 5432
-        val localPort = 5432
+        private fun defaultMapper(): ObjectMapper {
+            val objectMapper = ObjectMapper()
+            objectMapper.registerModule(JavaTimeModule())
+            objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+            return objectMapper
+        }
 
-        val cmd =
-            Consumer<CreateContainerCmd> { e: CreateContainerCmd ->
-                e.withHostConfig(
-                    HostConfig().withPortBindings(
-                        PortBinding(
-                            Ports.Binding.bindPort(localPort),
-                            ExposedPort(containerPort)
-                        )
-                    )
-                )
-            }
+        private fun loadProperties(): Properties {
+            val properties = Properties()
+            val inputStream = FileInputStream("src/test/resources/application.properties")
+            properties.load(inputStream)
+            return properties
+        }
 
-        postgresContainer.withDatabaseName("catalogue")
-        postgresContainer.withUsername("postgres")
-        postgresContainer.withPassword("test")
-        postgresContainer.withExposedPorts(containerPort)
-        postgresContainer.withCreateContainerCmdModifier(cmd)
-        postgresContainer.withCommand("postgres", "-c", "wal_level=logical")
+        private fun createConnection(url: String, properties: Properties) =
+            DefaultConnectionProvider().getConnection(url, properties)
+
+        private fun Properties.buildAwsParameters() = AWSParamaters(
+            awsAccessKey = this["cloud.aws.credentials.access-key"].toString(),
+            awsSecretKey = this["cloud.aws.credentials.secret-key"].toString(),
+            region = this["cloud.aws.region.static"].toString(),
+            localstackUrl = this["cloud.aws.localstack.url"].toString()
+        )
+
+        private fun Properties.buildPostgresConfiguration() = PostgresConfiguration(
+            host = this["datasource.host"].toString(),
+            port = this["datasource.port"].toString(),
+            database = this["datasource.database"].toString(),
+            username = this["datasource.username"].toString(),
+            password = this["datasource.password"].toString()
+        )
+
+        private fun Properties.buildReplicationConfiguration() = ReplicationConfiguration(
+            slotName = this["datasource.replication.slot"].toString()
+        )
     }
-
-    private fun PostgreSQLContainer<Nothing>.buildPostgresConfiguration() = PostgresConfiguration(
-        host = this.host,
-        port = this.firstMappedPort.toString(),
-        database = this.databaseName,
-        username = this.username,
-        password = this.password
-    )
 }

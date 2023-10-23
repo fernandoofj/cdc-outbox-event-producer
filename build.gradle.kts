@@ -3,15 +3,23 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     kotlin("jvm") version "1.9.10"
+    kotlin("plugin.allopen") version "1.9.0"
+
     `java-library`
     `maven-publish`
 
-    id("io.gitlab.arturbosch.detekt") version "1.20.0"
-    id("org.jlleitschuh.gradle.ktlint") version "11.0.0"
-    id("org.jetbrains.kotlin.kapt") version "1.7.20"
-    id("org.sonarqube") version "3.5.0.2730"
+    id("io.gitlab.arturbosch.detekt") version "1.23.1"
+    id("org.jlleitschuh.gradle.ktlint") version "11.5.1"
+    id("org.jetbrains.kotlin.kapt") version "1.9.0"
+    id("org.sonarqube") version "4.3.1.3277"
+    id("com.github.ben-manes.versions") version "0.48.0"
+    id("com.gorylenko.gradle-git-properties") version "2.4.1"
+    id("com.avast.gradle.docker-compose") version "0.17.5"
+
     jacoco
 }
+
+apply(plugin = "docker-compose")
 
 group = "shop.inventa"
 version = "0.0.1"
@@ -59,6 +67,10 @@ tasks.withType<Detekt>().configureEach {
     }
 }
 
+tasks.withType<org.jlleitschuh.gradle.ktlint.tasks.BaseKtLintCheckTask> {
+    workerMaxHeapSize.set("512m")
+}
+
 tasks.test {
     finalizedBy(tasks.jacocoTestReport)
 }
@@ -87,4 +99,25 @@ publishing {
             from(components["java"])
         }
     }
+}
+
+tasks.register("startDockerCompose") {
+    doLast {
+        exec {
+            commandLine("docker-compose", "-f", "docker-compose.yml", "up", "-d")
+        }
+    }
+}
+
+tasks.register("stopDockerCompose") {
+    doLast {
+        exec {
+            commandLine("docker-compose", "-f", "docker-compose.yml", "down", "-v")
+        }
+    }
+}
+
+tasks.withType<Test> {
+    dependsOn("startDockerCompose")
+    finalizedBy("stopDockerCompose")
 }

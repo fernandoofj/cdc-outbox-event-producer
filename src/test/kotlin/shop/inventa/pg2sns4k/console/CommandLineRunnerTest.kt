@@ -17,7 +17,6 @@ import java.util.Properties
 class CommandLineRunnerTest : Runnable {
 
     override fun run() {
-
         val properties = Properties()
 
         val inputStream = FileInputStream("src/test/resources/application.properties")
