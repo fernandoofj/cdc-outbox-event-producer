@@ -3,8 +3,6 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     kotlin("jvm") version "1.9.10"
-    kotlin("plugin.allopen") version "1.9.0"
-
     `java-library`
     `maven-publish`
 
@@ -15,7 +13,6 @@ plugins {
     id("com.github.ben-manes.versions") version "0.48.0"
     id("com.gorylenko.gradle-git-properties") version "2.4.1"
     id("com.avast.gradle.docker-compose") version "0.17.5"
-
     jacoco
 }
 
@@ -83,24 +80,6 @@ tasks.check {
     dependsOn(tasks.jacocoTestCoverageVerification)
 }
 
-publishing {
-    repositories {
-        maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/inventa-shop/kotlin-postgres-cdc-to-sns-module")
-            credentials {
-                username = System.getenv("GITHUB_ACTOR")
-                password = System.getenv("GITHUB_TOKEN")
-            }
-        }
-    }
-    publications {
-        register<MavenPublication>("gpr") {
-            from(components["java"])
-        }
-    }
-}
-
 tasks.register("startDockerCompose") {
     doLast {
         exec {
@@ -120,4 +99,37 @@ tasks.register("stopDockerCompose") {
 tasks.withType<Test> {
     dependsOn("startDockerCompose")
     finalizedBy("stopDockerCompose")
+}
+
+tasks.jar {
+    manifest {
+        attributes(
+            mapOf(
+                "Implementation-Title" to project.name,
+                "Implementation-Version" to project.version
+            )
+        )
+    }
+}
+
+java {
+    withSourcesJar()
+}
+
+publishing {
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/inventa-shop/kotlin-postgres-cdc-to-sns-module")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR")
+                password = System.getenv("GITHUB_TOKEN")
+            }
+        }
+    }
+    publications {
+        register<MavenPublication>("gpr") {
+            from(components["java"])
+        }
+    }
 }
