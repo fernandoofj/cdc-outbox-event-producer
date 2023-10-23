@@ -29,7 +29,7 @@ internal class SNSTransactionalProducerTest {
     fun `send should produce a message`() {
         // given
         val topicName = "topicName"
-        val messageBody = shop.inventa.pg2sns4k.aws.sns.dto.SNSMessageBody(
+        val messageBody = SNSMessageBody(
             eventUUID = UUID.randomUUID(),
             eventType = "eventType",
             domainId = UUID.randomUUID().toString(),
@@ -40,7 +40,7 @@ internal class SNSTransactionalProducerTest {
                 Pair("field2", "bla bla bla 2")
             )
         )
-        val message = shop.inventa.pg2sns4k.aws.sns.dto.SNSMessage(
+        val message = SNSMessage(
             headers = mapOf(
                 Pair("eventType", messageBody.eventType),
                 Pair("eventTimestamp", messageBody.eventTimestamp.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))

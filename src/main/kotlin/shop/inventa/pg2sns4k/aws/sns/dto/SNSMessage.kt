@@ -6,5 +6,5 @@ data class SNSMessage<T>(
     @JsonProperty("headers")
     val headers: Map<String, String>,
     @JsonProperty("body")
-    val body: shop.inventa.pg2sns4k.aws.sns.dto.SNSMessageBody<T>
+    val body: SNSMessageBody<T>
 )

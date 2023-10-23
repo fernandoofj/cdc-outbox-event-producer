@@ -12,6 +12,9 @@ import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
 import shop.inventa.pg2sns4k.replication.config.PostgresConfiguration
 import shop.inventa.pg2sns4k.replication.config.ReplicationConfiguration
+import shop.inventa.pg2sns4k.replication.connector.DefaultConnectionProvider
+import java.sql.Connection
+import java.util.Properties
 import java.util.function.Consumer
 
 @Testcontainers
@@ -25,22 +28,36 @@ abstract class IntegrationBase {
     )
     protected val replicationConfiguration = ReplicationConfiguration("catalog_slot")
     protected lateinit var postgresConfiguration: PostgresConfiguration
+    private lateinit var auxiliarConnection: Connection
 
     abstract fun setUp()
     abstract fun tearDown()
 
-    protected fun setUpInternal() {
+    protected fun setUpBegin() {
         configureContainer()
         postgresContainer.start()
         postgresConfiguration = postgresContainer.buildPostgresConfiguration()
-        Thread.sleep(2000)
+        Thread.sleep(1500)
+        auxiliarConnection =
+            createConnection(postgresConfiguration.getUrl(), postgresConfiguration.getQueryConnectionProperties())
     }
 
-    protected fun tearDownInternal() {
+    protected fun tearDownEnd() {
+        auxiliarConnection.close()
         postgresContainer.stop()
     }
 
-    protected fun configureContainer() {
+    protected fun executeCommand(command: String): Boolean {
+        val statement = auxiliarConnection.createStatement()
+        val isSuccess = statement.execute(command)
+        statement.close()
+        return isSuccess
+    }
+
+    protected fun createConnection(url: String, properties: Properties) =
+        DefaultConnectionProvider().getConnection(url, properties)
+
+    private fun configureContainer() {
         val containerPort = 5432
         val localPort = 5432
 

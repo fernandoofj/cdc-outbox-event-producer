@@ -1,12 +1,14 @@
 package shop.inventa.pg2sns4k.replication.connector
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessageMother
 import shop.inventa.pg2sns4k.common.IntegrationBase
-import java.sql.Connection
-import java.util.Properties
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
@@ -14,15 +16,11 @@ import kotlin.test.assertNull
 internal class PostgresConnectorIT : IntegrationBase() {
 
     private lateinit var postgresConnector: PostgresConnector
-    private lateinit var auxiliarConnection: Connection
 
     @BeforeAll
     override fun setUp() {
 
-        super.setUpInternal()
-
-        auxiliarConnection =
-            createConnection(postgresConfiguration.getUrl(), postgresConfiguration.getQueryConnectionProperties())
+        super.setUpBegin()
 
         postgresConnector =
             PostgresConnector(postgresConfiguration, replicationConfiguration, DefaultConnectionProvider())
@@ -30,17 +28,17 @@ internal class PostgresConnectorIT : IntegrationBase() {
 
     @AfterAll
     override fun tearDown() {
-        auxiliarConnection.close()
         postgresConnector.close()
 
-        super.tearDownInternal()
+        super.tearDownEnd()
     }
 
     @Test
     fun `read pending data`() {
         // given
-        @Suppress("MaxLineLength")
-        val emitMessageCommand = "SELECT pg_logical_emit_message(true, 'catalogue-collection-business-events', '{\"headers\":{\"eventType\":\"eventType\",\"eventTimestamp\":\"2023-10-18T15:37:47.539787\"},\"body\":{\"eventUUID\":\"2dcffe9d-d191-4155-ab11-4a3b4125f3a9\",\"eventType\":\"eventType\",\"domainId\":\"domainId\",\"domain\":\"domain\",\"eventTimestamp\":\"2023-10-18T15:37:47.539787\",\"payload\":{\"uuid\":\"4ee8b1fb-f002-4d52-b0bc-ec840786f3cb\",\"shopifyCollectionId\":null,\"name\":\"Collection Cool\",\"slug\":\"collection-cool\",\"description\":\"Collection Cool Description\",\"status\":\"status\",\"disjunctive\":false,\"createdAt\":\"2023-10-18T15:37:47.540245\",\"updatedAt\":\"2023-10-18T15:37:47.540251\"}}}')"
+        val snsMessageString = defaultMapper().writeValueAsString(SNSMessageMother.build())
+        val emitMessageCommand =
+            "SELECT pg_logical_emit_message(true, 'catalogue-collection-business-events', '$snsMessageString')"
 
         // when
         val beforeLSN = postgresConnector.currentLSN()
@@ -56,13 +54,12 @@ internal class PostgresConnectorIT : IntegrationBase() {
         assertNotEquals(beforeLSN, afterLSN)
     }
 
-    private fun executeCommand(command: String): Boolean {
-        val statement = auxiliarConnection.createStatement()
-        val isSuccess = statement.execute(command)
-        statement.close()
-        return isSuccess
+    companion object {
+        private fun defaultMapper(): ObjectMapper {
+            val objectMapper = ObjectMapper()
+            objectMapper.registerModule(JavaTimeModule())
+            objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+            return objectMapper
+        }
     }
-
-    private fun createConnection(url: String, properties: Properties) =
-        DefaultConnectionProvider().getConnection(url, properties)
 }

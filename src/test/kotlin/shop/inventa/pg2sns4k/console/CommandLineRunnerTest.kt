@@ -20,7 +20,7 @@ class CommandLineRunnerTest : Runnable {
 
         val properties = Properties()
 
-        val inputStream = FileInputStream("src/main/resources/application.properties")
+        val inputStream = FileInputStream("src/test/resources/application.properties")
         properties.load(inputStream)
 
         val host = properties.getProperty("datasource.host")
