@@ -101,15 +101,9 @@ tasks.withType<Test> {
     finalizedBy("stopDockerCompose")
 }
 
-tasks.jar {
-    manifest {
-        attributes(
-            mapOf(
-                "Implementation-Title" to project.name,
-                "Implementation-Version" to project.version
-            )
-        )
-    }
+tasks.withType<Jar> {
+    archiveFileName.set("kotlin-postgres-cdc-to-sns-module.jar")
+    destinationDirectory.set(file("build/libs"))
 }
 
 publishing {
