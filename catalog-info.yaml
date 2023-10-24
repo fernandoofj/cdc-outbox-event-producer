@@ -1,0 +1,15 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: kotlin-postgres-cdc-to-sns-module
+  description: This service is responsible to handle the CDC events from Postgres and publish them to SNS
+  annotations:
+    github.com/project-slug: inventa-shop/kotlin-postgres-cdc-to-sns-module
+  labels:
+    tier: T0
+  tags:
+    - kotlin
+spec:
+  type: service
+  owner: supplier-team
+  lifecycle: production

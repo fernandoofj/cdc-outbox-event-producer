@@ -1,0 +1,18 @@
+exceptions:
+  TooGenericExceptionCaught:
+    active: true
+    excludes: ['**/test/**']
+    exceptionNames:
+      - 'ArrayIndexOutOfBoundsException'
+      - 'Error'
+      - 'IllegalMonitorStateException'
+      - 'IndexOutOfBoundsException'
+      - 'NullPointerException'
+      - 'RuntimeException'
+      - 'Throwable'
+    allowedExceptionNameRegex: '_|(ignore|expected).*'
+
+style:
+  UnnecessaryAbstractClass:
+    active: true
+    excludes: ['**/jpa/**']

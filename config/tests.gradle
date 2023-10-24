@@ -1,0 +1,18 @@
+test {
+    useJUnitPlatform()
+    failFast = true
+
+    afterSuite { desc, result ->
+        if (!desc.parent) {
+            println ("Results: (${result.testCount} tests, ${result.successfulTestCount} successes, ${result.failedTestCount} failures, ${result.skippedTestCount} skipped)")
+            boolean skipTests = Boolean.parseBoolean(project.findProperty('SKIP_TESTS') ?: "false")
+            if (result.testCount == 0 && !skipTests) {
+                throw new IllegalStateException("Docker is down or no tests were found. Failing the build")
+            }
+        }
+    }
+}
+
+task unitTest(type: Test) {
+    include '**/*Test.*'
+}

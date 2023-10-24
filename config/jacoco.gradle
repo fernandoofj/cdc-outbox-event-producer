@@ -1,0 +1,29 @@
+def excludedFiles = []
+
+jacocoTestReport {
+    reports {
+        xml.enabled true
+    }
+
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            fileTree(dir: it, exclude: excludedFiles)
+        }))
+    }
+}
+
+jacocoTestCoverageVerification {
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            fileTree(dir: it, exclude: excludedFiles)
+        }))
+    }
+
+    violationRules {
+        rule {
+            limit {
+                minimum = "0.6".toBigDecimal()
+            }
+        }
+    }
+}
