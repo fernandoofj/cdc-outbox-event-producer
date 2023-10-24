@@ -1,23 +1,5 @@
 version: '3.9'
 services:
-  app:
-    build: .
-    ports:
-      - "8080:8080"
-    depends_on:
-      - localstack
-      - postgres
-    environment:
-      - DB_URL=jdbc:postgresql://postgres:5432/postgres_cdc?useSSL=false
-      - DB_USERNAME=postgres
-      - DB_PASSWORD=postgres
-      - AWS_ACCESS_KEY=ACCESS-KEY
-      - AWS_SECRET_KEY=SECRET-KEY
-      - SPRING_PROFILE=local
-      - LOCALSTACK_URL=http://localstack:4566
-    networks:
-      - local
-
   postgres:
     image: 'debezium/postgres:14-alpine'
     volumes:
