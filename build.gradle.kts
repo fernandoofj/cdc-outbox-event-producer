@@ -42,10 +42,6 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation("io.mockk:mockk:1.13.8")
-//    testImplementation("org.testcontainers:testcontainers:1.19.1")
-//    testImplementation("org.testcontainers:junit-jupiter:1.19.1")
-//    testImplementation("org.testcontainers:postgresql:1.19.1")
-//    testImplementation("org.testcontainers:localstack:1.19.1")
 }
 
 tasks.withType<KotlinCompile> {
