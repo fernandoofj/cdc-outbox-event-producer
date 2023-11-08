@@ -6,11 +6,11 @@ plugins {
     `java-library`
     `maven-publish`
 
-    id("io.gitlab.arturbosch.detekt") version "1.20.0"
-    id("org.jlleitschuh.gradle.ktlint") version "11.0.0"
-    id("org.jetbrains.kotlin.kapt") version "1.7.20"
-    id("org.sonarqube") version "4.2.1.3168"
-    id("com.github.ben-manes.versions") version "0.42.0"
+    id("io.gitlab.arturbosch.detekt") version "1.23.1"
+    id("org.jlleitschuh.gradle.ktlint") version "11.5.1"
+    id("org.jetbrains.kotlin.kapt") version "1.9.20"
+    id("org.sonarqube") version "4.3.1.3277"
+    id("com.github.ben-manes.versions") version "0.48.0"
     id("com.gorylenko.gradle-git-properties") version "2.4.1"
     id("com.avast.gradle.docker-compose") version "0.17.5"
     jacoco
