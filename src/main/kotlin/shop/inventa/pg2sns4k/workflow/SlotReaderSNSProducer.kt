@@ -99,7 +99,7 @@ class SlotReaderSNSProducer(
         msg?.let {
             processReadedData(it)
             isMessageReaded = true
-        } ?: {
+        } ?: run {
             val currentTimeMillis = System.currentTimeMillis()
             val updateIdleSlotIntervalMillis =
                 TimeUnit.SECONDS.toMillis(replicationConfiguration.updateIdleSlotInterval)
