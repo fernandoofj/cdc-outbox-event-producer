@@ -9,8 +9,8 @@ data class ReplicationConfiguration(
     val statusIntervalTimeUnit: TimeUnit = DEFAULT_STATUS_INTERVAL_TIME_UNIT,
     val statusIntervalValue: Int = DEFAULT_STATUS_INTERVAL_VALUE,
     val updateIdleSlotInterval: Long = DEFAULT_UPDATE_IDLE_SLOT_INTERVAL,
-    val existingProcessRetryLimit: Int = DEFAULT_EXISTING_PROCESS_RETRY_LIMIT,
-    val existingProcessRetrySleepSeconds: Long = DEFAULT_EXISTING_PROCESS_RETRY_SLEEP_SECONDS,
+    val existingProcessRetryLimit: Int? = DEFAULT_EXISTING_PROCESS_RETRY_LIMIT,
+    val existingProcessRetrySleepSeconds: Long? = DEFAULT_EXISTING_PROCESS_RETRY_SLEEP_SECONDS,
     val includeXids: Boolean = DEFAULT_INCLUDE_XIDS
 ) {
     fun getSlotOptions(): Properties {

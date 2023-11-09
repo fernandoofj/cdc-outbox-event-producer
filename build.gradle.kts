@@ -19,7 +19,7 @@ plugins {
 apply(plugin = "docker-compose")
 
 group = "shop.inventa"
-version = "0.0.2"
+version = "0.0.3"
 
 repositories {
     mavenCentral()
