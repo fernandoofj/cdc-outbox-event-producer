@@ -54,7 +54,7 @@ class SlotReaderSNSProducer(
                 "Received the following error pertaining to the replication stream, reattempting...",
                 sqlException
             )
-            when(sqlException.sqlState) {
+            when (sqlException.sqlState) {
                 RECOVERY_MODE_SQL_STATE -> {
                     logger.info("Sleeping for five seconds")
                     try {
@@ -63,7 +63,7 @@ class SlotReaderSNSProducer(
                         logger.error("Interrupted while sleeping", interruptedException)
                     }
                 }
-                OUT_OF_MEMORY_SQL_STATE-> {
+                OUT_OF_MEMORY_SQL_STATE -> {
                     logger.error("Out of memory exception! Message greater than 1GB. Discarding...")
                     slotReaderCallback?.discardMessage("OUT_OF_MEMORY")
                 }
