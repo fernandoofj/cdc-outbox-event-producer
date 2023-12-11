@@ -19,7 +19,7 @@ repositories {
 }
 
 dependencies {
-    implementation("shop.inventa:kotlin-postgres-cdc-to-sns-module:0.0.3")
+    implementation("shop.inventa:kotlin-postgres-cdc-to-sns-module:0.0.4")
 }
 ```
 
