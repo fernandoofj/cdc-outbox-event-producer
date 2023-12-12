@@ -144,7 +144,7 @@ open class PostgresConnector(
         try {
             Thread.sleep(TimeUnit.SECONDS.toMillis(delayTime))
         } catch (ie: InterruptedException) {
-            logger.info("Received interruption while attempting to setup replciation stream")
+            logger.info("Received interruption while attempting to setup replication stream")
         }
 
         return tries + 1
