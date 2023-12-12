@@ -14,7 +14,6 @@ class ByteToClassParserStrategy(
         return when (replicationConfiguration.formatVersion) {
             FormatVersionEnum.V1 -> jsonToClassParserImplV1
             FormatVersionEnum.V2 -> jsonToClassParserImplV2
-            else -> throw IllegalArgumentException("Unknown format version: ${replicationConfiguration.formatVersion}")
         }
     }
 }
