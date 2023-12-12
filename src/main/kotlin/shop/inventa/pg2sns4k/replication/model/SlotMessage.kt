@@ -6,6 +6,8 @@ import com.fasterxml.jackson.annotation.JsonProperty
 class SlotMessage @JsonCreator constructor(
     @param:JsonProperty(value = "xid", required = true)
     val xid: Long,
-    @param:JsonProperty(value = "change", required = true)
-    val changes: List<Change>
+    @param:JsonProperty(value = "change", required = false)
+    val changes: List<Change>? = emptyList(),
+    @param:JsonProperty(value = "action", required = false)
+    val action: String? = null,
 )

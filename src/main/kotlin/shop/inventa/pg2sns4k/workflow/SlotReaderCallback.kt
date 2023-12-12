@@ -4,7 +4,7 @@ import org.slf4j.LoggerFactory
 import shop.inventa.pg2sns4k.replication.connector.PostgresConnector
 import java.util.UUID
 
-class SlotReaderCallback constructor(
+class SlotReaderCallback(
     private val slotReaderSNSProducer: SlotReaderSNSProducer,
     private val postgresConnector: PostgresConnector
 ) {

@@ -6,15 +6,19 @@ import com.amazonaws.client.builder.AwsClientBuilder
 import com.amazonaws.services.sns.AmazonSNSClientBuilder
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.awspring.cloud.messaging.core.NotificationMessagingTemplate
+import io.mockk.junit5.MockKExtension
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import shop.inventa.pg2sns4k.aws.sns.SNSTransactionalProducer
 import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessageMother
 import shop.inventa.pg2sns4k.common.IntegrationBase
 import shop.inventa.pg2sns4k.jackson.MappingJackson2MessageConverterCustom
+import java.util.concurrent.Executors
 import kotlin.test.assertEquals
 
+@ExtendWith(MockKExtension::class)
 internal class SlotReaderSNSProducerIT : IntegrationBase() {
 
     private lateinit var slotReaderSNSProducer: SlotReaderSNSProducer
@@ -23,7 +27,6 @@ internal class SlotReaderSNSProducerIT : IntegrationBase() {
     override fun setUp() {
         super.setUpBegin()
 
-        val isTestingExecution = true
         val snsTransactionalProducer = SNSTransactionalProducer(
             notificationMessagingTemplate = NotificationMessagingTemplate(
                 AmazonSNSClientBuilder
@@ -52,7 +55,6 @@ internal class SlotReaderSNSProducerIT : IntegrationBase() {
             postgresConfiguration,
             replicationConfiguration,
             snsTransactionalProducer,
-            isTestingExecution
         )
     }
 
@@ -72,6 +74,16 @@ internal class SlotReaderSNSProducerIT : IntegrationBase() {
         val emitMessageResult = executeCommand(emitMessageCommand)
         assertEquals(true, emitMessageResult)
 
+        val executorService = Executors.newSingleThreadExecutor()
+        executorService.submit {
+            Thread.sleep(1000)
+            slotReaderSNSProducer.stopStreaming()
+        }
+
         slotReaderSNSProducer.startStreaming()
+
+//        verify(exactly = 1) {
+//            slotReaderCallback.onSuccess(any(), any(), any())
+//        }
     }
 }

@@ -22,11 +22,10 @@ class SlotReaderSNSProducer(
     private val postgresConfiguration: PostgresConfiguration,
     private val replicationConfiguration: ReplicationConfiguration,
     private val snsTransactionalProducer: shop.inventa.pg2sns4k.aws.sns.SNSTransactionalProducer,
-    private val isTestingExecution: Boolean = false
 ) {
     private var running = true
     private var lastFlushedTime: Long = 0
-    private var slotReaderCallback: SlotReaderCallback? = null
+    private lateinit var slotReaderCallback: SlotReaderCallback
 
     fun startStreaming() {
         while (running) {
@@ -45,8 +44,7 @@ class SlotReaderSNSProducer(
                 resetIdleCounter()
                 logger.info("Consuming from slot {}", replicationConfiguration.slotName)
                 while (running) {
-                    val didReadMessageSuccessfully = readSlotWriteToSNSHelper(postgresConnector)
-                    checkIfNeedsToStopRunning(didReadMessageSuccessfully)
+                    readSlotWriteToSNSHelper(postgresConnector)
                 }
             }
         } catch (sqlException: SQLException) {
@@ -65,42 +63,33 @@ class SlotReaderSNSProducer(
                 }
             }
         } catch (ioException: IOException) {
+            println("ERROOOOO IO $ioException")
             logger.error(
                 "Received an IO Exception while processing the replication stream, reattempting...",
                 ioException
             )
         } catch (exception: Exception) {
+            println("ERROOOOO $exception")
             logger.error("Received exception of type ${exception.javaClass}", exception)
         }
     }
 
-    private fun checkIfNeedsToStopRunning(didReadMessageSuccessfully: Boolean) {
-        if (isTestingExecution && didReadMessageSuccessfully) {
-            stopStreaming()
-        }
-    }
-
-    private fun stopStreaming() {
+    fun stopStreaming() {
         running = false
     }
 
     private fun initializeCallback(postgresConnector: PostgresConnector) {
-        if (slotReaderCallback == null) {
-            slotReaderCallback = SlotReaderCallback(
-                this,
-                postgresConnector
-            )
-        }
+        slotReaderCallback = SlotReaderCallback(
+            this,
+            postgresConnector
+        )
     }
 
-    private fun readSlotWriteToSNSHelper(postgresConnector: PostgresConnector): Boolean {
-        var isMessageReaded = false
-
+    private fun readSlotWriteToSNSHelper(postgresConnector: PostgresConnector) {
         var msg = postgresConnector.readPending()
 
         msg?.let {
             processReadedData(it)
-            isMessageReaded = true
         } ?: run {
             val currentTimeMillis = System.currentTimeMillis()
             val updateIdleSlotIntervalMillis =
@@ -111,23 +100,25 @@ class SlotReaderSNSProducer(
                 msg = postgresConnector.readPending()
                 msg?.let {
                     processReadedData(it)
-                    isMessageReaded = true
                 }
                 logger.info("Fast forwarding stream lsn to $lsn due to stream inactivity")
                 postgresConnector.setStreamLsn(lsn)
                 resetIdleCounter()
             }
         }
-        return isMessageReaded
     }
 
     private fun processReadedData(byteBufferMessage: ByteBuffer) {
         val slotMessage = transformByteBufferToSlotMessage(byteBufferMessage)
-        slotMessage.changes.forEach { change ->
+        println("PROCESSOU DIREITINHO $slotMessage")
+        slotMessage.changes.takeIf { it?.isNotEmpty() ?: false }?.forEach { change ->
             when (change.kind) {
                 "message" -> processMessage(change as MessageChange)
-                else -> slotReaderCallback?.discardMessage(change.kind)
+                else -> slotReaderCallback.discardMessage(change.kind)
             }
+        } ?: run {
+            println("DESCARTOU")
+            slotReaderCallback.discardMessage("empty")
         }
     }
 
@@ -135,6 +126,7 @@ class SlotReaderSNSProducer(
         val byteArray = ByteArray(byteBufferMessage.remaining())
         byteBufferMessage.get(byteArray)
         val jsonString = String(byteArray, Charsets.UTF_8)
+        println(jsonString)
         return defaultMapper().readValue(jsonString, SlotMessage::class.java)
     }
 
@@ -148,9 +140,9 @@ class SlotReaderSNSProducer(
 
             snsTransactionalProducer.send(topicName, message)
 
-            slotReaderCallback?.onSuccess(topicName, message.body.eventType, message.body.eventUUID)
+            slotReaderCallback.onSuccess(topicName, message.body.eventType, message.body.eventUUID)
         } catch (e: Exception) {
-            slotReaderCallback?.onFailure(topicName, e)
+            slotReaderCallback.onFailure(topicName, e)
         }
     }
 
