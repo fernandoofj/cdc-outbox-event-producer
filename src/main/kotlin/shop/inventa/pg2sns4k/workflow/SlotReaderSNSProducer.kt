@@ -63,10 +63,6 @@ class SlotReaderSNSProducer(
                         logger.error("Interrupted while sleeping", interruptedException)
                     }
                 }
-                OUT_OF_MEMORY_SQL_STATE -> {
-                    logger.error("Out of memory exception! Message greater than 1GB. Discarding...")
-                    slotReaderCallback?.discardMessage("OUT_OF_MEMORY")
-                }
             }
         } catch (ioException: IOException) {
             logger.error(
@@ -181,7 +177,6 @@ class SlotReaderSNSProducer(
 
         private val logger: Logger = LoggerFactory.getLogger(SlotReaderSNSProducer::class.java)
         private const val RECOVERY_MODE_SQL_STATE = "57P03"
-        private const val OUT_OF_MEMORY_SQL_STATE = "54000"
         private const val RECOVERY_MODE_SLEEP_MILLIS = 5000L
     }
 }
