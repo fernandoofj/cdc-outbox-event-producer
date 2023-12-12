@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import org.junit.jupiter.api.TestInstance
+import org.slf4j.LoggerFactory
 import org.testcontainers.junit.jupiter.Testcontainers
 import shop.inventa.pg2sns4k.aws.common.AWSParamaters
 import shop.inventa.pg2sns4k.replication.config.PostgresConfiguration
@@ -11,6 +12,7 @@ import shop.inventa.pg2sns4k.replication.config.ReplicationConfiguration
 import shop.inventa.pg2sns4k.replication.connector.DefaultConnectionProvider
 import java.io.FileInputStream
 import java.sql.Connection
+import java.sql.SQLException
 import java.util.Properties
 
 @Testcontainers
@@ -42,7 +44,15 @@ abstract class IntegrationBase {
         val createSlotCommand = "SELECT pg_create_logical_replication_slot(" +
             "'${replicationConfiguration.slotName}'," +
             "'${replicationConfiguration.outputPlugin}')"
-        executeCommand(createSlotCommand)
+
+        try {
+            executeCommand(createSlotCommand)
+        } catch (e: SQLException) {
+            when (e.sqlState) {
+                ALREADY_EXISTS_SQL_STATE -> logger.info("Slot ${replicationConfiguration.slotName} already exists")
+                else -> throw e
+            }
+        }
     }
 
     protected fun tearDownEnd() {
@@ -61,6 +71,9 @@ abstract class IntegrationBase {
     }
 
     companion object {
+
+        private val logger = LoggerFactory.getLogger(IntegrationBase::class.java)
+        private const val ALREADY_EXISTS_SQL_STATE = "42710"
 
         private fun defaultMapper(): ObjectMapper {
             val objectMapper = ObjectMapper()
