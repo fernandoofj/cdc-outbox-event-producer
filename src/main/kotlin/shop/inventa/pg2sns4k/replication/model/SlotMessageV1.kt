@@ -5,7 +5,9 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-class DeleteChange @JsonCreator constructor(
-    @JsonProperty(value = "kind", required = true)
-    private val kindInput: String
-) : Change(kindInput)
+class SlotMessageV1 @JsonCreator constructor(
+    @param:JsonProperty(value = "xid", required = true)
+    val xid: Long,
+    @param:JsonProperty(value = "change", required = true)
+    val changes: List<Change>
+)

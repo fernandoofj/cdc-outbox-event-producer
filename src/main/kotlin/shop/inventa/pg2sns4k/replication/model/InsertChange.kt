@@ -25,30 +25,11 @@
 package shop.inventa.pg2sns4k.replication.model
 
 import com.fasterxml.jackson.annotation.JsonCreator
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 open class InsertChange @JsonCreator constructor(
     @JsonProperty(value = "kind", required = true)
     private val kindInput: String,
-    @param:JsonProperty(value = "columnnames", required = true)
-    val columnNames: List<String>,
-    @param:JsonProperty(value = "columntypes", required = true)
-    val columnTypes: List<String>,
-    @param:JsonProperty(value = "table", required = true)
-    val table: String,
-    @param:JsonProperty(value = "columnvalues", required = true)
-    val columnValues: List<Any>,
-    @param:JsonProperty(value = "schema", required = true)
-    val schema: String
-) : Change(kindInput) {
-
-    @Throws(UnknownColumnNameException::class)
-    fun getValueForColumn(columnName: String): Any {
-        val columnIndex = columnNames.indexOf(columnName)
-        return if (columnIndex != -1) {
-            columnValues[columnIndex]
-        } else {
-            throw UnknownColumnNameException(columnName)
-        }
-    }
-}
+) : Change(kindInput)

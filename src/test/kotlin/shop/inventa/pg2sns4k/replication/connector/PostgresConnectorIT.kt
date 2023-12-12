@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessageMother
 import shop.inventa.pg2sns4k.common.IntegrationBase
+import shop.inventa.pg2sns4k.jackson.ObjectMapperSingleton.defaultMapper
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
@@ -32,7 +33,7 @@ internal class PostgresConnectorIT : IntegrationBase() {
     @Test
     fun `read pending data`() {
         // given
-        val snsMessageString = objectMapper.writeValueAsString(SNSMessageMother.build())
+        val snsMessageString = defaultMapper.writeValueAsString(SNSMessageMother.build())
         val emitMessageCommand =
             "SELECT pg_logical_emit_message(true, 'test-business-events', '$snsMessageString')"
 

@@ -1,12 +1,11 @@
 package shop.inventa.pg2sns4k.workflow
 
-import com.amazonaws.auth.AWSStaticCredentialsProvider
-import com.amazonaws.auth.BasicAWSCredentials
-import com.amazonaws.client.builder.AwsClientBuilder
-import com.amazonaws.services.sns.AmazonSNSClientBuilder
-import com.fasterxml.jackson.databind.ObjectMapper
-import io.awspring.cloud.messaging.core.NotificationMessagingTemplate
+import io.mockk.every
+import io.mockk.impl.annotations.MockK
 import io.mockk.junit5.MockKExtension
+import io.mockk.just
+import io.mockk.runs
+import io.mockk.verify
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -14,7 +13,7 @@ import org.junit.jupiter.api.extension.ExtendWith
 import shop.inventa.pg2sns4k.aws.sns.SNSTransactionalProducer
 import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessageMother
 import shop.inventa.pg2sns4k.common.IntegrationBase
-import shop.inventa.pg2sns4k.jackson.MappingJackson2MessageConverterCustom
+import shop.inventa.pg2sns4k.jackson.ObjectMapperSingleton.defaultMapper
 import java.util.concurrent.Executors
 import kotlin.test.assertEquals
 
@@ -23,38 +22,17 @@ internal class SlotReaderSNSProducerIT : IntegrationBase() {
 
     private lateinit var slotReaderSNSProducer: SlotReaderSNSProducer
 
+    @MockK
+    private lateinit var snsTransactionalProducer: SNSTransactionalProducer
+
     @BeforeAll
     override fun setUp() {
         super.setUpBegin()
 
-        val snsTransactionalProducer = SNSTransactionalProducer(
-            notificationMessagingTemplate = NotificationMessagingTemplate(
-                AmazonSNSClientBuilder
-                    .standard()
-                    .withEndpointConfiguration(
-                        AwsClientBuilder.EndpointConfiguration(
-                            this.awsParamaters.localstackUrl,
-                            this.awsParamaters.region
-                        )
-                    )
-                    .withCredentials(
-                        AWSStaticCredentialsProvider(
-                            BasicAWSCredentials(
-                                this.awsParamaters.awsAccessKey,
-                                this.awsParamaters.awsSecretKey
-                            )
-                        )
-                    )
-                    .build()
-            ).apply {
-                messageConverter = MappingJackson2MessageConverterCustom(ObjectMapper()).jackson2MessageConverter()
-            }
-        )
-
         slotReaderSNSProducer = SlotReaderSNSProducer(
             postgresConfiguration,
             replicationConfiguration,
-            snsTransactionalProducer,
+            snsTransactionalProducer
         )
     }
 
@@ -66,24 +44,31 @@ internal class SlotReaderSNSProducerIT : IntegrationBase() {
     @Test
     fun `read one message from slot in testing mode`() {
         // given
-        val snsMessageString = objectMapper.writeValueAsString(SNSMessageMother.build())
+        val snsMessage = SNSMessageMother.build()
+        val snsMessageString = defaultMapper.writeValueAsString(snsMessage)
+        val topicName = "test-business-events"
         val emitMessageCommand =
-            "SELECT pg_logical_emit_message(true, 'test-business-events', '$snsMessageString')"
+            "SELECT pg_logical_emit_message(true, '$topicName', '$snsMessageString')"
 
-        // when / then
+        every {
+            snsTransactionalProducer.send(topicName, snsMessage)
+        } just runs
+
+        // when
         val emitMessageResult = executeCommand(emitMessageCommand)
         assertEquals(true, emitMessageResult)
 
         val executorService = Executors.newSingleThreadExecutor()
         executorService.submit {
-            Thread.sleep(1000)
+            Thread.sleep(2000)
             slotReaderSNSProducer.stopStreaming()
         }
 
         slotReaderSNSProducer.startStreaming()
 
-//        verify(exactly = 1) {
-//            slotReaderCallback.onSuccess(any(), any(), any())
-//        }
+        // then
+        verify(exactly = 1) {
+            snsTransactionalProducer.send(topicName, snsMessage)
+        }
     }
 }

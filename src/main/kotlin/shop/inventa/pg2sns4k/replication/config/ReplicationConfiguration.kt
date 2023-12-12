@@ -1,5 +1,6 @@
 package shop.inventa.pg2sns4k.replication.config
 
+import shop.inventa.pg2sns4k.replication.enums.FormatVersionEnum
 import java.util.Properties
 import java.util.concurrent.TimeUnit
 
@@ -12,12 +13,12 @@ data class ReplicationConfiguration(
     val existingProcessRetryLimit: Int? = DEFAULT_EXISTING_PROCESS_RETRY_LIMIT,
     val existingProcessRetrySleepSeconds: Long? = DEFAULT_EXISTING_PROCESS_RETRY_SLEEP_SECONDS,
     val includeXids: Boolean = DEFAULT_INCLUDE_XIDS,
-    val formatVersion: String = DEFAULT_FORMAT_VERSION
+    val formatVersion: FormatVersionEnum = DEFAULT_FORMAT_VERSION
 ) {
     fun getSlotOptions(): Properties {
         val properties = Properties()
         properties.setProperty("include-xids", includeXids.toString())
-        properties.setProperty("format-version", formatVersion)
+        properties.setProperty("format-version", formatVersion.code)
         return properties
     }
 
@@ -28,7 +29,7 @@ data class ReplicationConfiguration(
         const val DEFAULT_UPDATE_IDLE_SLOT_INTERVAL = 300L
         const val DEFAULT_EXISTING_PROCESS_RETRY_LIMIT = 30
         const val DEFAULT_EXISTING_PROCESS_RETRY_SLEEP_SECONDS = 30L
-        const val DEFAULT_FORMAT_VERSION = "2"
+        val DEFAULT_FORMAT_VERSION = FormatVersionEnum.V2
         val DEFAULT_STATUS_INTERVAL_TIME_UNIT = TimeUnit.SECONDS
     }
 }
