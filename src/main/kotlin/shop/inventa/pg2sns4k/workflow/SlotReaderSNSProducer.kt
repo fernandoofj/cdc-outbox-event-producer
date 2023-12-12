@@ -67,7 +67,6 @@ class SlotReaderSNSProducer(
                 }
             }
         } catch (ioException: IOException) {
-            println(ioException)
             logger.error(
                 "Received an IO Exception while processing the replication stream, reattempting...",
                 ioException
