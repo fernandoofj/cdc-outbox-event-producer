@@ -1,8 +1,5 @@
 package shop.inventa.pg2sns4k.common
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.SerializationFeature
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import org.junit.jupiter.api.TestInstance
 import org.slf4j.LoggerFactory
 import org.testcontainers.junit.jupiter.Testcontainers
@@ -22,7 +19,6 @@ abstract class IntegrationBase {
     private lateinit var properties: Properties
     private lateinit var auxiliarConnection: Connection
 
-    protected lateinit var objectMapper: ObjectMapper
     protected lateinit var postgresConfiguration: PostgresConfiguration
     protected lateinit var replicationConfiguration: ReplicationConfiguration
     protected lateinit var awsParamaters: AWSParamaters
@@ -32,7 +28,6 @@ abstract class IntegrationBase {
 
     protected fun setUpBegin() {
         properties = loadProperties()
-        objectMapper = defaultMapper()
 
         postgresConfiguration = properties.buildPostgresConfiguration()
         replicationConfiguration = properties.buildReplicationConfiguration()
@@ -74,13 +69,6 @@ abstract class IntegrationBase {
 
         private val logger = LoggerFactory.getLogger(IntegrationBase::class.java)
         private const val ALREADY_EXISTS_SQL_STATE = "42710"
-
-        private fun defaultMapper(): ObjectMapper {
-            val objectMapper = ObjectMapper()
-            objectMapper.registerModule(JavaTimeModule())
-            objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-            return objectMapper
-        }
 
         private fun loadProperties(): Properties {
             val properties = Properties()
