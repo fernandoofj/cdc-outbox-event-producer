@@ -6,7 +6,6 @@ import shop.inventa.pg2sns4k.replication.model.Change
 import shop.inventa.pg2sns4k.replication.model.DeleteChange
 import shop.inventa.pg2sns4k.replication.model.InsertChange
 import shop.inventa.pg2sns4k.replication.model.MessageChange
-import shop.inventa.pg2sns4k.replication.model.SlotMessageV1
 import shop.inventa.pg2sns4k.replication.model.SlotMessageV2
 import shop.inventa.pg2sns4k.replication.model.UpdateChange
 import java.nio.ByteBuffer
@@ -15,7 +14,7 @@ import java.nio.ByteBuffer
 class ByteToClassParserImplV2(
     private val defaultMapper: ObjectMapper
 ) : ByteToClassParser {
-    override fun parse(byteBufferMessage: ByteBuffer): SlotMessageV1 {
+    override fun parse(byteBufferMessage: ByteBuffer): List<Change> {
         val byteArray = ByteArray(byteBufferMessage.remaining())
         byteBufferMessage.get(byteArray)
         val jsonString = String(byteArray, Charsets.UTF_8)
@@ -31,10 +30,7 @@ class ByteToClassParserImplV2(
                 )
             } ?: buildOtherChange(slotMessageV2.action)
 
-        return SlotMessageV1(
-            slotMessageV2.xid,
-            listOf(messageChange)
-        )
+        return listOf(messageChange)
     }
 
     private fun buildOtherChange(action: String): Change {

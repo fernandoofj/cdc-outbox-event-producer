@@ -111,8 +111,8 @@ class SlotReaderSNSProducer(
     }
 
     private fun processReadedData(byteBufferMessage: ByteBuffer) {
-        val slotMessage = byteToClassParser.parse(byteBufferMessage)
-        slotMessage.changes.takeIf { it.isNotEmpty() }?.forEach { change ->
+        val changes = byteToClassParser.parse(byteBufferMessage)
+        changes.takeIf { it.isNotEmpty() }?.forEach { change ->
             when (change.kind) {
                 "message" -> processMessage(change as MessageChange)
                 else -> slotReaderCallback.discardMessage(change.kind)
