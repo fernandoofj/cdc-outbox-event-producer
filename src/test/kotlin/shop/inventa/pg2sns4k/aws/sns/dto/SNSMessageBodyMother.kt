@@ -1,22 +1,18 @@
 package shop.inventa.pg2sns4k.aws.sns.dto
 
+import shop.inventa.pg2sns4k.aws.common.Payload
+import shop.inventa.pg2sns4k.aws.common.PayloadMother
 import java.time.LocalDateTime
 import java.util.UUID
 
 object SNSMessageBodyMother {
 
-    fun build() = SNSMessageBody<Map<String, Any>> (
+    fun build() = SNSMessageBody(
         eventType = "PRODUCT_CREATED",
         eventUUID = UUID.randomUUID(),
         eventTimestamp = LocalDateTime.now(),
         domainId = UUID.randomUUID().toString(),
         domain = "CATALOGUE",
-        payload = mapOf(
-            Pair("id", UUID.randomUUID().toString()),
-            Pair("name", "Product name"),
-            Pair("description", "Product description"),
-            Pair("price", 100.0),
-            Pair("category", "Category")
-        )
+        payload = PayloadMother.build()
     )
 }
