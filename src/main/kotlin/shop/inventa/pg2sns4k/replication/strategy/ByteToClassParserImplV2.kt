@@ -35,17 +35,20 @@ class ByteToClassParserImplV2(
 
     private fun buildOtherChange(action: String): Change {
         return when (action.uppercase()) {
-            "I" -> InsertChange(kindInput = "insert")
-            "U" -> UpdateChange(kindInput = "insert")
-            "D" -> DeleteChange(kindInput = "insert")
+            "I" -> InsertChange(kindInput = INSERT_TYPE_V1)
+            "U" -> UpdateChange(kindInput = UPDATE_TYPE_V1)
+            "D" -> DeleteChange(kindInput = DELETE_TYPE_V1)
             else -> Change(OTHER_TYPE_V1)
         }
     }
 
     companion object {
-        const val MESSAGE_TYPE_V2 = "M"
+        const val INSERT_TYPE_V1 = "insert"
+        const val UPDATE_TYPE_V1 = "update"
+        const val DELETE_TYPE_V1 = "delete"
         const val MESSAGE_TYPE_V1 = "message"
         const val OTHER_TYPE_V1 = "other"
+        const val MESSAGE_TYPE_V2 = "M"
         const val IS_TRANSACTIONAL = true
     }
 }

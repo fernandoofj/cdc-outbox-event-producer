@@ -4,7 +4,7 @@ import java.time.format.DateTimeFormatter
 
 object SNSMessageMother {
 
-    fun build(): SNSMessage<Map<String, Any>> {
+    fun build(): SNSMessage<Any> {
         val messageBody = SNSMessageBodyMother.build()
 
         return SNSMessage(

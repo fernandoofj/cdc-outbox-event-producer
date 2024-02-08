@@ -23,7 +23,7 @@ internal class SNSTransactionalProducerTest {
     private lateinit var notificationMessagingTemplate: NotificationMessagingTemplate
 
     @InjectMockKs
-    private lateinit var snsTransactionalProducer: shop.inventa.pg2sns4k.aws.sns.SNSTransactionalProducer
+    private lateinit var snsTransactionalProducer: SNSTransactionalProducer
 
     @Test
     fun `send should produce a message`() {
