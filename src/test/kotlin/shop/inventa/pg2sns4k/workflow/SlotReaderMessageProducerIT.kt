@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import shop.inventa.pg2sns4k.aws.common.PayloadMother
 import shop.inventa.pg2sns4k.aws.sns.SNSProducer
+import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessage
 import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessageMother
 import shop.inventa.pg2sns4k.aws.sqs.SQSProducer
 import shop.inventa.pg2sns4k.common.IntegrationBase
@@ -47,12 +48,12 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
         slotReaderMessageProducer = buildSlotReaderProducer(FormatVersionEnum.V1)
         val snsMessage = SNSMessageMother.build()
         val snsMessageString = defaultMapper.writeValueAsString(snsMessage)
-        val topicName = "test-business-events"
+        val topicName = "test-business-events-1"
         val emitMessageCommand =
             "SELECT pg_logical_emit_message(true, '$topicName', '$snsMessageString')"
 
         every {
-            snsProducer.send(topicName, snsMessage)
+            snsProducer.send(topicName, any() as SNSMessage<Any>)
         } just runs
 
         // when
@@ -69,7 +70,7 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
 
         // then
         verify(exactly = 1) {
-            snsProducer.send(topicName, snsMessage)
+            snsProducer.send(topicName, any() as SNSMessage<Any>)
         }
     }
 
@@ -79,12 +80,12 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
         slotReaderMessageProducer = buildSlotReaderProducer(FormatVersionEnum.V2)
         val snsMessage = SNSMessageMother.build()
         val snsMessageString = defaultMapper.writeValueAsString(snsMessage)
-        val topicName = "test-business-events"
+        val topicName = "test-business-events-2"
         val emitMessageCommand =
             "SELECT pg_logical_emit_message(true, '$topicName', '$snsMessageString')"
 
         every {
-            snsProducer.send(topicName, snsMessage)
+            snsProducer.send(topicName, any() as SNSMessage<Any>)
         } just runs
 
         // when
@@ -101,7 +102,7 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
 
         // then
         verify(exactly = 1) {
-            snsProducer.send(topicName, snsMessage)
+            snsProducer.send(topicName, any() as SNSMessage<Any>)
         }
     }
 
@@ -111,13 +112,13 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
         slotReaderMessageProducer = buildSlotReaderProducer(FormatVersionEnum.V1)
         val snsMessage = SNSMessageMother.build()
         val snsMessageString = defaultMapper.writeValueAsString(snsMessage)
-        val prefix = "SNS|test-business-events"
-        val topicName = "test-business-events"
+        val prefix = "SNS|test-business-events-3"
+        val topicName = "test-business-events-3"
         val emitMessageCommand =
             "SELECT pg_logical_emit_message(true, '$prefix', '$snsMessageString')"
 
         every {
-            snsProducer.send(topicName, snsMessage)
+            snsProducer.send(topicName, any() as SNSMessage<Any>)
         } just runs
 
         // when
@@ -134,7 +135,7 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
 
         // then
         verify(exactly = 1) {
-            snsProducer.send(topicName, snsMessage)
+            snsProducer.send(topicName, any() as SNSMessage<Any>)
         }
     }
 
@@ -144,13 +145,13 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
         slotReaderMessageProducer = buildSlotReaderProducer(FormatVersionEnum.V2)
         val snsMessage = SNSMessageMother.build()
         val snsMessageString = defaultMapper.writeValueAsString(snsMessage)
-        val prefix = "SNS|test-business-events"
-        val topicName = "test-business-events"
+        val prefix = "SNS|test-business-events-4"
+        val topicName = "test-business-events-4"
         val emitMessageCommand =
             "SELECT pg_logical_emit_message(true, '$prefix', '$snsMessageString')"
 
         every {
-            snsProducer.send(topicName, snsMessage)
+            snsProducer.send(topicName, any() as SNSMessage<Any>)
         } just runs
 
         // when
@@ -167,7 +168,7 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
 
         // then
         verify(exactly = 1) {
-            snsProducer.send(topicName, snsMessage)
+            snsProducer.send(topicName, any() as SNSMessage<Any>)
         }
     }
 
@@ -177,8 +178,8 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
         slotReaderMessageProducer = buildSlotReaderProducer(FormatVersionEnum.V1)
         val payload = PayloadMother.build()
         val sqsPayloadString = defaultMapper.writeValueAsString(payload)
-        val prefix = "SQS|test-business-events"
-        val queueName = "test-business-events"
+        val prefix = "SQS|test-business-events-5"
+        val queueName = "test-business-events-5"
         val emitMessageCommand =
             "SELECT pg_logical_emit_message(true, '$prefix', '$sqsPayloadString')"
 
@@ -210,8 +211,8 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
         slotReaderMessageProducer = buildSlotReaderProducer(FormatVersionEnum.V2)
         val payload = PayloadMother.build()
         val sqsPayloadString = defaultMapper.writeValueAsString(payload)
-        val prefix = "SQS|test-business-events"
-        val queueName = "test-business-events"
+        val prefix = "SQS|test-business-events-6"
+        val queueName = "test-business-events-6"
         val emitMessageCommand =
             "SELECT pg_logical_emit_message(true, '$prefix', '$sqsPayloadString')"
 

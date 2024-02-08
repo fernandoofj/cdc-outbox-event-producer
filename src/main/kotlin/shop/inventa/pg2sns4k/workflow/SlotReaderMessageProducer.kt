@@ -23,8 +23,8 @@ import java.util.concurrent.TimeUnit
 class SlotReaderMessageProducer(
     private val postgresConfiguration: PostgresConfiguration,
     private val replicationConfiguration: ReplicationConfiguration,
-    private val snsTransactionalProducer: SNSProducer,
-    private val sqsTransactionalProducer: SQSProducer
+    private val snsProducer: SNSProducer,
+    private val sqsProducer: SQSProducer
 ) {
     private var running = true
     private var lastFlushedTime: Long = 0
@@ -152,7 +152,7 @@ class SlotReaderMessageProducer(
 
     private fun parsePrefix(prefix: String): Pair<DestinationType, String> {
         val parts = prefix.split(PREFIX_SEPARATOR)
-        return when(parts.size) {
+        return when (parts.size) {
             1 -> Pair(DestinationType.SNS, parts.first())
             2 -> Pair(DestinationType.valueOf(parts.first()), parts.last())
             else -> throw IllegalArgumentException("Invalid prefix: $prefix")
@@ -169,7 +169,7 @@ class SlotReaderMessageProducer(
                 "with payload ${message.body}"
         )
 
-        snsTransactionalProducer.send(destinationName, message)
+        snsProducer.send(destinationName, message)
         slotReaderCallback.onSNSSuccess(destinationName, message)
     }
 
@@ -178,7 +178,7 @@ class SlotReaderMessageProducer(
             "Posting message to SQS queue #$destinationName with payload ${messageChange.content}"
         )
 
-        sqsTransactionalProducer.send(destinationName, messageChange.content)
+        sqsProducer.send(destinationName, messageChange.content)
         slotReaderCallback.onSQSSuccess(destinationName)
     }
 

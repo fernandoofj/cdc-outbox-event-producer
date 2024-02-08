@@ -1,6 +1,5 @@
 package shop.inventa.pg2sns4k.aws.sns.dto
 
-import shop.inventa.pg2sns4k.aws.common.Payload
 import shop.inventa.pg2sns4k.aws.common.PayloadMother
 import java.time.LocalDateTime
 import java.util.UUID
@@ -13,6 +12,6 @@ object SNSMessageBodyMother {
         eventTimestamp = LocalDateTime.now(),
         domainId = UUID.randomUUID().toString(),
         domain = "CATALOGUE",
-        payload = PayloadMother.build()
+        payload = PayloadMother.build() as Any
     )
 }

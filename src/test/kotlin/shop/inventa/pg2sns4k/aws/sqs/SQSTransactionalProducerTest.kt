@@ -10,11 +10,6 @@ import io.mockk.runs
 import io.mockk.verify
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
-import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessage
-import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessageBody
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
-import java.util.UUID
 
 @ExtendWith(MockKExtension::class)
 internal class SQSTransactionalProducerTest {

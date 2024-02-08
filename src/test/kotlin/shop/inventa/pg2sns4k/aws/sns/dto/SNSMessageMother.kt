@@ -1,11 +1,10 @@
 package shop.inventa.pg2sns4k.aws.sns.dto
 
-import shop.inventa.pg2sns4k.aws.common.Payload
 import java.time.format.DateTimeFormatter
 
 object SNSMessageMother {
 
-    fun build(): SNSMessage<Payload> {
+    fun build(): SNSMessage<Any> {
         val messageBody = SNSMessageBodyMother.build()
 
         return SNSMessage(
