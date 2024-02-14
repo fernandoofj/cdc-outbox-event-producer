@@ -19,7 +19,7 @@ plugins {
 apply(plugin = "docker-compose")
 
 group = "shop.inventa"
-version = "0.0.8"
+version = "0.0.9"
 
 repositories {
     mavenCentral()
@@ -39,6 +39,7 @@ dependencies {
     implementation("software.amazon.awssdk:sts:2.21.1")
     implementation("org.postgresql:postgresql:42.6.0")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.3")
+    implementation("org.json:json:20240205")
 
     testImplementation(kotlin("test"))
     testImplementation("io.mockk:mockk:1.12.8")

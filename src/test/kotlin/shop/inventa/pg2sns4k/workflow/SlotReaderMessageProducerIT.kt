@@ -1,11 +1,13 @@
 package shop.inventa.pg2sns4k.workflow
 
+import io.mockk.CapturingSlot
 import io.mockk.every
 import io.mockk.impl.annotations.MockK
 import io.mockk.junit5.MockKExtension
 import io.mockk.just
 import io.mockk.runs
 import io.mockk.verify
+import org.json.JSONObject
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -182,9 +184,10 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
         val queueName = "test-business-events-5"
         val emitMessageCommand =
             "SELECT pg_logical_emit_message(true, '$prefix', '$sqsPayloadString')"
+        val jsonObjectSlot = CapturingSlot<JSONObject>()
 
         every {
-            sqsProducer.send(queueName, sqsPayloadString)
+            sqsProducer.send(queueName, capture(jsonObjectSlot))
         } just runs
 
         // when
@@ -201,8 +204,13 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
 
         // then
         verify(exactly = 1) {
-            sqsProducer.send(queueName, sqsPayloadString)
+            sqsProducer.send(queueName, any())
         }
+
+        val jsonObject = jsonObjectSlot.captured
+        assertEquals(payload.name, jsonObject.getString("name"))
+        assertEquals(payload.price, jsonObject.getDouble("price"))
+        assertEquals(payload.description, jsonObject.getString("description"))
     }
 
     @Test
@@ -215,9 +223,10 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
         val queueName = "test-business-events-6"
         val emitMessageCommand =
             "SELECT pg_logical_emit_message(true, '$prefix', '$sqsPayloadString')"
+        val jsonObjectSlot = CapturingSlot<JSONObject>()
 
         every {
-            sqsProducer.send(queueName, sqsPayloadString)
+            sqsProducer.send(queueName, capture(jsonObjectSlot))
         } just runs
 
         // when
@@ -234,8 +243,13 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
 
         // then
         verify(exactly = 1) {
-            sqsProducer.send(queueName, sqsPayloadString)
+            sqsProducer.send(queueName, any())
         }
+
+        val jsonObject = jsonObjectSlot.captured
+        assertEquals(payload.name, jsonObject.getString("name"))
+        assertEquals(payload.price, jsonObject.getDouble("price"))
+        assertEquals(payload.description, jsonObject.getString("description"))
     }
 
     private fun buildSlotReaderProducer(formatVersion: FormatVersionEnum): SlotReaderMessageProducer {

@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory
 import shop.inventa.pg2sns4k.aws.sns.SNSProducer
 import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessage
 import shop.inventa.pg2sns4k.aws.sqs.SQSProducer
+import shop.inventa.pg2sns4k.helper.JsonHelper
 import shop.inventa.pg2sns4k.jackson.ObjectMapperSingleton.defaultMapper
 import shop.inventa.pg2sns4k.replication.config.PostgresConfiguration
 import shop.inventa.pg2sns4k.replication.config.ReplicationConfiguration
@@ -178,7 +179,9 @@ class SlotReaderMessageProducer(
             "Posting message to SQS queue #$destinationName with payload ${messageChange.content}"
         )
 
-        sqsProducer.send(destinationName, messageChange.content)
+        val jsonObject = JsonHelper.fromJsonString(messageChange.content)
+
+        sqsProducer.send(destinationName, jsonObject)
         slotReaderCallback.onSQSSuccess(destinationName)
     }
 
