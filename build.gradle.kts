@@ -40,7 +40,6 @@ dependencies {
     implementation("org.postgresql:postgresql:42.6.0")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.3")
     implementation("org.json:json:20240205")
-//    implementation("com.google.code.gson:gson:2.8.9")
 
     testImplementation(kotlin("test"))
     testImplementation("io.mockk:mockk:1.12.8")
