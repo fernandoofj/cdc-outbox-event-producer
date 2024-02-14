@@ -2,6 +2,8 @@ package shop.inventa.pg2sns4k.helper
 
 import io.mockk.junit5.MockKExtension
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 
@@ -20,9 +22,9 @@ class JsonHelperTest {
 
         val jsonObject = JsonHelper.fromJsonString(jsonString)
 
-        assert(jsonObject.getString("name") == "John")
-        assert(jsonObject.getInt("age") == 30)
-        assert(jsonObject.isNull("car"))
+        assertEquals("John", jsonObject.getString("name"))
+        assertEquals(30, jsonObject.getInt("age"))
+        assertTrue(jsonObject.isNull("car"))
     }
 
     @Test
