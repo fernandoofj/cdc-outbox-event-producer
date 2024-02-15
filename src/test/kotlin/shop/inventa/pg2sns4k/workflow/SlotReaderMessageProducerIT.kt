@@ -7,7 +7,6 @@ import io.mockk.junit5.MockKExtension
 import io.mockk.just
 import io.mockk.runs
 import io.mockk.verify
-import org.json.JSONObject
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -20,6 +19,7 @@ import shop.inventa.pg2sns4k.aws.sqs.SQSProducer
 import shop.inventa.pg2sns4k.common.IntegrationBase
 import shop.inventa.pg2sns4k.jackson.ObjectMapperSingleton.defaultMapper
 import shop.inventa.pg2sns4k.replication.enums.FormatVersionEnum
+import java.math.BigDecimal
 import java.util.concurrent.Executors
 import kotlin.test.assertEquals
 
@@ -184,10 +184,10 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
         val queueName = "test-business-events-5"
         val emitMessageCommand =
             "SELECT pg_logical_emit_message(true, '$prefix', '$sqsPayloadString')"
-        val jsonObjectSlot = CapturingSlot<JSONObject>()
+        val mapSlot = CapturingSlot<Map<String, Any>>()
 
         every {
-            sqsProducer.send(queueName, capture(jsonObjectSlot))
+            sqsProducer.send(queueName, capture(mapSlot))
         } just runs
 
         // when
@@ -207,10 +207,10 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
             sqsProducer.send(queueName, any())
         }
 
-        val jsonObject = jsonObjectSlot.captured
-        assertEquals(payload.name, jsonObject.getString("name"))
-        assertEquals(payload.price, jsonObject.getDouble("price"))
-        assertEquals(payload.description, jsonObject.getString("description"))
+        val map = mapSlot.captured
+        assertEquals(payload.name, map["name"])
+        assertEquals(payload.price, (map["price"] as BigDecimal).toDouble())
+        assertEquals(payload.description, map["description"])
     }
 
     @Test
@@ -223,10 +223,10 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
         val queueName = "test-business-events-6"
         val emitMessageCommand =
             "SELECT pg_logical_emit_message(true, '$prefix', '$sqsPayloadString')"
-        val jsonObjectSlot = CapturingSlot<JSONObject>()
+        val mapSlot = CapturingSlot<Map<String, Any>>()
 
         every {
-            sqsProducer.send(queueName, capture(jsonObjectSlot))
+            sqsProducer.send(queueName, capture(mapSlot))
         } just runs
 
         // when
@@ -246,10 +246,10 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
             sqsProducer.send(queueName, any())
         }
 
-        val jsonObject = jsonObjectSlot.captured
-        assertEquals(payload.name, jsonObject.getString("name"))
-        assertEquals(payload.price, jsonObject.getDouble("price"))
-        assertEquals(payload.description, jsonObject.getString("description"))
+        val map = mapSlot.captured
+        assertEquals(payload.name, map["name"])
+        assertEquals(payload.price, (map["price"] as BigDecimal).toDouble())
+        assertEquals(payload.description, map["description"])
     }
 
     private fun buildSlotReaderProducer(formatVersion: FormatVersionEnum): SlotReaderMessageProducer {

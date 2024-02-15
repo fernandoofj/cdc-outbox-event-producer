@@ -179,9 +179,9 @@ class SlotReaderMessageProducer(
             "Posting message to SQS queue #$destinationName with payload ${messageChange.content}"
         )
 
-        val jsonObject = JsonHelper.fromJsonString(messageChange.content).toMap()
+        val map = JsonHelper.fromJsonString(messageChange.content).toMap()
 
-        sqsProducer.send(destinationName, jsonObject)
+        sqsProducer.send(destinationName, map)
         slotReaderCallback.onSQSSuccess(destinationName)
     }
 
