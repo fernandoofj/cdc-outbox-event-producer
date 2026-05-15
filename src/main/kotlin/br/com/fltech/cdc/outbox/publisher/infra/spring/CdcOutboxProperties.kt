@@ -41,6 +41,9 @@ data class CdcOutboxProperties(
 
     @NestedConfigurationProperty
     val deadLetter: DeadLetter = DeadLetter(),
+
+    @NestedConfigurationProperty
+    val processor: Processor = Processor(),
 ) {
 
     data class Postgres(
@@ -103,6 +106,23 @@ data class CdcOutboxProperties(
          */
         val queueName: String? = null,
     )
+
+    data class Processor(
+        /**
+         * Which orchestrator to wire.
+         *  - `LEGACY` (default for backwards compatibility): the
+         *    monolithic [br.com.fltech.cdc.outbox.publisher.workflow.SlotReaderMessageProducer]
+         *    with its hard-coded `SNS|/SQS|` prefix switch.
+         *  - `HEXAGONAL`: the [br.com.fltech.cdc.outbox.publisher.core.application.CdcProcessor]
+         *    driven by the [br.com.fltech.cdc.outbox.publisher.core.port.EventSinkRegistry]
+         *    — pluggable sinks, routing by scheme. Set
+         *    `cdc.outbox.processor.kind=hexagonal` to opt in. Wave 5
+         *    will flip the default.
+         */
+        val kind: Kind = Kind.LEGACY,
+    ) {
+        enum class Kind { LEGACY, HEXAGONAL }
+    }
 
     data class Health(
         /**

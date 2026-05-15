@@ -60,6 +60,19 @@ dependencies {
     implementation("software.amazon.awssdk:sqs:2.27.21")
     implementation("software.amazon.awssdk:sts:2.27.21")
 
+    // Wave 4 — Kafka and RabbitMQ sink adapters. compileOnly so users
+    // that only need SNS/SQS don't pay for Kafka/AMQP transitive deps.
+    // The EventSinkRegistry only registers a sink for a scheme when the
+    // corresponding template bean is on the classpath.
+    compileOnly("org.springframework.kafka:spring-kafka:3.2.4")
+    compileOnly("org.springframework.amqp:spring-rabbit:3.1.7")
+
+    // Wave 3 — MySQL outbox-table source. mysql-connector-j is
+    // compileOnly because the source only needs a `DataSource`; the
+    // consumer brings its own driver. The Testcontainers dep for MySQL
+    // is wired in the test scope below.
+    compileOnly("com.mysql:mysql-connector-j:8.4.0")
+
     testImplementation(kotlin("test"))
     testImplementation("io.mockk:mockk:1.13.13")
     testImplementation("io.micrometer:micrometer-test:1.12.13")
@@ -74,6 +87,14 @@ dependencies {
     testImplementation("org.testcontainers:postgresql:1.20.4")
     testImplementation("org.testcontainers:localstack:1.20.4")
     testImplementation("org.awaitility:awaitility:4.2.2")
+
+    // Wave 3+4 — broker / DB clients reach the test classpath so the
+    // unit tests can mock them without consumer apps having to depend
+    // on them transitively.
+    testImplementation("org.springframework.kafka:spring-kafka:3.2.4")
+    testImplementation("org.springframework.amqp:spring-rabbit:3.1.7")
+    testImplementation("com.mysql:mysql-connector-j:8.4.0")
+
     // Wire an SLF4J binding for tests so Testcontainers' diagnostic
     // logging is visible during integration runs.
     testRuntimeOnly("org.slf4j:slf4j-simple:2.0.16")

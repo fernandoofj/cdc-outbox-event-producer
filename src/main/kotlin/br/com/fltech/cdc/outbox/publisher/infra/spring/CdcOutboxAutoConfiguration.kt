@@ -168,8 +168,20 @@ open class CdcOutboxAutoConfiguration {
             publishBackOff = publishBackOff,
         )
 
+    /**
+     * Legacy lifecycle. Disabled when
+     * `cdc.outbox.processor.kind=hexagonal` so the new
+     * [CdcProcessorLifecycle] takes over without spawning two
+     * competing streaming threads.
+     */
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(
+        prefix = "cdc.outbox.processor",
+        name = ["kind"],
+        havingValue = "legacy",
+        matchIfMissing = true,
+    )
     open fun cdcOutboxLifecycle(producer: SlotReaderMessageProducer): CdcOutboxLifecycle =
         CdcOutboxLifecycle(producer)
 
