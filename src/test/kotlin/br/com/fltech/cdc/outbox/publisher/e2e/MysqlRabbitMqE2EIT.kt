@@ -13,6 +13,8 @@ import br.com.fltech.cdc.outbox.publisher.e2e.support.E2EContainers
 import br.com.fltech.cdc.outbox.publisher.retry.ExponentialBackOff
 import com.rabbitmq.client.ConnectionFactory
 import com.rabbitmq.client.GetResponse
+import com.zaxxer.hikari.HikariConfig
+import com.zaxxer.hikari.HikariDataSource
 import org.awaitility.Awaitility
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -68,6 +70,7 @@ class MysqlRabbitMqE2EIT {
     private lateinit var rabbitTemplate: RabbitTemplate
     private lateinit var rabbitConnectionFactory: CachingConnectionFactory
     private lateinit var jdbc: Connection
+    private lateinit var binlogDataSource: HikariDataSource
 
     @BeforeAll
     fun startContainers() {
@@ -128,6 +131,24 @@ class MysqlRabbitMqE2EIT {
             setPassword(rabbit.adminPassword)
         }
         rabbitTemplate = RabbitTemplate(rabbitConnectionFactory)
+
+        // INFORMATION_SCHEMA lookup pool for binlog column-name
+        // resolution. mysql-binlog-connector-java 0.29.2 does not
+        // surface column names from the binlog metadata even with
+        // `binlog_row_metadata=FULL`, so the source needs a JDBC
+        // handle to translate `tableId` → ordinal-position column
+        // names. Without this, after-maps come back as
+        // `col0`/`col1`/… and the mapping `include` projection
+        // produces `{}`.
+        binlogDataSource = HikariDataSource(
+            HikariConfig().apply {
+                jdbcUrl = mysql.jdbcUrl
+                username = mysql.username
+                password = mysql.password
+                maximumPoolSize = 2
+                poolName = "mysql-rabbit-e2e-info-schema"
+            },
+        )
     }
 
     @AfterAll
@@ -136,6 +157,7 @@ class MysqlRabbitMqE2EIT {
             jdbc.createStatement().use { s -> s.execute("DROP TABLE IF EXISTS $OUTBOX_TABLE") }
         }
         runCatching { jdbc.close() }
+        runCatching { binlogDataSource.close() }
         runCatching { rabbitConnectionFactory.destroy() }
         runCatching { rabbit.stop() }
         runCatching { mysql.stop() }
@@ -163,6 +185,7 @@ class MysqlRabbitMqE2EIT {
             port = mysql.getMappedPort(MYSQL_PORT),
             username = mysql.username,
             password = mysql.password,
+            dataSource = binlogDataSource,
         )
         val source = MappingCdcSource(rowSource, DefaultMappingRules(listOf(buildMapping()), JSON_SERIALIZER))
         val sinks: Map<String, EventSink> = mapOf("amqp" to RabbitMqEventSink(rabbitTemplate))

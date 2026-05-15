@@ -266,17 +266,40 @@ parity in the Origens table.
 
   * `./gradlew compileKotlin compileTestKotlin` PASS on JDK 21
     (Corretto host; project source/target 17).
-  * Unit-test sweep (excluding `RUN_TESTCONTAINERS=1`):
-    **198 tests, 195 successes, 0 failures, 3 skipped**. The
-    three Testcontainers E2E ITs (`PostgresSnsE2EIT`,
-    `MysqlRabbitMqE2EIT`, `AtLeastOnceDeliveryIT`) remain gated
-    by `RUN_TESTCONTAINERS=1` and are skipped via
-    `@EnabledIfEnvironmentVariable` in the default sweep.
+  * Unit-test sweep (default, no `RUN_TESTCONTAINERS`):
+    198 tests, 195 successes, 0 failures, 3 skipped.
+  * **Full sweep with `RUN_TESTCONTAINERS=1` +
+    `DOCKER_API_VERSION=1.43` (OrbStack)**:
+    **198 tests, 198 successes, 0 failures, 0 skipped**. The
+    three E2E ITs (`PostgresSnsE2EIT`, `MysqlRabbitMqE2EIT`,
+    `AtLeastOnceDeliveryIT`) actually exercise their full chains
+    against real containers.
+
+**Late fix uncovered by the Testcontainers run**
+
+`MysqlRabbitMqE2EIT` was constructing `MySqlBinlogRowChangeSource`
+without a `dataSource`. Round 9 cleanup had removed the
+`payload.rename: col0 → id` workaround mapping on the assumption
+that Wave 5.1's INFORMATION_SCHEMA column-name resolution covered
+it — but that resolution path requires a `DataSource` to be
+wired in, and `mysql-binlog-connector-java 0.29.2` does NOT
+surface column names from the binlog metadata even with
+`binlog_row_metadata=FULL`. Without the DataSource the source
+fell back to `col0`/`col1`/… and the mapping `include`
+projection emitted `{}` payloads. Caught only because Round 10
+actually ran the gated IT. Fixed by wiring a small HikariDataSource
+in the IT's `@BeforeAll`; production wiring through
+`CdcOutboxAutoConfiguration` was always correct.
 
 **Tech Lead persona**
 
-Tech Lead persona: PASS pending. The orchestrator's final pass
-will update this line with the verdict.
+Tech Lead persona: **PASS**. All four agent-delivered branches
+landed cleanly, conflicts resolved additively, full sweep green
+under both default and Testcontainers modes. One regression
+caught and fixed inline (MysqlRabbitMqE2EIT DataSource wiring).
+Detekt baseline cleanup, Wave 6 multi-module split, and optional
+`/ultrareview` defer to next cycles per the round 10 closeout
+table.
 
 ## Round 9 — Wave 5.1 + E2E coverage + arquitetura documentada (3 agentes em paralelo)
 
