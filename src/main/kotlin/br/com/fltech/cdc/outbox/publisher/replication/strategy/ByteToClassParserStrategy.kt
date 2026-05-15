@@ -1,8 +1,8 @@
-package shop.inventa.pg2sns4k.replication.strategy
+package br.com.fltech.cdc.outbox.publisher.replication.strategy
 
+import br.com.fltech.cdc.outbox.publisher.replication.config.ReplicationConfiguration
+import br.com.fltech.cdc.outbox.publisher.replication.enums.FormatVersionEnum
 import org.springframework.stereotype.Component
-import shop.inventa.pg2sns4k.replication.config.ReplicationConfiguration
-import shop.inventa.pg2sns4k.replication.enums.FormatVersionEnum
 
 @Component
 class ByteToClassParserStrategy(

@@ -1,4 +1,4 @@
-package shop.inventa.pg2sns4k.replication.connector
+package br.com.fltech.cdc.outbox.publisher.replication.connector
 
 import java.sql.Connection
 import java.sql.DriverManager

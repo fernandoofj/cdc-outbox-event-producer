@@ -1,10 +1,10 @@
-package shop.inventa.pg2sns4k.workflow
+package br.com.fltech.cdc.outbox.publisher.workflow
 
+import br.com.fltech.cdc.outbox.publisher.aws.sns.dto.SNSMessage
+import br.com.fltech.cdc.outbox.publisher.replication.connector.PostgresConnector
 import org.postgresql.replication.LogSequenceNumber
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
-import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessage
-import shop.inventa.pg2sns4k.replication.connector.PostgresConnector
 
 @Component
 class SlotReaderCallback(

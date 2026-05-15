@@ -1,4 +1,4 @@
-package shop.inventa.pg2sns4k.replication.config
+package br.com.fltech.cdc.outbox.publisher.replication.config
 
 object ReplicationConfigurationMother {
 

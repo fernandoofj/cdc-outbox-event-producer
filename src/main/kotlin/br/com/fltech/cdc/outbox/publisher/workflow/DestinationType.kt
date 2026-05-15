@@ -1,4 +1,4 @@
-package shop.inventa.pg2sns4k.workflow
+package br.com.fltech.cdc.outbox.publisher.workflow
 
 enum class DestinationType {
     SQS, SNS

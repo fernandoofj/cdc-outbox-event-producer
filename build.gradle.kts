@@ -18,7 +18,7 @@ plugins {
 
 apply(plugin = "docker-compose")
 
-group = "io.cdcoutbox"
+group = "br.com.fltech.cdc.outbox"
 version = "0.0.10"
 
 repositories {

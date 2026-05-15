@@ -22,7 +22,7 @@
  * language governing permissions and limitations under the Apache License.
  *
  */
-package shop.inventa.pg2sns4k.replication.model
+package br.com.fltech.cdc.outbox.publisher.replication.model
 
 import com.fasterxml.jackson.annotation.JsonCreator
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties

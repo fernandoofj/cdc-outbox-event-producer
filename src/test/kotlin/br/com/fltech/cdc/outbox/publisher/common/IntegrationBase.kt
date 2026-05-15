@@ -1,16 +1,16 @@
-package shop.inventa.pg2sns4k.common
+package br.com.fltech.cdc.outbox.publisher.common
 
-import org.junit.jupiter.api.TestInstance
-import org.slf4j.LoggerFactory
-import org.testcontainers.junit.jupiter.Testcontainers
-import shop.inventa.pg2sns4k.aws.common.AWSParamaters
-import shop.inventa.pg2sns4k.replication.config.PostgresConfiguration
-import shop.inventa.pg2sns4k.replication.config.ReplicationConfiguration
-import shop.inventa.pg2sns4k.replication.connector.DefaultConnectionProvider
+import br.com.fltech.cdc.outbox.publisher.aws.common.AWSParamaters
+import br.com.fltech.cdc.outbox.publisher.replication.config.PostgresConfiguration
+import br.com.fltech.cdc.outbox.publisher.replication.config.ReplicationConfiguration
+import br.com.fltech.cdc.outbox.publisher.replication.connector.DefaultConnectionProvider
 import java.io.FileInputStream
 import java.sql.Connection
 import java.sql.SQLException
 import java.util.Properties
+import org.junit.jupiter.api.TestInstance
+import org.slf4j.LoggerFactory
+import org.testcontainers.junit.jupiter.Testcontainers
 
 @Testcontainers
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)

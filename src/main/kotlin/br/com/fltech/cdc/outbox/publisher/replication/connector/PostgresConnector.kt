@@ -1,19 +1,19 @@
-package shop.inventa.pg2sns4k.replication.connector
+package br.com.fltech.cdc.outbox.publisher.replication.connector
 
-import org.postgresql.PGConnection
-import org.postgresql.replication.LogSequenceNumber
-import org.postgresql.replication.PGReplicationConnection
-import org.postgresql.replication.PGReplicationStream
-import org.postgresql.util.PSQLException
-import org.slf4j.LoggerFactory
-import shop.inventa.pg2sns4k.replication.config.PostgresConfiguration
-import shop.inventa.pg2sns4k.replication.config.ReplicationConfiguration
+import br.com.fltech.cdc.outbox.publisher.replication.config.PostgresConfiguration
+import br.com.fltech.cdc.outbox.publisher.replication.config.ReplicationConfiguration
 import java.nio.ByteBuffer
 import java.sql.Connection
 import java.sql.SQLException
 import java.util.Properties
 import java.util.concurrent.TimeUnit
 import kotlin.math.pow
+import org.postgresql.PGConnection
+import org.postgresql.replication.LogSequenceNumber
+import org.postgresql.replication.PGReplicationConnection
+import org.postgresql.replication.PGReplicationStream
+import org.postgresql.util.PSQLException
+import org.slf4j.LoggerFactory
 
 @Suppress("TooManyFunctions")
 open class PostgresConnector(

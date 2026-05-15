@@ -1,6 +1,6 @@
-package shop.inventa.pg2sns4k.replication.strategy
+package br.com.fltech.cdc.outbox.publisher.replication.strategy
 
-import shop.inventa.pg2sns4k.replication.model.Change
+import br.com.fltech.cdc.outbox.publisher.replication.model.Change
 import java.nio.ByteBuffer
 
 interface ByteToClassParser {

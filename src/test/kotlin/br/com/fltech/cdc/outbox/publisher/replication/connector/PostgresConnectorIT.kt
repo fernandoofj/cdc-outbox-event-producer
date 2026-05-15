@@ -1,15 +1,15 @@
-package shop.inventa.pg2sns4k.replication.connector
+package br.com.fltech.cdc.outbox.publisher.replication.connector
 
+import br.com.fltech.cdc.outbox.publisher.aws.sns.dto.SNSMessageMother
+import br.com.fltech.cdc.outbox.publisher.common.IntegrationBase
+import br.com.fltech.cdc.outbox.publisher.jackson.ObjectMapperSingleton.defaultMapper
+import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
-import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessageMother
-import shop.inventa.pg2sns4k.common.IntegrationBase
-import shop.inventa.pg2sns4k.jackson.ObjectMapperSingleton.defaultMapper
-import kotlin.test.assertEquals
-import kotlin.test.assertNotEquals
-import kotlin.test.assertNull
 
 internal class PostgresConnectorIT : IntegrationBase() {
 

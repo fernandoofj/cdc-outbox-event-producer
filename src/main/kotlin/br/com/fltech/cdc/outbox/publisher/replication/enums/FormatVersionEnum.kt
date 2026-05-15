@@ -1,4 +1,4 @@
-package shop.inventa.pg2sns4k.replication.enums
+package br.com.fltech.cdc.outbox.publisher.replication.enums
 
 enum class FormatVersionEnum(
     val code: String

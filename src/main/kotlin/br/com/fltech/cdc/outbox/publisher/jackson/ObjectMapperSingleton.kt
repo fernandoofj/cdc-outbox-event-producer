@@ -1,4 +1,4 @@
-package shop.inventa.pg2sns4k.jackson
+package br.com.fltech.cdc.outbox.publisher.jackson
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.SerializationFeature

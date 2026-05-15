@@ -16,7 +16,7 @@ Despite the original "CDC" naming, the module does **not** propagate raw
 Pattern** with **zero outbox table**: the outbox row is replaced by a logical
 WAL message that lives only in the replication stream. Insert/update/delete
 events that arrive in the slot are deliberately discarded
-([SlotReaderMessageProducer.kt:124](src/main/kotlin/shop/inventa/pg2sns4k/workflow/SlotReaderMessageProducer.kt:124)).
+([SlotReaderMessageProducer.kt:124](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt:124)).
 
 ---
 
@@ -131,7 +131,7 @@ SlotReaderMessageProducer(
 
 > Run this on **exactly one** instance per slot. The slot is single-consumer
 > by design; multiple readers will fight for it. See
-> [`PostgresConnector.handleCurrentlyRunningProcessOnSlotException`](src/main/kotlin/shop/inventa/pg2sns4k/replication/connector/PostgresConnector.kt:136)
+> [`PostgresConnector.handleCurrentlyRunningProcessOnSlotException`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/replication/connector/PostgresConnector.kt:136)
 > for the back-off behavior.
 
 ### Postgres prerequisites
@@ -158,7 +158,7 @@ The destination is encoded in the WAL message prefix:
 | `SNS\|topic-name`       | SNS topic        | Explicit form                        |
 | `SQS\|queue-name`       | SQS queue        | Pipe `\|` separates type and name    |
 
-Parsed at [`SlotReaderMessageProducer.parsePrefix`](src/main/kotlin/shop/inventa/pg2sns4k/workflow/SlotReaderMessageProducer.kt:154).
+Parsed at [`SlotReaderMessageProducer.parsePrefix`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt:154).
 The hard-coded enum (`DestinationType.SNS|SQS`) and pipe separator are the
 first thing the [hexagonal refactor](#target-architecture-hexagonal) replaces.
 
@@ -197,11 +197,11 @@ first thing the [hexagonal refactor](#target-architecture-hexagonal) replaces.
 
 ## Honest assessment of the current code
 
-Findings from a top-down read of [`src/main/kotlin/...`](src/main/kotlin/shop/inventa/pg2sns4k):
+Findings from a top-down read of [`src/main/kotlin/...`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher):
 
 1. **Connection management is bare.**
    `DefaultConnectionProvider` calls `DriverManager.getConnection` directly
-   ([DefaultConnectionProvider.kt:7](src/main/kotlin/shop/inventa/pg2sns4k/replication/connector/DefaultConnectionProvider.kt:7)).
+   ([DefaultConnectionProvider.kt:7](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/replication/connector/DefaultConnectionProvider.kt:7)).
    No pooling for the query connection, no TCP keep-alive, no socket
    timeout, no `connectTimeout`. A network blip during connect blocks
    indefinitely.
@@ -209,7 +209,7 @@ Findings from a top-down read of [`src/main/kotlin/...`](src/main/kotlin/shop/in
 2. **Reconnect is "throw it all away and start over".**
    Any `SQLException` in the streaming loop unwinds the entire
    `use { }` block and reconstructs the connector
-   ([SlotReaderMessageProducer.kt:52](src/main/kotlin/shop/inventa/pg2sns4k/workflow/SlotReaderMessageProducer.kt:52)).
+   ([SlotReaderMessageProducer.kt:52](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt:52)).
    Only the `57P03` (recovery mode) state has a tailored sleep — every
    other failure spins immediately. There is **no exponential back-off** on
    the reconnect path, only on the "slot already in use" path.
@@ -219,7 +219,7 @@ Findings from a top-down read of [`src/main/kotlin/...`](src/main/kotlin/shop/in
    inside `onSNSSuccess`/`onSQSSuccess`. But if message **N** fails and
    message **N+1** succeeds, `onSuccess` will call
    `setAppliedLSN(lastReceivedLsn)` — which is the LSN of N+1. **Message N
-   is silently dropped** ([SlotReaderCallback.kt:43](src/main/kotlin/shop/inventa/pg2sns4k/workflow/SlotReaderCallback.kt:43)).
+   is silently dropped** ([SlotReaderCallback.kt:43](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderCallback.kt:43)).
    Correct behavior is to halt advancement on failure, retry with
    back-off, and only resume the LSN advance after the failing message
    succeeds or is dead-lettered.
@@ -230,7 +230,7 @@ Findings from a top-down read of [`src/main/kotlin/...`](src/main/kotlin/shop/in
 
 5. **`running` is not `@Volatile`.**
    `stopStreaming()` may take a while to be observed.
-   ([SlotReaderMessageProducer.kt:30](src/main/kotlin/shop/inventa/pg2sns4k/workflow/SlotReaderMessageProducer.kt:30))
+   ([SlotReaderMessageProducer.kt:30](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt:30))
 
 6. **Spring Cloud AWS Messaging 2.4.4 is end-of-life.**
    `io.awspring.cloud:spring-cloud-aws-messaging:2.4.4` was deprecated
@@ -298,7 +298,7 @@ project and add a `DebeziumEngineCdcSource` adapter for the row-level case.
 
 ## Roadmap
 
-Mapped 1:1 to the six items in the brief:
+Mapped to the items in the brief plus follow-ups raised in review:
 
 | # | Theme | Deliverable | Wave |
 |---|---|---|---|
@@ -308,9 +308,51 @@ Mapped 1:1 to the six items in the brief:
 | 4 | Multi-DB via hexagonal | `core` module exposing `CdcSource` port; `adapter-postgres` (modernized, pgoutput option, PG16+), `adapter-mysql` (binlog + outbox table fallback). Stubs for `adapter-sqlserver` (CT/CDC) and `adapter-oracle` (LogMiner / OpenLogReplicator) | Wave 3 |
 | 5 | Multi-broker via hexagonal | `EventSink` port; adapters: `adapter-sink-sns`, `adapter-sink-sqs`, `adapter-sink-kafka`, `adapter-sink-rabbitmq`. Composite + Router sinks for fan-out and migration scenarios | Wave 4 |
 | 6 | Tests | Unit (codec, routing, retry, sinks with mocked clients) + integration via Testcontainers matrix (PG/MySQL × SNS/SQS/Kafka/RabbitMQ) + fault-injection (broker outage, DB restart, slot conflict) | continuous |
+| 7 | **Configurable table / field mapping** | Declarative `TableMapping` that selects which tables and columns flow through the producer, how raw column changes (`I/U/D`) are translated into outbound `OutboxEvent`s (eventType derivation, payload projection, key extraction, header attributes), and which sink/topic each table targets. Same surface used by both the WAL-message and row-level CDC flavours. Plays well with item 4 (multi-DB) and item 5 (multi-broker). | Wave 3.5 |
 
 Wave boundaries are deliberate so each wave merges to `main` independently
 and the library stays usable in between.
+
+### Item 7 — flexibility of table / field mapping
+
+Concretely, the library will expose a typed configuration block of the form:
+
+```yaml
+cdc:
+  outbox:
+    mappings:
+      - table: public.orders                  # FQ table name (schema.table)
+        capture: [I, U, D]                    # which ops to forward (default: I,U,D)
+        key:                                  # how to derive the partition / domain key
+          columns: [id]
+          format: "{id}"                      # template; defaults to first column
+        payload:                              # which columns become the event payload
+          include: [id, status, total_cents, updated_at]
+          exclude: []                         # mutually exclusive with include
+          rename:                             # column → JSON field
+            total_cents: totalCents
+            updated_at: updatedAt
+        eventType:                            # how to build the event type string
+          template: "orders.{op}"             # {op}=created|updated|deleted
+        routing:
+          sink: sns://orders-events           # explicit; otherwise falls back to a default
+          attributes:                         # passed through as SNS MessageAttributes / Kafka headers
+            tenant: "{tenant_id}"
+      - table: public.invoices
+        ...                                   # one block per captured table
+```
+
+The same `TableMapping` model is used by:
+
+- The Postgres logical-replication source — when the configured output
+  plugin emits row-level changes (`I/U/D`), the mapping decides what
+  becomes an `OutboxEvent`.
+- The MySQL binlog source.
+- The outbox-table poller variant — the mapping describes the
+  `outbox_events` table schema.
+
+Behaviour parity is enforced by the same test suite running against
+each source adapter.
 
 ---
 
@@ -511,6 +553,19 @@ SNS topic and SQS queue.
 | Detekt        | 1.20.0  |
 | ktlint        | 11.0.0  |
 | Testcontainers| 1.19.1  |
+
+---
+
+## Working with Claude / AI agents on this repo
+
+The repo carries a [`CLAUDE.md`](CLAUDE.md) with the engineering rules
+that every AI-assisted change must follow, and a Tech Lead persona at
+[`.claude/agents/tech-lead.md`](.claude/agents/tech-lead.md) that is
+**invoked before every non-trivial commit** to audit the diff against
+the user's last instruction. The Tech Lead applies a fixed checklist
+(deliverables, hexagonal compliance, delivery guarantees, tests,
+operability) and returns a PASS / FAIL verdict. Commits with
+BLOCKER- or MAJOR-severity findings must not land on `main`.
 
 ---
 

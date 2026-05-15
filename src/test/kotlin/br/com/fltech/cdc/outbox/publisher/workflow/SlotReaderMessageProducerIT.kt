@@ -1,5 +1,13 @@
-package shop.inventa.pg2sns4k.workflow
+package br.com.fltech.cdc.outbox.publisher.workflow
 
+import br.com.fltech.cdc.outbox.publisher.aws.common.PayloadMother
+import br.com.fltech.cdc.outbox.publisher.aws.sns.SNSProducer
+import br.com.fltech.cdc.outbox.publisher.aws.sns.dto.SNSMessage
+import br.com.fltech.cdc.outbox.publisher.aws.sns.dto.SNSMessageMother
+import br.com.fltech.cdc.outbox.publisher.aws.sqs.SQSProducer
+import br.com.fltech.cdc.outbox.publisher.common.IntegrationBase
+import br.com.fltech.cdc.outbox.publisher.jackson.ObjectMapperSingleton.defaultMapper
+import br.com.fltech.cdc.outbox.publisher.replication.enums.FormatVersionEnum
 import io.mockk.CapturingSlot
 import io.mockk.every
 import io.mockk.impl.annotations.MockK
@@ -7,21 +15,13 @@ import io.mockk.junit5.MockKExtension
 import io.mockk.just
 import io.mockk.runs
 import io.mockk.verify
+import java.math.BigDecimal
+import java.util.concurrent.Executors
+import kotlin.test.assertEquals
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
-import shop.inventa.pg2sns4k.aws.common.PayloadMother
-import shop.inventa.pg2sns4k.aws.sns.SNSProducer
-import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessage
-import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessageMother
-import shop.inventa.pg2sns4k.aws.sqs.SQSProducer
-import shop.inventa.pg2sns4k.common.IntegrationBase
-import shop.inventa.pg2sns4k.jackson.ObjectMapperSingleton.defaultMapper
-import shop.inventa.pg2sns4k.replication.enums.FormatVersionEnum
-import java.math.BigDecimal
-import java.util.concurrent.Executors
-import kotlin.test.assertEquals
 
 @ExtendWith(MockKExtension::class)
 internal class SlotReaderMessageProducerIT : IntegrationBase() {

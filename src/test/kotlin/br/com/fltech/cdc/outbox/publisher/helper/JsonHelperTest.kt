@@ -1,4 +1,4 @@
-package shop.inventa.pg2sns4k.helper
+package br.com.fltech.cdc.outbox.publisher.helper
 
 import io.mockk.junit5.MockKExtension
 import org.junit.jupiter.api.Assertions.assertEquals

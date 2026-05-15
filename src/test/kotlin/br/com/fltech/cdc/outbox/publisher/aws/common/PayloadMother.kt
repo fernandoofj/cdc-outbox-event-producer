@@ -1,4 +1,4 @@
-package shop.inventa.pg2sns4k.aws.common
+package br.com.fltech.cdc.outbox.publisher.aws.common
 
 object PayloadMother {
 

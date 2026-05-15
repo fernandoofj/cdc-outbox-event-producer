@@ -1,6 +1,6 @@
-package shop.inventa.pg2sns4k.aws.sns
+package br.com.fltech.cdc.outbox.publisher.aws.sns
 
-import shop.inventa.pg2sns4k.aws.sns.dto.SNSMessage
+import br.com.fltech.cdc.outbox.publisher.aws.sns.dto.SNSMessage
 
 interface SNSProducer {
 

@@ -1,4 +1,4 @@
-package shop.inventa.pg2sns4k.aws.sqs
+package br.com.fltech.cdc.outbox.publisher.aws.sqs
 
 import io.awspring.cloud.messaging.core.QueueMessagingTemplate
 import org.springframework.stereotype.Component

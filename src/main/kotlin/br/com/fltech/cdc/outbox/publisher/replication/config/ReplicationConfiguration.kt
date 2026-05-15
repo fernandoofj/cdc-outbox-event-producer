@@ -1,6 +1,6 @@
-package shop.inventa.pg2sns4k.replication.config
+package br.com.fltech.cdc.outbox.publisher.replication.config
 
-import shop.inventa.pg2sns4k.replication.enums.FormatVersionEnum
+import br.com.fltech.cdc.outbox.publisher.replication.enums.FormatVersionEnum
 import java.util.Properties
 import java.util.concurrent.TimeUnit
 

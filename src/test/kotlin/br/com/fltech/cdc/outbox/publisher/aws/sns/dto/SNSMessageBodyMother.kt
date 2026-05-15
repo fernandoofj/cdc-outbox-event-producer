@@ -1,6 +1,6 @@
-package shop.inventa.pg2sns4k.aws.sns.dto
+package br.com.fltech.cdc.outbox.publisher.aws.sns.dto
 
-import shop.inventa.pg2sns4k.aws.common.PayloadMother
+import br.com.fltech.cdc.outbox.publisher.aws.common.PayloadMother
 import java.time.LocalDateTime
 import java.util.UUID
 
