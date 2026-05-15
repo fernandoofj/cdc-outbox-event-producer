@@ -19,6 +19,7 @@ include(
     ":sink-rabbitmq",
     ":lag-probes",
     ":legacy",
+    ":dlq-replay",
     ":spring-boot-starter",
     ":test-support",
 )
