@@ -1,10 +1,12 @@
 package br.com.fltech.cdc.outbox.publisher.observability
 
 import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.Timer
 import java.time.Duration
+import java.util.function.Supplier
 
 /**
  * Thin Micrometer facade for the CDC-outbox pipeline.
@@ -18,6 +20,10 @@ import java.time.Duration
  * (`cdc.outbox.<subject>.<action>`) — Micrometer adds the `_total` suffix to
  * counters and the `_seconds` family to timers on export.
  */
+// TooManyFunctions: the facade intentionally carries one method per
+// metric so consumers never see the registry directly. Splitting it
+// would scatter the metric inventory across files.
+@Suppress("TooManyFunctions")
 class CdcOutboxMetrics(private val registry: MeterRegistry?) {
 
     fun recordMessageRead(slot: String) {
@@ -142,6 +148,28 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         }
     }
 
+    /**
+     * Registers a Micrometer [Gauge] reporting replication lag (in
+     * bytes) for the source identified by [sourceLabel]. The [supplier]
+     * is invoked by Micrometer on every scrape; implementations MUST
+     * keep it cheap — typically backing it with an [java.util.concurrent.atomic.AtomicLong]
+     * updated by a sampler on a slower cadence than the scrape interval.
+     *
+     * No-op when no [MeterRegistry] is wired, mirroring the rest of
+     * the facade. Registration is idempotent at the Micrometer layer:
+     * the registry deduplicates by (name + tags), so calling this
+     * twice with the same `sourceLabel` returns the same meter rather
+     * than failing.
+     */
+    fun registerLagGauge(sourceLabel: String, supplier: () -> Number) {
+        registry?.let {
+            Gauge.builder(SOURCE_LAG_BYTES, Supplier<Number> { supplier() })
+                .description("Replication lag (bytes) between the source's persisted checkpoint and the upstream head")
+                .tags(Tags.of(TAG_SOURCE, sourceLabel))
+                .register(it)
+        }
+    }
+
     companion object {
         const val MESSAGES_READ = "cdc.outbox.messages.read"
         const val MESSAGES_PUBLISHED = "cdc.outbox.messages.published"
@@ -155,6 +183,7 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         const val BINLOG_PARSE_ERRORS = "cdc.outbox.source.binlog.parse_errors"
         const val BINLOG_COLUMN_RESOLUTION_FALLBACKS =
             "cdc.outbox.source.binlog.column_resolution.fallbacks"
+        const val SOURCE_LAG_BYTES = "cdc.outbox.source.lag_bytes"
 
         const val TAG_SLOT = "slot"
         const val TAG_SINK = "sink"
@@ -163,6 +192,7 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         const val TAG_REASON = "reason"
         const val TAG_ATTEMPT = "attempt"
         const val TAG_TABLE = "table"
+        const val TAG_SOURCE = "source"
 
         /** Returns a no-op instance that records nothing. */
         fun noop(): CdcOutboxMetrics = CdcOutboxMetrics(null)

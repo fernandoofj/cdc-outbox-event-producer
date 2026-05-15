@@ -2,18 +2,24 @@ package br.com.fltech.cdc.outbox.publisher.infra.spring
 
 import br.com.fltech.cdc.outbox.publisher.adapter.checkpoint.FileCheckpointStore
 import br.com.fltech.cdc.outbox.publisher.adapter.deadletter.LegacyDeadLetterPortAdapter
+import br.com.fltech.cdc.outbox.publisher.adapter.lag.mysql.MysqlLagProbe
+import br.com.fltech.cdc.outbox.publisher.adapter.lag.postgres.PostgresLagProbe
+import br.com.fltech.cdc.outbox.publisher.adapter.source.mysql.MySqlBinlogRowChangeSource
 import br.com.fltech.cdc.outbox.publisher.adapter.source.postgres.PgLogicalReplicationCdcSource
+import br.com.fltech.cdc.outbox.publisher.adapter.source.postgres.PgWalRowChangeSource
 import br.com.fltech.cdc.outbox.publisher.core.application.CdcProcessor
 import br.com.fltech.cdc.outbox.publisher.core.application.MappingCdcSource
 import br.com.fltech.cdc.outbox.publisher.core.port.CdcSource
 import br.com.fltech.cdc.outbox.publisher.core.port.CheckpointStore
 import br.com.fltech.cdc.outbox.publisher.core.port.DeadLetterPort
 import br.com.fltech.cdc.outbox.publisher.core.port.EventSinkRegistry
+import br.com.fltech.cdc.outbox.publisher.core.port.LagProbe
 import br.com.fltech.cdc.outbox.publisher.core.port.MappingRules
 import br.com.fltech.cdc.outbox.publisher.core.port.RowChangeSource
 import br.com.fltech.cdc.outbox.publisher.deadletter.DeadLetterSink
 import br.com.fltech.cdc.outbox.publisher.jackson.ObjectMapperSingleton.defaultMapper
 import br.com.fltech.cdc.outbox.publisher.observability.CdcOutboxMetrics
+import br.com.fltech.cdc.outbox.publisher.observability.LagProbeScheduler
 import br.com.fltech.cdc.outbox.publisher.replication.config.PostgresConfiguration
 import br.com.fltech.cdc.outbox.publisher.replication.config.ReplicationConfiguration
 import br.com.fltech.cdc.outbox.publisher.replication.connector.ConnectionProvider
@@ -27,6 +33,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Bean
 import java.nio.file.Paths
+import javax.sql.DataSource
 
 /**
  * Wires the hexagonal orchestrator path:
@@ -165,4 +172,92 @@ open class CdcOutboxHexagonalAutoConfiguration {
     @ConditionalOnMissingBean(CdcProcessorLifecycle::class)
     open fun cdcOutboxProcessorLifecycle(cdcOutboxProcessor: CdcProcessor): CdcProcessorLifecycle =
         CdcProcessorLifecycle(cdcOutboxProcessor)
+
+    /**
+     * Postgres [LagProbe] — wired only when the consumer registered
+     * a [PgWalRowChangeSource]. Reuses the shared
+     * [ConnectionProvider] / [PostgresConfiguration] so the SQL hits
+     * the same query-mode pool as the rest of the chain.
+     *
+     * Mutually exclusive with the MySQL probe at the
+     * `@ConditionalOnBean(LagProbe::class)` level: whichever runs
+     * first wins, and a consumer who needs both should wire their
+     * own probe bean.
+     */
+    @Bean("cdcOutboxPostgresLagProbe")
+    @ConditionalOnProperty(
+        prefix = "cdc.outbox.lag",
+        name = ["enabled"],
+        havingValue = "true",
+        matchIfMissing = true,
+    )
+    @ConditionalOnBean(PgWalRowChangeSource::class)
+    @ConditionalOnMissingBean(LagProbe::class)
+    open fun cdcOutboxPostgresLagProbe(
+        postgresConfiguration: PostgresConfiguration,
+        connectionProvider: ConnectionProvider,
+        properties: CdcOutboxProperties,
+    ): LagProbe = PostgresLagProbe(
+        postgresConfiguration = postgresConfiguration,
+        connectionProvider = connectionProvider,
+        slotName = properties.replication.slotName,
+    )
+
+    /**
+     * MySQL [LagProbe] — wired only when the consumer registered a
+     * [MySqlBinlogRowChangeSource] AND a [CheckpointStore] AND a
+     * [DataSource]. The checkpoint store dependency is explicit
+     * because the probe reads the `binlog:<serverId>` key the binlog
+     * source persists on every ack — without it, lag is
+     * unrecoverable from the consumer side and the probe would
+     * always return `null`.
+     */
+    @Bean("cdcOutboxMysqlLagProbe")
+    @ConditionalOnProperty(
+        prefix = "cdc.outbox.lag",
+        name = ["enabled"],
+        havingValue = "true",
+        matchIfMissing = true,
+    )
+    @ConditionalOnBean(value = [MySqlBinlogRowChangeSource::class, CheckpointStore::class, DataSource::class])
+    @ConditionalOnMissingBean(LagProbe::class)
+    open fun cdcOutboxMysqlLagProbe(
+        dataSource: DataSource,
+        checkpointStore: CheckpointStore,
+        mySqlBinlogRowChangeSource: MySqlBinlogRowChangeSource,
+    ): LagProbe = MysqlLagProbe(
+        dataSource = dataSource,
+        checkpointStore = checkpointStore,
+        // The binlog source's serverId is the source of truth for
+        // the checkpoint key; reading it back here keeps the two
+        // sides aligned without a second property knob.
+        serverId = mySqlBinlogRowChangeSource.serverId,
+    )
+
+    /**
+     * Background sampler that feeds the `cdc.outbox.source.lag_bytes`
+     * Micrometer gauge. Started in `init-method` and stopped in
+     * `destroy-method` so it tracks the Spring context lifecycle
+     * without needing to extend `SmartLifecycle` — the probe is
+     * passive and has no ordering requirement against the
+     * orchestrator.
+     */
+    @Bean(initMethod = "start", destroyMethod = "stop")
+    @ConditionalOnProperty(
+        prefix = "cdc.outbox.lag",
+        name = ["enabled"],
+        havingValue = "true",
+        matchIfMissing = true,
+    )
+    @ConditionalOnBean(LagProbe::class)
+    @ConditionalOnMissingBean(LagProbeScheduler::class)
+    open fun cdcOutboxLagProbeScheduler(
+        lagProbe: LagProbe,
+        metrics: CdcOutboxMetrics,
+        properties: CdcOutboxProperties,
+    ): LagProbeScheduler = LagProbeScheduler(
+        probe = lagProbe,
+        metrics = metrics,
+        interval = properties.lag.interval,
+    )
 }
