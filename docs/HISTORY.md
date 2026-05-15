@@ -4,6 +4,139 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+## Round 10 — Round-9 follow-ups + Wave 5.2 (persisted checkpoint, Postgres I/U/D row source, hex pending-failure)
+
+Two feature branches merged into `main`, with a small README drift
+patch in between. Round 9 landed Wave 5.1 + the two E2E ITs + the
+arquitetura docs; Round 10 closes the residual MINORs that the Round
+9 architect review flagged AND ships Wave 5.2 (roadmap row 10).
+
+**Branch 1 — `chore/round-9-followups` (cleanup) → merge `9c9a007`**
+
+  * `MysqlRabbitMqE2EIT` now uses Awaitility polling on
+    `processor.snapshotState().msSinceLastActivity != Long.MAX_VALUE`
+    instead of a hard-coded 1500 ms `Thread.sleep`. The IT is now
+    timing-independent and runs ~200 ms faster in the happy path.
+  * The verbose `payload.rename: col0 → id` mapping fixture used by
+    `MysqlRabbitMqE2EIT` is gone — Wave 5.1 already landed the
+    `INFORMATION_SCHEMA` column-name resolution so the test no
+    longer needs to apologise for `col0`/`col1`/…
+  * Property-name casing standardised across docs:
+    `cdc.outbox.health.max-idle` (kebab) in YAML / prose, `maxIdle`
+    (camel) only as an Actuator detail-field name where it actually
+    appears in `CdcOutboxHealthIndicator` / `CdcProcessorHealthIndicator`.
+    Patched `README.md` line ~440 and `docs/ARCHITECTURE.md` line
+    ~578; verified those edits ship unchanged in this round.
+
+**Drift patch — `a9c6836`**
+
+After the cleanup merged but before the Wave 5.2 branch was
+prepared, the orchestrator noticed the README body prose still
+described Wave 5.1 items as "open" in a couple of places (the
+Round 9 architect had written from a pre-merge baseline). Commit
+`a9c6836 docs(round-9): patch stale Wave 5.1 references in README
+body` patched those without touching the roadmap table itself —
+that was left for this round.
+
+**Branch 2 — `feat/wave-5.2` (Wave 5.2) → merge `a159fa7`** (commit
+`a9c6836` parent, `a9a2e00` feature commit)
+
+  * **New port** `core/port/CheckpointStore` (`load(key) / save(key,
+    value)`) for persisting opaque per-source checkpoint markers
+    across restarts. Contractual invariants: `save` MUST be atomic
+    (crash mid-save cannot leave a corrupted value); `load` tolerates
+    corruption with WARN + `null` so the source falls back to its
+    natural start position. Single-threaded by orchestrator contract.
+  * **New adapter** `adapter/checkpoint/FileCheckpointStore`: one
+    JSON file per key under a configurable directory; `save` writes
+    a sibling `.tmp`, `FileChannel.force(true)`s (`fsync`), then
+    `Files.move(..., ATOMIC_MOVE, REPLACE_EXISTING)`. Falls back to
+    `REPLACE_EXISTING` (non-atomic) with WARN on filesystems that
+    refuse atomic move (some network mounts).
+  * **`MySqlBinlogRowChangeSource` wired** to the store: optional
+    `CheckpointStore?` constructor arg. `open()` loads
+    `"binlog:<serverId>"` and — when valid — programs the binlog
+    client via `setBinlogFilename` / `setBinlogPosition`. `ack()`
+    persists `<file>:<nextPosition>`. The legacy in-memory path is
+    preserved when no store is wired.
+  * **Column-name cache invalidation** in the same adapter: when a
+    `TABLE_MAP` arrives for a known `tableId` but with a different
+    `columnCount`, the cached name list is dropped and re-resolved
+    from `INFORMATION_SCHEMA` on the next row event. Closes Tech
+    Lead Round-9 MINOR #3.
+  * **New adapter** `adapter/source/postgres/PgWalRowChangeSource`:
+    Postgres row-level `RowChangeSource` that consumes wal2json `I`,
+    `U`, `D` records via the (now extended) `ByteToClassParserImplV2`
+    + `SlotMessageV2` / `Wal2JsonColumn`. Emits `RowChange` with
+    `before` (`identity` columns) / `after` (`columns` columns)
+    column maps. Coexists with `PgLogicalReplicationCdcSource` —
+    auto-config picks one or the other by bean wiring; they MUST
+    NOT run on the same slot.
+  * **Hex pending-failure surface**: `CdcProcessor.ProcessorState`
+    gained `pendingFailureCheckpoint: String?`. `CdcProcessorHealthIndicator`
+    now reports `DOWN` when it is non-null (precedence: pending >
+    not-running > not-iterating > idle > UP). Closes Wave 5.1's
+    deferred functional parity with the legacy indicator's
+    `pendingFailureLsn`.
+  * **Auto-config wiring**: `CdcOutboxHexagonalAutoConfiguration`
+    resolves `cdcOutboxSource` as
+    `MappingCdcSource(RowChangeSource, MappingRules)` when a
+    `RowChangeSource` bean exists (binlog OR new `PgWalRowChangeSource`),
+    falling back to `PgLogicalReplicationCdcSource` otherwise. New
+    properties: `cdc.outbox.checkpoint.enabled` (default `false`)
+    and `cdc.outbox.checkpoint.directory` (default
+    `.cdc-outbox-checkpoints`).
+  * **Tests**: `FileCheckpointStoreTest`, `InMemoryCheckpointStore`
+    test double, `PgWalRowChangeSourceTest`, plus extensions to
+    `MySqlBinlogRowChangeSourceTest`, `CdcProcessorTest`, and
+    `CdcProcessorHealthIndicatorTest` to cover the new branches.
+
+**Documentation in this round (the work this entry records)**
+
+  * `README.md` — flipped roadmap row 10 from "open" to "Wave 5.2 —
+    done", rewrote the cell to enumerate what shipped, added row 12
+    for explicit follow-ups (slot/binlog lag-as-gauge,
+    `FileCheckpointStore` orphan-`.tmp` sweep). Updated Players
+    integrados → Origens to mark `PgWalRowChangeSource` as Pronto
+    and to mention `CheckpointStore` wiring on the binlog row.
+    Replaced the "paridade entra na Onda 5.2" paragraph in
+    Observabilidade with a DONE description using the actual field
+    name `pendingFailureCheckpoint`. Added
+    `cdc.outbox.checkpoint.{enabled,directory}` to the Quick start
+    YAML and to the configuration-surface bullet list. Updated the
+    hexagonal Mermaid `flowchart LR` with a `PgWalRowChangeSource`
+    node and a dashed `load/save` arrow into a new `Checkpoint`
+    subgraph.
+  * `docs/ARCHITECTURE.md` — added a `CheckpointStore` subsection
+    under "Portas", a `PgWalRowChangeSource` subsection under
+    "Adaptadores de origem", a new "Adaptador de checkpoint
+    file-backed" top-level subsection covering
+    `FileCheckpointStore`'s atomic-save behaviour, and the new
+    `cdc.outbox.checkpoint.*` property block. Updated the hex
+    health indicator description to drop the "pending entra na
+    Onda 5.2" claim and reflect the now-done parity. Added a
+    `CheckpointStore` participant to the MySQL binlog → Kafka
+    `sequenceDiagram` (one `save("binlog:serverId", "file:pos")`
+    arrow after ack, with a caption noting the participant is
+    elided when no store is wired). Última atualização rev'd to
+    `a159fa7`.
+  * `docs/HISTORY.md` — this entry.
+
+**Verification (post-merge)**
+
+  * `./gradlew compileKotlin compileTestKotlin` PASS on JDK 21.
+  * Unit-test sweep (excluding `RUN_TESTCONTAINERS=1`):
+    **142 tests, 142 successes, 0 failures, 0 skipped**. The two
+    Testcontainers E2E ITs (`PostgresSnsE2EIT`,
+    `MysqlRabbitMqE2EIT`) remain gated by `RUN_TESTCONTAINERS=1`
+    and are skipped via `@EnabledIfEnvironmentVariable` in the
+    default sweep.
+
+**Tech Lead persona**
+
+Tech Lead persona: PASS pending. The orchestrator's final pass
+will update this line with the verdict.
+
 ## Round 9 — Wave 5.1 + E2E coverage + arquitetura documentada (3 agentes em paralelo)
 
 Three independent worker agents ran in parallel against `main` at
