@@ -73,6 +73,11 @@ dependencies {
     // is wired in the test scope below.
     compileOnly("com.mysql:mysql-connector-j:8.4.0")
 
+    // Wave 5 — MySQL binlog row source. mysql-binlog-connector-java
+    // streams the binary log directly (no polling). Optional;
+    // consumers wire it only when they configure the binlog source.
+    compileOnly("com.zendesk:mysql-binlog-connector-java:0.29.2")
+
     testImplementation(kotlin("test"))
     testImplementation("io.mockk:mockk:1.13.13")
     testImplementation("io.micrometer:micrometer-test:1.12.13")
@@ -94,6 +99,7 @@ dependencies {
     testImplementation("org.springframework.kafka:spring-kafka:3.2.4")
     testImplementation("org.springframework.amqp:spring-rabbit:3.1.7")
     testImplementation("com.mysql:mysql-connector-j:8.4.0")
+    testImplementation("com.zendesk:mysql-binlog-connector-java:0.29.2")
 
     // Wire an SLF4J binding for tests so Testcontainers' diagnostic
     // logging is visible during integration runs.

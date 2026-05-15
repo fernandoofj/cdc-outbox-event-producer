@@ -4,6 +4,95 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+## Round 8 — Wave 3.5 + Wave 5: TableMapping infra + MySQL binlog + hexagonal default
+
+Two waves shipped together because Wave 5 (MySQL binlog row source)
+only makes sense once Wave 3.5 has defined the `RowChange` value type
+and the `MappingRules` port — they share the same hexagonal seam.
+
+**Wave 3.5 — declarative table-mapping (brief item 7):**
+
+  * `core/domain/RowChange` — abstract I/U/D event (`Op`, `table`,
+    `sourceCheckpoint`, `occurredAt`, `before`/`after` column maps).
+  * `core/domain/TableMapping` — declarative spec: `capture`, `key
+    (columns, format)`, `payload (include, exclude, rename)` (include
+    XOR exclude enforced), `eventType (template)`, `routing (sink,
+    attributes)`. `Routing.init` requires `sink.contains("://")` so
+    a misconfigured `sink: "orders-events"` fails at startup, not
+    at the first mapped row (Tech Lead pass-1 MAJOR fix).
+  * `core/port/RowChangeSource` — lower-level adapter port for
+    sources that surface row-level CDC.
+  * `core/port/MappingRules` — `fun interface RowChange → OutboxEvent?`;
+    `MappingRules.EMPTY` always returns null.
+  * `core/application/DefaultMappingRules` — projects per
+    `TableMapping`. INSERT/UPDATE consult `after`, DELETE consults
+    `before`. Key template `{col}` substitution; default join with
+    `|`; empty key falls back to source checkpoint. EventType template
+    `{table}.{op}` (op → created/updated/deleted). Pluggable payload
+    serializer.
+  * `core/application/MappingCdcSource` — decorator that wraps a
+    `RowChangeSource` + `MappingRules` and satisfies `CdcSource`.
+    One row per `poll()`; mapped → return + buffer keyed by
+    `event.sourceCheckpoint`; unmapped → ack the underlying source +
+    return null.
+  * `CdcOutboxProperties.mappings: List<MappingProps>` (YAML-bindable
+    mirror with `toDomain()`); `CdcOutboxMappingAutoConfiguration`
+    uses `ObjectProvider<ObjectMapper>` for optional Jackson
+    (Tech Lead pass-1 MAJOR fix).
+
+**Wave 5 — MySQL binlog source + flip default to hexagonal:**
+
+  * `adapter/source/mysql/MySqlBinlogRowChangeSource` —
+    `RowChangeSource` backed by `mysql-binlog-connector-java:0.29.2`
+    (Zendesk artifact; package preserved as `com.github.shyiko.*`).
+    Streams `WRITE_ROWS` / `UPDATE_ROWS` / `DELETE_ROWS`, caches
+    `tableId → schema.table` from `TABLE_MAP`, tracks current binlog
+    filename across `ROTATE`. Checkpoint
+    `<binlog filename>:<EventHeaderV4.nextPosition>`. Internal
+    `LinkedBlockingQueue` (capacity 1024) for back-pressure. Cross-
+    thread state via `@Volatile` + `AtomicBoolean` +
+    `AtomicReference` + `ConcurrentHashMap`.
+    Known limitations (also called out in roadmap row 9 / Wave 5.1):
+      - column names exposed as `col0`/`col1`/… until
+        `INFORMATION_SCHEMA` lookup lands;
+      - `lastAckedCheckpoint` in memory only;
+      - event-handling Testcontainers MySQL IT deferred.
+  * `CdcOutboxProperties.Processor.kind` default flipped to
+    `HEXAGONAL`. Legacy chain remains opt-in via
+    `cdc.outbox.processor.kind=legacy`.
+  * `CdcOutboxHexagonalAutoConfiguration` `matchIfMissing=true`;
+    legacy `cdcOutboxLifecycle` requires explicit
+    `cdc.outbox.processor.kind=legacy`. The two are now mutually
+    exclusive on property value, not on absence.
+  * `CdcProcessorHealthIndicator` — new Actuator indicator for the
+    hex chain. Paired with `CdcOutboxHealthIndicator` (legacy) inside
+    `CdcOutboxHealthAutoConfiguration`; both register under the bean
+    name `cdcOutboxHealthIndicator` gated by `@ConditionalOnBean` of
+    their respective lifecycle types. Flipping the default no longer
+    silently loses `/actuator/health` (Tech Lead pass-2 MAJOR fix).
+  * `ProcessorKindToggleTest` — `ApplicationContextRunner` slices
+    that assert all three property states: unset → hex chain + hex
+    indicator; `=hexagonal` → same; `=legacy` → legacy chain +
+    legacy indicator + no hex beans (Tech Lead pass-2 MAJOR fix).
+
+**Tests:** Wave 3.5 → `DefaultMappingRulesTest` (12 cases) +
+`MappingCdcSourceTest` (6 cases). Wave 5 →
+`MySqlBinlogRowChangeSourceTest` (4 lifecycle smoke cases) +
+`ProcessorKindToggleTest` (3 cases). Full sweep: **103/103 green**.
+
+**Tech Lead:** three passes.
+
+  * Pass 1 (after Wave 3.5 first draft): PASS with 2 MAJORs — URI
+    validation missing on `TableMapping.Routing.init`,
+    `ObjectMapper?` parameter wouldn't actually inject null. Both
+    fixed before Wave 5 started.
+  * Pass 2 (after Wave 5 first draft): FAIL — health indicator
+    silently disappeared on the default flip; no test asserted the
+    flip; HISTORY / README stale.
+  * Pass 3: PASS — hex health indicator shipped + dual-branched
+    autoconfig; `ProcessorKindToggleTest` covers all three states;
+    README rows 7 + 8 + 9 refreshed; this entry recorded.
+
 ## Round 7 — Wave 3 + Wave 4: multi-DB + multi-broker hexagonal
 
 Delivered together because the source side and the sink side share the

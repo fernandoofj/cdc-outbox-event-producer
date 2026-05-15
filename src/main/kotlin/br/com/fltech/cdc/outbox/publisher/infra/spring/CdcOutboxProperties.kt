@@ -1,5 +1,7 @@
 package br.com.fltech.cdc.outbox.publisher.infra.spring
 
+import br.com.fltech.cdc.outbox.publisher.core.domain.RowChange
+import br.com.fltech.cdc.outbox.publisher.core.domain.TableMapping
 import br.com.fltech.cdc.outbox.publisher.replication.enums.FormatVersionEnum
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.NestedConfigurationProperty
@@ -44,6 +46,34 @@ data class CdcOutboxProperties(
 
     @NestedConfigurationProperty
     val processor: Processor = Processor(),
+
+    /**
+     * Declarative table-mapping list (Wave 3.5 / item 7 of the brief).
+     * Each entry binds one source-table FQ name to its outbound shape
+     * (key, payload projection, eventType template, sink + attributes).
+     * Consumed by `core.application.DefaultMappingRules`.
+     *
+     * Bindable via YAML:
+     * ```
+     * cdc.outbox.mappings:
+     *   - table: public.orders
+     *     capture: [INSERT, UPDATE, DELETE]
+     *     key:
+     *       columns: [id]
+     *       format: "order:{id}"
+     *     payload:
+     *       include: [id, status, total_cents]
+     *       rename:
+     *         total_cents: totalCents
+     *     event-type:
+     *       template: "orders.{op}"
+     *     routing:
+     *       sink: sns://orders-events
+     *       attributes:
+     *         tenant: "{tenant_id}"
+     * ```
+     */
+    val mappings: List<MappingProps> = emptyList(),
 ) {
 
     data class Postgres(
@@ -107,19 +137,68 @@ data class CdcOutboxProperties(
         val queueName: String? = null,
     )
 
+    /**
+     * Spring-friendly mirror of [TableMapping] for `@ConfigurationProperties`
+     * binding. Translated to the immutable [TableMapping] domain type
+     * by `CdcOutboxMappingAutoConfiguration` at startup.
+     */
+    data class MappingProps(
+        val table: String = "",
+        val capture: Set<RowChange.Op> = RowChange.Op.values().toSet(),
+        val key: KeyProps = KeyProps(),
+        val payload: PayloadProps = PayloadProps(),
+        val eventType: EventTypeProps = EventTypeProps(),
+        val routing: RoutingProps = RoutingProps(),
+    ) {
+        fun toDomain(): TableMapping = TableMapping(
+            table = table,
+            capture = capture,
+            key = TableMapping.Key(columns = key.columns, format = key.format),
+            payload = TableMapping.Payload(
+                include = payload.include,
+                exclude = payload.exclude,
+                rename = payload.rename,
+            ),
+            eventType = TableMapping.EventType(template = eventType.template),
+            routing = TableMapping.Routing(sink = routing.sink, attributes = routing.attributes),
+        )
+    }
+
+    data class KeyProps(
+        val columns: List<String> = emptyList(),
+        val format: String? = null,
+    )
+
+    data class PayloadProps(
+        val include: List<String> = emptyList(),
+        val exclude: List<String> = emptyList(),
+        val rename: Map<String, String> = emptyMap(),
+    )
+
+    data class EventTypeProps(
+        val template: String = TableMapping.EventType.DEFAULT_TEMPLATE,
+    )
+
+    data class RoutingProps(
+        val sink: String = "",
+        val attributes: Map<String, String> = emptyMap(),
+    )
+
     data class Processor(
         /**
          * Which orchestrator to wire.
-         *  - `LEGACY` (default for backwards compatibility): the
-         *    monolithic [br.com.fltech.cdc.outbox.publisher.workflow.SlotReaderMessageProducer]
-         *    with its hard-coded `SNS|/SQS|` prefix switch.
-         *  - `HEXAGONAL`: the [br.com.fltech.cdc.outbox.publisher.core.application.CdcProcessor]
+         *  - `HEXAGONAL` (default since Wave 5): the
+         *    [br.com.fltech.cdc.outbox.publisher.core.application.CdcProcessor]
          *    driven by the [br.com.fltech.cdc.outbox.publisher.core.port.EventSinkRegistry]
-         *    — pluggable sinks, routing by scheme. Set
-         *    `cdc.outbox.processor.kind=hexagonal` to opt in. Wave 5
-         *    will flip the default.
+         *    — pluggable sinks, routing by scheme.
+         *  - `LEGACY`: the monolithic
+         *    [br.com.fltech.cdc.outbox.publisher.workflow.SlotReaderMessageProducer]
+         *    with its hard-coded `SNS|/SQS|` prefix switch. Kept so
+         *    consumers who depended on the old wiring during Waves
+         *    3 + 4 can continue to run unchanged. Set
+         *    `cdc.outbox.processor.kind=legacy` to opt back in.
          */
-        val kind: Kind = Kind.LEGACY,
+        val kind: Kind = Kind.HEXAGONAL,
     ) {
         enum class Kind { LEGACY, HEXAGONAL }
     }

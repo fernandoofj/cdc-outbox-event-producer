@@ -43,6 +43,10 @@ import org.springframework.context.annotation.Bean
     prefix = "cdc.outbox.processor",
     name = ["kind"],
     havingValue = "hexagonal",
+    // Flipped in Wave 5: `hexagonal` is now the default. If
+    // `cdc.outbox.processor.kind` is unset, this autoconfig wires.
+    // Set the property to `legacy` to keep the pre-Wave-5 chain.
+    matchIfMissing = true,
 )
 open class CdcOutboxHexagonalAutoConfiguration {
 

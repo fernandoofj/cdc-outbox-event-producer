@@ -1,4 +1,5 @@
 br.com.fltech.cdc.outbox.publisher.infra.spring.CdcOutboxAutoConfiguration
 br.com.fltech.cdc.outbox.publisher.infra.spring.CdcOutboxHealthAutoConfiguration
 br.com.fltech.cdc.outbox.publisher.infra.spring.CdcOutboxSinkAutoConfiguration
+br.com.fltech.cdc.outbox.publisher.infra.spring.CdcOutboxMappingAutoConfiguration
 br.com.fltech.cdc.outbox.publisher.infra.spring.CdcOutboxHexagonalAutoConfiguration

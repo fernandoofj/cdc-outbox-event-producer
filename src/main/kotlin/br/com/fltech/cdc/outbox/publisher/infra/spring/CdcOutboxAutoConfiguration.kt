@@ -169,10 +169,12 @@ open class CdcOutboxAutoConfiguration {
         )
 
     /**
-     * Legacy lifecycle. Disabled when
-     * `cdc.outbox.processor.kind=hexagonal` so the new
-     * [CdcProcessorLifecycle] takes over without spawning two
-     * competing streaming threads.
+     * Legacy lifecycle. Wave 5 flipped the default to `hexagonal`,
+     * so this bean ONLY wires when the consumer explicitly sets
+     * `cdc.outbox.processor.kind=legacy`. The new
+     * [CdcProcessorLifecycle] takes over otherwise — the two
+     * lifecycles are mutually exclusive to avoid spawning competing
+     * streaming threads.
      */
     @Bean
     @ConditionalOnMissingBean
@@ -180,7 +182,6 @@ open class CdcOutboxAutoConfiguration {
         prefix = "cdc.outbox.processor",
         name = ["kind"],
         havingValue = "legacy",
-        matchIfMissing = true,
     )
     open fun cdcOutboxLifecycle(producer: SlotReaderMessageProducer): CdcOutboxLifecycle =
         CdcOutboxLifecycle(producer)
