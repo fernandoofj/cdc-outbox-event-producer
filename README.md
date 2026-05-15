@@ -321,7 +321,8 @@ sequência MySQL binlog → Kafka) estão em
    `routing = Routing.parsePrefix(prefix)`, `payload = content.bytes`.
 7. **Mapping (opcional).** Sabor message-only não precisa de
    `TableMapping` — a aplicação já entrega o evento pronto. O sabor
-   row-level Postgres (Onda 5.1/6) sim passará por `MappingCdcSource`.
+   row-level Postgres (Onda 5.2 / item 10 da roadmap) passará por
+   `MappingCdcSource` com `PgWalRowChangeSource`.
 8. **Publish.** `CdcProcessor` chama `EventSinkRegistry.publish` que
    resolve o `EventSink` pelo `scheme` e delega.
 9. **Retry head-of-line** com `ExponentialBackOff` até
@@ -376,7 +377,7 @@ sequência MySQL binlog → Kafka) estão em
    atualiza `lastAckedCheckpoint = "<binlog file>:<nextPosition>"`.
    *Limitação atual:* o checkpoint só vive em memória — restart
    reinicia do início do binlog disponível. Persistência entra na
-   Onda 5.1.
+   Onda 5.2 (item 10 da roadmap).
 
 ## Players integrados
 
@@ -385,9 +386,9 @@ sequência MySQL binlog → Kafka) estão em
 | Player                                           | Adapter                                                                                                                                                          | Estado                                                                          |
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
 | PostgreSQL via `wal2json` + `pg_logical_emit_message` | [`PgLogicalReplicationCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt)                    | Pronto. Default wal2json v2, include-lsn=true.                                  |
-| PostgreSQL row-level (`I/U/D` via wal2json)      | —                                                                                                                                                                | **Open** — Onda 5.1 / 6 (item 9 da roadmap).                                    |
+| PostgreSQL row-level (`I/U/D` via wal2json)      | —                                                                                                                                                                | **Open** — Onda 5.2 (item 10 da roadmap), `PgWalRowChangeSource`.               |
 | MySQL via tabela `outbox_events` + `SKIP LOCKED` | [`MySqlOutboxTableCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt)                               | Pronto. MySQL 8+; identifier hard-validated contra SQLi.                        |
-| MySQL via binlog (`mysql-binlog-connector-java`) | [`MySqlBinlogRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt)                             | Pronto com limitações (colunas como `col0`/`col1`, checkpoint só em memória, IT MySQL Testcontainers pendente — fila Onda 5.1). |
+| MySQL via binlog (`mysql-binlog-connector-java`) | [`MySqlBinlogRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt)                             | Pronto. Resolve nomes de coluna via `INFORMATION_SCHEMA` (fallback para `col0`/`col1`/… reporta counter `binlog.column_resolution.fallbacks`). `lastAckedCheckpoint` ainda em memória — persistência entra na Onda 5.2. IT MySQL coberto por `MysqlRabbitMqE2EIT` (gated por `RUN_TESTCONTAINERS=1`). |
 | SQL Server                                       | [`SqlServerCdcSourceStub`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/sqlserver/SqlServerCdcSourceStub.kt)                                 | Stub. Lança `UnsupportedOperationException`. Implementação real Onda 5.2+.      |
 | Oracle                                           | [`OracleCdcSourceStub`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/oracle/OracleCdcSourceStub.kt)                                          | Stub. Implementação real Onda 5.2+ (LogMiner / OpenLogReplicator / GoldenGate). |
 
@@ -441,13 +442,16 @@ presente no contexto (gated por `@ConditionalOnClass` +
     detalhes `slot`, `running`, `lifecycleRunning`, `pendingFailureLsn`,
     `idleFor`, `maxIdle`). Branch hex:
     [`CdcProcessorHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcProcessorHealthIndicator.kt)
-    (apenas processor-running × lifecycle-running por ora; pending +
-    idle entram na Onda 5.1).
+    reporta `processorRunning`, `lifecycleRunning`, `idleFor` +
+    `maxIdle` e devolve `OUT_OF_SERVICE` quando o loop fica ocioso
+    além do limiar (paridade com o legado nesse eixo desde a
+    Onda 5.1). A paridade de `pendingFailureLsn` no hex entra na
+    Onda 5.2 (item 10 da roadmap).
   * **Ferramentas upstream:** replication slot do Postgres
     (`pg_stat_replication`, `pg_replication_slots`, `confirmed_flush_lsn`,
     `pg_wal_lsn_diff`) e binlog do MySQL (`SHOW BINARY LOGS`,
-    `mysql.gtid_executed`). O lag não é exposto como gauge no
-    producer ainda — fica para a Onda 5.1/6.
+    `mysql.gtid_executed`). O lag ainda não é exposto como gauge no
+    producer — fica para uma onda futura (não está em 5.2).
 
 ### Superfície de configuração (`cdc.outbox.*`)
 
@@ -529,23 +533,21 @@ cdc:
     processor:
       kind: hexagonal             # default desde Onda 5
     mappings:
-      - table: app.orders
+      - table: app.orders                 # FQ schema.table
         capture: [INSERT, UPDATE, DELETE]
         key:
-          columns: [col0]         # binlog ainda usa col0/col1/... — Onda 5.1 troca pra nome real
-          format: "order:{col0}"
+          columns: [id]                   # nomes reais — INFORMATION_SCHEMA resolve a partir da Onda 5.1
+          format: "order:{id}"
         payload:
-          include: [col0, col1, col2]
+          include: [id, status, total_cents]
           rename:
-            col0: id
-            col1: status
-            col2: totalCents
+            total_cents: totalCents       # rename ainda é útil pra ajustar casing/atributo
         eventType:
           template: "orders.{op}"
         routing:
           sink: kafka://orders
           attributes:
-            tenant: "{col3}"
+            tenant: "{tenant_id}"
 ```
 
 ### Consumer side — Spring Boot
