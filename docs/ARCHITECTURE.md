@@ -575,7 +575,7 @@ puro — Postgres exige conexão crua para `replication=database`).
 
 | Propriedade  | Default | Significado                                                 |
 |--------------|---------|-------------------------------------------------------------|
-| `maxIdle`    | `10m`   | Indicador legado vira `OUT_OF_SERVICE` após esse tempo.     |
+| `max-idle`   | `10m`   | Indicador legado vira `OUT_OF_SERVICE` após esse tempo.     |
 
 ### `cdc.outbox.dead-letter.*`
 

@@ -46,19 +46,15 @@ import kotlin.test.assertTrue
  * inserts one row, and asserts that:
  *
  *  - exactly one message arrives on the Rabbit queue,
- *  - its body matches the projected payload (renamed columns),
+ *  - its body matches the projected payload,
  *  - the message-id reflects the mapping key (derived from the row's
  *    `aggregate_id`).
  *
- * Column-name resolution from the binlog stream is a follow-up: the
- * Senior Dev agent is wiring it on `feat/wave-5.1` (information_schema
- * lookup driven by table-map events). Until that lands the binlog
- * adapter exposes columns by index — `col0`, `col1`, … — so this test
- * uses `TableMapping.payload.rename` to translate the indexed names
- * into domain names. The mapping is verbose by necessity; when Wave 5.1
- * lands the rename block collapses to a no-op and this test still passes
- * unchanged (the assertion is on the *outbound* payload shape, not on
- * the intermediate row shape).
+ * Since Wave 5.1 the binlog adapter resolves real column names from
+ * `INFORMATION_SCHEMA`, so the mapping addresses columns by their
+ * domain names (`id`, `aggregate_id`, `payload`, …) directly. The
+ * payload projection uses `include` to drop the surrogate PK + the
+ * timestamp column.
  *
  * Gated on `RUN_TESTCONTAINERS=1|true|yes`.
  */
@@ -183,45 +179,35 @@ class MysqlRabbitMqE2EIT {
     }
 
     /**
-     * The binlog adapter currently surfaces columns by index. Until
-     * Wave 5.1 (Senior Dev's parallel branch `feat/wave-5.1`) wires the
-     * information_schema → column-name lookup, the mapping addresses
-     * columns by their indexed name (`col0`..`col4`). Column order in
-     * this table: col0=id, col1=aggregate_id, col2=event_type,
-     * col3=payload, col4=created_at.
-     *
-     * Note: `DefaultMappingRules` derives the key from the RAW
-     * (pre-rename) snapshot, then applies the rename when projecting
-     * the payload. That ordering is why the key.format references
-     * `{col1}` rather than the renamed `{aggregateId}`. Once Wave 5.1
-     * lands, both blocks collapse to the domain names.
+     * Since Wave 5.1 the binlog adapter resolves real column names from
+     * `INFORMATION_SCHEMA`, so the mapping addresses columns by their
+     * domain names directly. The payload projection includes only the
+     * three columns the consumer cares about — surrogate PK (`id`) and
+     * the timestamp (`created_at`) stay off the wire.
      */
     private fun buildMapping(): TableMapping = TableMapping(
         table = "${mysql.databaseName}.$OUTBOX_TABLE",
         capture = setOf(RowChange.Op.INSERT),
-        key = TableMapping.Key(columns = listOf("col1"), format = "outbox:{col1}"),
+        key = TableMapping.Key(columns = listOf("aggregate_id"), format = "outbox:{aggregate_id}"),
         payload = TableMapping.Payload(
-            exclude = listOf("col0", "col4"), // drop surrogate PK + created_at
-            rename = mapOf("col1" to "aggregateId", "col2" to "eventType", "col3" to "payload"),
+            include = listOf("aggregate_id", "event_type", "payload"),
         ),
         eventType = TableMapping.EventType(template = "outbox.{op}"),
         routing = TableMapping.Routing(sink = "amqp://$EXCHANGE/$ROUTING_KEY", attributes = emptyMap()),
     )
 
     private fun waitForBinlogReady(processor: CdcProcessor) {
-        // Wait for the orchestrator loop to flip running=true before we
-        // hand it work. A brief grace then gives the binlog client time
-        // to finish its handshake — an insert that races with the
-        // handshake won't make it into the stream we subscribed to.
+        // The orchestrator loop sets `lastActivityMs` BEFORE every
+        // `source.poll()`, so `msSinceLastActivity != Long.MAX_VALUE`
+        // means at least one poll has returned — which in turn means
+        // the binlog client has connected and registered its listener
+        // (the source's `open()` ran to completion before the loop
+        // could iterate). That signal is strictly more honest than
+        // wall-clock time and removes a 1500 ms blind sleep.
         Awaitility.await()
             .atMost(STARTUP_WAIT)
             .pollInterval(Duration.ofMillis(POLL_INTERVAL_MS))
-            .until { processor.isRunning() }
-        try {
-            Thread.sleep(BINLOG_HANDSHAKE_GRACE_MS)
-        } catch (ie: InterruptedException) {
-            Thread.currentThread().interrupt()
-        }
+            .until { processor.snapshotState().msSinceLastActivity != Long.MAX_VALUE }
     }
 
     private fun insertOrderRow() {
@@ -248,8 +234,8 @@ class MysqlRabbitMqE2EIT {
 
     private fun assertOrderPayload(response: GetResponse) {
         val body = String(response.body, Charsets.UTF_8)
-        assertTrue(body.contains("\"aggregateId\":\"order-1\""), "payload missing aggregateId: $body")
-        assertTrue(body.contains("\"eventType\":\"OrderCreated\""), "payload missing eventType: $body")
+        assertTrue(body.contains("\"aggregate_id\":\"order-1\""), "payload missing aggregate_id: $body")
+        assertTrue(body.contains("\"event_type\":\"OrderCreated\""), "payload missing event_type: $body")
         assertTrue(body.contains("\"payload\":\"{\\\"order\\\":1}\""), "payload missing inner payload: $body")
         assertEquals("outbox:order-1", response.props.messageId, "messageId mismatch")
     }
@@ -263,7 +249,6 @@ class MysqlRabbitMqE2EIT {
         private const val BACKOFF_INITIAL_MS = 50L
         private const val BACKOFF_MAX_MS = 200L
         private const val POLL_INTERVAL_MS = 250L
-        private const val BINLOG_HANDSHAKE_GRACE_MS = 1_500L
         private const val MAX_PUBLISH_ATTEMPTS = 3
         private val STARTUP_WAIT: Duration = Duration.ofSeconds(15)
         private val ASSERT_WAIT: Duration = Duration.ofSeconds(30)
