@@ -4,6 +4,115 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+## Round 9 — Wave 5.1 + E2E coverage + arquitetura documentada (3 agentes em paralelo)
+
+Three independent worker agents ran in parallel against `main` at
+`d287b07`, each in its own `git worktree`, and their branches were
+merged sequentially into `main` without conflict because the file-touch
+contracts were enforced upfront. Branches:
+
+  * `feat/wave-5.1` (`023ab4e`) — Senior Dev — Wave 5.1 closure.
+  * `feat/e2e-tests` (`7844324`) — QA — two end-to-end Testcontainers ITs.
+  * `docs/architecture` (`4304c88`) — Architect — README rewrite +
+    `docs/ARCHITECTURE.md` + Mermaid diagrams.
+
+Merged into `main` via three `--no-ff` merges (`7069ad7` → `5bea170`
+→ `bab916c`); a final docs follow-up (`<this commit>`) refreshed
+README row 9 and recorded this round (the architect wrote the docs
+from a pre-merge baseline so Wave 5.1 still showed as open).
+
+**Wave 5.1 — `MySqlBinlogRowChangeSource` usability + idle health**
+
+  * Column-name resolution: on every `TABLE_MAP` event the adapter
+    looks up `information_schema.columns` (once per `tableId`) via an
+    optional `DataSource?` constructor arg. When the DataSource is
+    null or INFORMATION_SCHEMA returns nothing, falls back to
+    `col0/col1/…` and increments
+    `cdc.outbox.source.binlog.column_resolution.fallbacks{table=…}`
+    + emits a WARN log line. KDoc honest about the
+    in-memory-only `lastAckedCheckpoint` (Wave 5.2 will persist it).
+  * New counter `cdc.outbox.source.binlog.parse_errors{cause=…}`
+    recorded from the binlog-listener thread's catch block so a
+    parse failure is no longer silent.
+  * `CdcProcessor.snapshotState(): ProcessorState(slot, running,
+    msSinceLastActivity)` tracking `lastActivityMs` PRE-`poll()`
+    (so a hang inside poll still counts as active until it returns).
+    `CdcProcessorHealthIndicator` consumes the snapshot and reports
+    `OUT_OF_SERVICE` past `cdc.outbox.health.max-idle`, reaching
+    parity with the legacy indicator's idle reporting.
+  * Tests: `MySqlBinlogRowChangeSourceTest` extended; new
+    `CdcProcessorHealthIndicatorTest` (UP / DOWN-not-running /
+    DOWN-lifecycle-stopped / OUT_OF_SERVICE-on-idle);
+    `CdcOutboxMetricsTest` extended with the two binlog counters.
+
+**E2E coverage**
+
+  * `e2e/PostgresSnsE2EIT` — `debezium/postgres:14-alpine` +
+    `LocalStack` (SNS + SQS), hex chain wired by hand
+    (`PgLogicalReplicationCdcSource` → `CdcProcessor` →
+    `EventSinkRegistry{sns: SnsEventSink}`). Emits three messages via
+    `pg_logical_emit_message(true, 'sns://<topic>', …)` and asserts
+    all three arrive on the SQS subscriber subscribed with
+    `RawMessageDelivery=true`. ~22 s including container boot.
+  * `e2e/MysqlRabbitMqE2EIT` — `mysql:8.0` (8.4 dropped
+    `SHOW MASTER STATUS` which the bundled binlog connector still
+    uses; documented inline) + `rabbitmq:3.13-management`, hex chain
+    via `MySqlBinlogRowChangeSource` → `MappingCdcSource` →
+    `EventSinkRegistry{amqp: RabbitMqEventSink}`. ~30 s including
+    container boot. Mapping uses a `payload.rename` to project
+    `col0/col1/…` onto domain names (the column lookup landed in
+    Wave 5.1 too, but the test was written against the pre-merge
+    baseline; a follow-up can simplify).
+  * `e2e/support/E2EContainers.kt` — shared container ceremony.
+  * `build.gradle.kts`: `+org.testcontainers:mysql:1.20.4`,
+    `+org.testcontainers:rabbitmq:1.20.4` test-only; the existing
+    `tasks.withType<Test>` block (which propagates
+    `DOCKER_HOST`/`DOCKER_API_VERSION`/`RUN_TESTCONTAINERS`/etc. into
+    the Test JVM) was untouched.
+
+**Documentation**
+
+  * `README.md` — full rewrite. Adds §Arquitetura funcional, §Arquitetura
+    técnica detalhada, §Etapas do processo (numbered data-flow
+    walkthroughs for both Postgres and MySQL flavours), §Players
+    integrados (sources, sinks, observability, configuration
+    surface). Two Mermaid diagrams in the README:
+    `flowchart LR` of the hexagonal split, `sequenceDiagram` of the
+    Postgres→SNS happy path. Acknowledgements + rebrand note
+    preserved.
+  * `docs/ARCHITECTURE.md` (new, 690 lines) — deep dive: port-by-port
+    walkthroughs, configuration-property catalogue,
+    retry/dead-letter state machine (`flowchart TD`), sink
+    composition (`flowchart LR`), MySQL binlog → Kafka happy path
+    (`sequenceDiagram`). All Mermaid quoted-labelled to be GitHub-
+    renderer-safe.
+  * Final follow-up to the docs in this same round: README row 9
+    moved from "open / Wave 5.1 + 6 pending" to "Wave 5.1 — done",
+    and new rows 10 (Wave 5.2) + 11 (Wave 6 — module split) added
+    so the roadmap reflects the post-merge state. This HISTORY
+    entry was missing from the architect's commit because the
+    branch was prepared off the pre-merge baseline.
+
+**Verification (post-merge)**
+
+  * `./gradlew compileKotlin compileTestKotlin` PASS on JDK 21.
+  * Unit-test sweep (excluding `RUN_TESTCONTAINERS=1`):
+    `116 tests, 116 successes, 0 failures, 0 skipped`. The Wave 5.1
+    additions + the two new E2E ITs gated by env vars don't appear
+    in this sweep but show in `--info` as skipped.
+  * Both E2E ITs were green on OrbStack pre-merge; the test code did
+    not change at merge time so they remain green.
+
+**Tech Lead persona**
+
+Three self-reviews against `.claude/agents/tech-lead.md` ran inside
+the three agent sandboxes (the `Task` tool was not exposed there, so
+they couldn't spawn the persona as a subagent — they walked the
+checklist inline). Each agent reported PASS. A final orchestrator-side
+Tech Lead review (post-merge, against this HISTORY + README state) is
+the next action and will be recorded as a verdict line here if it
+flags anything beyond NIT.
+
 ## Round 8 — Wave 3.5 + Wave 5: TableMapping infra + MySQL binlog + hexagonal default
 
 Two waves shipped together because Wave 5 (MySQL binlog row source)

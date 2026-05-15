@@ -622,12 +622,18 @@ aplicação, todos os métodos viram no-ops).
 | `cdc.outbox.reconnect.attempts`         | counter | `reason`                      | Toda vez que o loop reconecta.                   |
 | `cdc.outbox.messages.dead_lettered`     | counter | `sink`, `topic`, `cause`      | A cada DLQ OK.                                   |
 | `cdc.outbox.dead_letter.failures`       | counter | `cause`                       | A cada DLQ que falhou — operador deve agir.      |
+| `cdc.outbox.source.binlog.parse_errors` | counter | `cause`                       | A cada evento binlog que levantou na thread do listener (Onda 5.1). |
+| `cdc.outbox.source.binlog.column_resolution.fallbacks` | counter | `table`            | Toda vez que o `MySqlBinlogRowChangeSource` caiu para `col0/col1/…` em vez do nome real (DataSource ausente, INFORMATION_SCHEMA vazio ou lookup raised) (Onda 5.1). |
 
-Health: `/actuator/health` mostra `cdcOutboxHealthIndicator` com os
-campos relevantes (slot, running, lifecycleRunning, pendingFailureLsn,
-idleFor). No path hex a versão atual só reporta running × not-running;
-pending-failure + idle entram na Onda 5.1 junto com os snapshots no
-`CdcProcessor`.
+Health: `/actuator/health` mostra `cdcOutboxHealthIndicator`. No path
+legado o `CdcOutboxHealthIndicator` reporta `slot`, `running`,
+`lifecycleRunning`, `pendingFailureLsn`, `idleFor`. **A partir da
+Onda 5.1** o `CdcProcessorHealthIndicator` (path hex) também reporta
+`idleFor` + `maxIdle` e devolve `OUT_OF_SERVICE` quando o loop fica
+ocioso além de `cdc.outbox.health.max-idle` — paridade com o legado
+nesse eixo. O equivalente hex para `pendingFailureLsn` (sinal de
+publish em retry-stuck) entra na Onda 5.2 junto com a abstração
+genérica de checkpoint por `CdcSource`.
 
 ## Contratos de threading
 
@@ -681,10 +687,11 @@ não foi removido. Ele continua sendo o pipeline ativado por
     `processor.kind=legacy`; o `cdcOutboxProcessorLifecycle` (hex) só
     com `processor.kind=hexagonal` (ou ausência da property).
 
-O caminho de obsolescência é remover a chain legada quando o IT MySQL
-fechar + a Onda 5.1 entregar pending-failure no
-`CdcProcessorHealthIndicator`.
+O caminho de obsolescência é remover a chain legada quando a Onda 5.2
+entregar a paridade de `pendingFailureLsn` no
+`CdcProcessorHealthIndicator` (a Onda 5.1 já fechou o IT MySQL e o
+reporting de idle do hex indicator).
 
 ---
 
-Última atualização: 2026-05 (após Onda 5 — merge `d287b07`).
+Última atualização: 2026-05 (após Onda 5.1 — merge `bab916c`).
