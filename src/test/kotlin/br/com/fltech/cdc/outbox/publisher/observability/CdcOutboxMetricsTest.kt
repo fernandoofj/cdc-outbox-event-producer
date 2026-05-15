@@ -75,4 +75,61 @@ class CdcOutboxMetricsTest {
         assertNotNull(timer)
         assertEquals(2L, timer.count())
     }
+
+    @Test
+    fun `binlog parse error counter increments under the cause tag`() {
+        val registry = SimpleMeterRegistry()
+        val metrics = CdcOutboxMetrics(registry)
+
+        metrics.recordBinlogParseError("IllegalStateException")
+        metrics.recordBinlogParseError("IllegalStateException")
+        metrics.recordBinlogParseError("NullPointerException")
+
+        assertEquals(
+            2.0,
+            registry.counter(
+                CdcOutboxMetrics.BINLOG_PARSE_ERRORS,
+                CdcOutboxMetrics.TAG_CAUSE, "IllegalStateException",
+            ).count(),
+        )
+        assertEquals(
+            1.0,
+            registry.counter(
+                CdcOutboxMetrics.BINLOG_PARSE_ERRORS,
+                CdcOutboxMetrics.TAG_CAUSE, "NullPointerException",
+            ).count(),
+        )
+    }
+
+    @Test
+    fun `binlog column resolution fallback counter increments under the table tag`() {
+        val registry = SimpleMeterRegistry()
+        val metrics = CdcOutboxMetrics(registry)
+
+        metrics.recordBinlogColumnResolutionFallback("public.orders")
+        metrics.recordBinlogColumnResolutionFallback("public.orders")
+        metrics.recordBinlogColumnResolutionFallback("public.customers")
+
+        assertEquals(
+            2.0,
+            registry.counter(
+                CdcOutboxMetrics.BINLOG_COLUMN_RESOLUTION_FALLBACKS,
+                CdcOutboxMetrics.TAG_TABLE, "public.orders",
+            ).count(),
+        )
+        assertEquals(
+            1.0,
+            registry.counter(
+                CdcOutboxMetrics.BINLOG_COLUMN_RESOLUTION_FALLBACKS,
+                CdcOutboxMetrics.TAG_TABLE, "public.customers",
+            ).count(),
+        )
+    }
+
+    @Test
+    fun `binlog metrics no-op cleanly when no registry is wired`() {
+        val metrics = CdcOutboxMetrics.noop()
+        metrics.recordBinlogParseError("RuntimeException")
+        metrics.recordBinlogColumnResolutionFallback("public.orders")
+    }
 }

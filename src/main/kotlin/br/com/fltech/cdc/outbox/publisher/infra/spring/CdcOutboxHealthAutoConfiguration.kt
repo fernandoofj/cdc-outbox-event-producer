@@ -70,7 +70,8 @@ open class CdcOutboxHealthAutoConfiguration {
         open fun cdcOutboxHealthIndicator(
             processor: CdcProcessor,
             lifecycle: CdcProcessorLifecycle,
+            properties: CdcOutboxProperties,
         ): CdcProcessorHealthIndicator =
-            CdcProcessorHealthIndicator(processor, lifecycle)
+            CdcProcessorHealthIndicator(processor, lifecycle, properties.health.maxIdle)
     }
 }
