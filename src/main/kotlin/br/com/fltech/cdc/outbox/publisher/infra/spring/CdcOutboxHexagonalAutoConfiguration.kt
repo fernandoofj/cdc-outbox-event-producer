@@ -84,6 +84,12 @@ open class CdcOutboxHexagonalAutoConfiguration {
      * below. Consumers can replace the wiring by supplying their own
      * [CheckpointStore] bean — the standard
      * `@ConditionalOnMissingBean` rule applies.
+     *
+     * [CdcOutboxMetrics] is threaded in so the constructor-time
+     * orphan-`.tmp` sweep can publish
+     * `cdc.outbox.checkpoint.orphans_swept{outcome}` against the
+     * application's Micrometer registry. Without this thread the
+     * counter stays at the no-op facade and operators see no signal.
      */
     @Bean
     @ConditionalOnMissingBean(CheckpointStore::class)
@@ -92,8 +98,11 @@ open class CdcOutboxHexagonalAutoConfiguration {
         name = ["enabled"],
         havingValue = "true",
     )
-    open fun cdcOutboxCheckpointStore(properties: CdcOutboxProperties): CheckpointStore =
-        FileCheckpointStore(Paths.get(properties.checkpoint.directory))
+    open fun cdcOutboxCheckpointStore(
+        properties: CdcOutboxProperties,
+        metrics: CdcOutboxMetrics,
+    ): CheckpointStore =
+        FileCheckpointStore(Paths.get(properties.checkpoint.directory), metrics)
 
     /**
      * Picks the right [CdcSource] given the consumer's wiring:
