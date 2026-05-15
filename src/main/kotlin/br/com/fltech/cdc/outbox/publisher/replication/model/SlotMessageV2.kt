@@ -13,5 +13,12 @@ class SlotMessageV2 @JsonCreator constructor(
     @param:JsonProperty(value = "prefix", required = false)
     val prefix: String? = null,
     @param:JsonProperty(value = "content", required = false)
-    val content: String? = null
+    val content: String? = null,
+    /**
+     * LSN of THIS WAL record as emitted by `wal2json` when
+     * `include-lsn=true`. Format is the standard Postgres `X/X` hex pair,
+     * e.g. `0/16E8198`. May be null if the plugin option is disabled.
+     */
+    @param:JsonProperty(value = "lsn", required = false)
+    val lsn: String? = null,
 )

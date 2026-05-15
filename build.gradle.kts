@@ -34,7 +34,6 @@ apply {
 
 dependencies {
     implementation("org.springframework:spring-messaging:6.0.13")
-    implementation("com.amazonaws:aws-java-sdk-sts:1.12.566")
     implementation("io.awspring.cloud:spring-cloud-aws-messaging:2.4.4")
     implementation("software.amazon.awssdk:sts:2.21.1")
     implementation("org.postgresql:postgresql:42.6.0")
@@ -45,9 +44,21 @@ dependencies {
     implementation("com.zaxxer:HikariCP:5.1.0")
     implementation("io.micrometer:micrometer-core:1.12.13")
 
+    // Wave 2 — Spring Boot starter. compileOnly so the library remains
+    // usable without Spring Boot on the classpath; Boot apps pick these up
+    // through their own starter chain.
+    compileOnly("org.springframework.boot:spring-boot-autoconfigure:3.3.5")
+    compileOnly("org.springframework.boot:spring-boot-actuator:3.3.5")
+    compileOnly("org.springframework.boot:spring-boot-actuator-autoconfigure:3.3.5")
+    kapt("org.springframework.boot:spring-boot-configuration-processor:3.3.5")
+
     testImplementation(kotlin("test"))
     testImplementation("io.mockk:mockk:1.12.8")
     testImplementation("io.micrometer:micrometer-test:1.12.13")
+    testImplementation("org.springframework.boot:spring-boot-autoconfigure:3.3.5")
+    testImplementation("org.springframework.boot:spring-boot-actuator:3.3.5")
+    testImplementation("org.springframework.boot:spring-boot-actuator-autoconfigure:3.3.5")
+    testImplementation("org.springframework.boot:spring-boot-test:3.3.5")
     testImplementation("org.testcontainers:testcontainers:1.19.1")
     testImplementation("org.testcontainers:junit-jupiter:1.19.1")
     testImplementation("org.testcontainers:postgresql:1.19.1")

@@ -45,14 +45,17 @@ import java.util.concurrent.TimeUnit
  *    injectable [BackOff] policy with jitter, capped at [maxReconnectAttempts].
  *  - Optional Micrometer metrics via [CdcOutboxMetrics].
  *
- * Known limitation (tracked as Wave 1.5): the per-message LSN we thread
- * through the callbacks is obtained from `PGReplicationStream.lastReceiveLSN`
- * immediately after `readPending()` returns. That value is the stream's
- * high-water mark, so in the rare case where the driver has already
- * buffered message N+1 while we are still reading N, the captured LSN is
- * one message ahead. The genuine per-message LSN must be parsed from the
- * wal2json payload's `nextlsn` field (or the pgoutput protocol header) —
- * that follow-up belongs in the multi-DB wave.
+ * Per-message LSN resolution (closed in Wave 1.5):
+ *  - When the wal2json output plugin has `include-lsn=true` (the default,
+ *    see [ReplicationConfiguration.includeLsn]), each emitted record carries
+ *    its own LSN in the `lsn` JSON field. The producer prefers that exact
+ *    value over the stream's high-water mark when advancing the slot,
+ *    eliminating the residual race between `readPending()` and
+ *    `lastReceiveLSN()`.
+ *  - Fallback: if the `lsn` field is missing (older wal2json builds or
+ *    `include-lsn=false`), the producer reverts to the captured
+ *    `lastReceiveLSN` immediately after `readPending`. The drift caveat
+ *    documented previously applies only on that fallback path.
  */
 // TooManyFunctions: this class is the orchestrator. The functions are
 // short, focused, and each plays a distinct role in the streaming loop.
@@ -70,8 +73,9 @@ class SlotReaderMessageProducer(
     private val maxReconnectAttempts: Int = DEFAULT_MAX_RECONNECT_ATTEMPTS,
 ) {
     @Volatile
-    private var running = true
+    private var running = false
 
+    @Volatile
     private var lastFlushedTime: Long = 0
     private var reconnectAttempt: Int = 0
 
@@ -80,7 +84,12 @@ class SlotReaderMessageProducer(
      * redelivered successfully. While this is non-null the idle-flush path
      * MUST NOT fast-forward the slot, otherwise Postgres would recycle WAL
      * past the failed message and break the at-least-once contract.
+     *
+     * Volatile because the Wave 2 health indicator reads this from a
+     * different thread (`HealthIndicator.health()` is called by the
+     * Boot Actuator HTTP worker pool, not the streaming thread).
      */
+    @Volatile
     private var pendingFailureLsn: LogSequenceNumber? = null
 
     private lateinit var slotReaderCallback: SlotReaderCallback
@@ -90,6 +99,12 @@ class SlotReaderMessageProducer(
         .selectParser(replicationConfiguration)
 
     fun startStreaming() {
+        // Flip to true here (not at field-init time) so that
+        // `snapshotState().running` reports false between construction and
+        // the first iteration of the loop, which matters for the Spring
+        // Boot health indicator when Actuator probes the context before
+        // the lifecycle has finished its start phase.
+        running = true
         while (running) {
             readingSlotData()
         }
@@ -102,6 +117,34 @@ class SlotReaderMessageProducer(
     fun resetIdleCounter() {
         lastFlushedTime = System.currentTimeMillis()
     }
+
+    /**
+     * Read-only snapshot of producer state for health checks. Safe to call
+     * from a different thread (relies on `@Volatile` fields).
+     */
+    fun snapshotState(): ProducerState = ProducerState(
+        slot = replicationConfiguration.slotName,
+        running = running,
+        pendingFailureLsn = pendingFailureLsn?.toString(),
+        msSinceLastActivity = msSinceLastFlush(),
+    )
+
+    private fun msSinceLastFlush(): Long {
+        val ts = lastFlushedTime
+        return if (ts == 0L) Long.MAX_VALUE else System.currentTimeMillis() - ts
+    }
+
+    data class ProducerState(
+        val slot: String,
+        val running: Boolean,
+        val pendingFailureLsn: String?,
+        /**
+         * Milliseconds since the streaming loop last observed activity
+         * (`resetIdleCounter`). `Long.MAX_VALUE` means the loop has never
+         * started or has not yet processed its first iteration.
+         */
+        val msSinceLastActivity: Long,
+    )
 
     // TooGenericExceptionCaught: the streaming loop intentionally treats
     // every unhandled exception as recoverable — anything that escapes
@@ -241,7 +284,10 @@ class SlotReaderMessageProducer(
     // not crash the streaming loop. The captured throwable is forwarded to
     // onFailure for logging + metrics, and the slot stays put for redelivery.
     @Suppress("TooGenericExceptionCaught")
-    private fun processMessage(messageChange: MessageChange, lsn: LogSequenceNumber) {
+    private fun processMessage(messageChange: MessageChange, fallbackLsn: LogSequenceNumber) {
+        // Prefer the per-message LSN carried inside the wal2json payload over
+        // the stream's high-water-mark fallback (see class KDoc).
+        val lsn = resolveLsn(messageChange, fallbackLsn)
         val prefixPair = parsePrefix(messageChange.prefix)
         val destinationName = prefixPair.second
         val sink = prefixPair.first.name.lowercase()
@@ -253,14 +299,8 @@ class SlotReaderMessageProducer(
             }
             // Successful publish: clear any prior pending failure marker if it
             // referred to this LSN (the message has now been redelivered and acked).
-            //
-            // Caveat: because `lsn` is currently the stream's high-water mark
-            // (see class KDoc + Wave 1.5), a redelivered message may produce a
-            // *different* captured LSN than the one that failed — so the flag
-            // can stick across a successful redelivery. Symptom: extra "no idle
-            // fast-forward" cycles until the loop restarts. This is conservative
-            // (never advances past the failure) and disappears once the true
-            // per-message LSN is parsed from `nextlsn` in Wave 1.5.
+            // With wal2json `include-lsn=true` the same payload produces the same
+            // LSN on redelivery, so this comparison is now exact.
             if (pendingFailureLsn == lsn) {
                 pendingFailureLsn = null
             }
@@ -269,6 +309,24 @@ class SlotReaderMessageProducer(
             pendingFailureLsn = lsn
             slotReaderCallback.onFailure(lsn, messageChange.prefix, sink, e)
         }
+    }
+
+    internal fun resolveLsn(messageChange: MessageChange, fallback: LogSequenceNumber): LogSequenceNumber {
+        val embedded = messageChange.lsn ?: return fallback
+        // pgjdbc's LogSequenceNumber.valueOf never throws — it returns
+        // INVALID_LSN (0/0) on a malformed input. We have to detect that
+        // explicitly. INVALID_LSN is never a legitimate WAL position for a
+        // real record, so falling back when we see it is safe.
+        val parsed = LogSequenceNumber.valueOf(embedded)
+        if (parsed == LogSequenceNumber.INVALID_LSN) {
+            logger.warn(
+                "Embedded wal2json lsn '{}' parsed as INVALID_LSN; falling back to stream LSN {}",
+                embedded,
+                fallback,
+            )
+            return fallback
+        }
+        return parsed
     }
 
     private fun parsePrefix(prefix: String): Pair<DestinationType, String> {

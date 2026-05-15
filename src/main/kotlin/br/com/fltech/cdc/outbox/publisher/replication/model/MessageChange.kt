@@ -11,5 +11,14 @@ class MessageChange @JsonCreator constructor(
     @param:JsonProperty(value = "prefix", required = true)
     val prefix: String,
     @param:JsonProperty(value = "content", required = true)
-    val content: String
+    val content: String,
+    /**
+     * Per-message LSN parsed from the wal2json `lsn` field (when
+     * `include-lsn=true`). When present, this is the LSN of THIS WAL record
+     * and is used to drive `setStreamLsn` after a successful publish. When
+     * absent, the producer falls back to `PGReplicationStream.lastReceiveLSN`
+     * with the known drift caveat.
+     */
+    @param:JsonProperty(value = "lsn", required = false)
+    val lsn: String? = null,
 ) : Change(kindInput)

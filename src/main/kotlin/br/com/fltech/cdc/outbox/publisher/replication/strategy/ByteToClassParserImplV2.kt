@@ -26,7 +26,8 @@ class ByteToClassParserImplV2(
                     kindInput = MESSAGE_TYPE_V1,
                     transactional = IS_TRANSACTIONAL,
                     prefix = slotMessageV2.prefix!!,
-                    content = slotMessageV2.content!!
+                    content = slotMessageV2.content!!,
+                    lsn = slotMessageV2.lsn,
                 )
             } ?: buildOtherChange(slotMessageV2.action)
 

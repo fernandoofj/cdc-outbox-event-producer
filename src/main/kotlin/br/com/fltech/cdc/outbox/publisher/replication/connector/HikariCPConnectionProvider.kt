@@ -37,7 +37,7 @@ class HikariCPConnectionProvider(
     }
 
     /** Closes all underlying pools. Idempotent. */
-    fun close() {
+    override fun close() {
         pools.values.forEach { runCatching { it.close() } }
         pools.clear()
     }
