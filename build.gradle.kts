@@ -91,6 +91,11 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter:1.20.4")
     testImplementation("org.testcontainers:postgresql:1.20.4")
     testImplementation("org.testcontainers:localstack:1.20.4")
+    // E2E coverage — MySQL + RabbitMQ Testcontainers modules. Only the
+    // new tests under `src/test/.../e2e/` use them; the unit-test slice
+    // does not pull them onto the JVM.
+    testImplementation("org.testcontainers:mysql:1.20.4")
+    testImplementation("org.testcontainers:rabbitmq:1.20.4")
     testImplementation("org.awaitility:awaitility:4.2.2")
 
     // Wave 3+4 — broker / DB clients reach the test classpath so the
