@@ -132,4 +132,36 @@ class CdcOutboxMetricsTest {
         metrics.recordBinlogParseError("RuntimeException")
         metrics.recordBinlogColumnResolutionFallback("public.orders")
     }
+
+    @Test
+    fun `checkpoint orphan sweep counter increments under the outcome tag`() {
+        val registry = SimpleMeterRegistry()
+        val metrics = CdcOutboxMetrics(registry)
+
+        metrics.recordCheckpointOrphanSwept("deleted")
+        metrics.recordCheckpointOrphanSwept("deleted")
+        metrics.recordCheckpointOrphanSwept("failed")
+
+        assertEquals(
+            2.0,
+            registry.counter(
+                CdcOutboxMetrics.CHECKPOINT_ORPHANS_SWEPT,
+                CdcOutboxMetrics.TAG_OUTCOME, "deleted",
+            ).count(),
+        )
+        assertEquals(
+            1.0,
+            registry.counter(
+                CdcOutboxMetrics.CHECKPOINT_ORPHANS_SWEPT,
+                CdcOutboxMetrics.TAG_OUTCOME, "failed",
+            ).count(),
+        )
+    }
+
+    @Test
+    fun `checkpoint orphan sweep counter is a no-op without a registry`() {
+        val metrics = CdcOutboxMetrics.noop()
+        metrics.recordCheckpointOrphanSwept("deleted")
+        metrics.recordCheckpointOrphanSwept("failed")
+    }
 }

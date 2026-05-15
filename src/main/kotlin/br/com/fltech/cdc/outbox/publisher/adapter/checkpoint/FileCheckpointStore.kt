@@ -1,7 +1,9 @@
 package br.com.fltech.cdc.outbox.publisher.adapter.checkpoint
 
 import br.com.fltech.cdc.outbox.publisher.core.port.CheckpointStore
+import br.com.fltech.cdc.outbox.publisher.observability.CdcOutboxMetrics
 import org.slf4j.LoggerFactory
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.charset.StandardCharsets
@@ -59,9 +61,25 @@ import java.nio.file.StandardOpenOption
  * so this implementation is intentionally lock-free. If a future
  * design fans out the orchestrator across multiple threads, callers
  * must wrap the store or use distinct keys per worker.
+ *
+ * Crash-recovery sweep
+ * --------------------
+ * If the process crashed between the `force` and the `ATOMIC_MOVE` in
+ * a prior `save`, an orphan `<key>.json.tmp` is left on disk. The
+ * canonical `<key>.json` either still holds the previous good value
+ * (the rename never happened) or already holds the new one (the
+ * rename succeeded but a second crash interrupted the cleanup of an
+ * older sibling). Either way the orphan is stale; the producer
+ * resumes from `<key>.json`. The sweep runs eagerly in the
+ * constructor — the bean is short-lived (one per process) so the FS
+ * scan happens exactly once at startup, and tests can observe the
+ * post-sweep state immediately without an explicit `init()` hop. The
+ * sweep is idempotent: running it twice is a no-op because the
+ * second pass finds no `.tmp` siblings.
  */
 class FileCheckpointStore(
     private val directory: Path,
+    private val metrics: CdcOutboxMetrics = CdcOutboxMetrics.noop(),
 ) : CheckpointStore {
 
     init {
@@ -69,6 +87,59 @@ class FileCheckpointStore(
         // surfaces at startup, not on the first save call far down the
         // hot loop. `createDirectories` is a no-op if the path exists.
         Files.createDirectories(directory)
+        sweepOrphans()
+    }
+
+    /**
+     * Deletes orphan `<key>.json.tmp` files left behind by a crash
+     * between `force` and the final `ATOMIC_MOVE` of a prior [save].
+     *
+     * Operators see EVERY successful deletion at INFO so a silent
+     * crash-recovery cleanup never goes unnoticed — silent recovery
+     * is exactly the kind of thing that bites once an unrelated bug
+     * leaks `.tmp` files faster than they're cleaned. Per-file IO
+     * failures degrade to WARN so one unreadable entry never blocks
+     * the rest of the sweep.
+     *
+     * Idempotent — a second invocation finds nothing and is a no-op.
+     * Only `.tmp` entries are touched; canonical `.json` files and
+     * anything else in the directory are left alone.
+     */
+    private fun sweepOrphans() {
+        val stream = try {
+            Files.newDirectoryStream(directory, "*$TMP_SUFFIX")
+        } catch (e: NoSuchFileException) {
+            // The directory was racing with us (deleted between
+            // `createDirectories` above and here, or otherwise gone).
+            // Mirrors the `save` idiom of treating the directory as
+            // lazy: nothing to sweep, nothing to log loudly about.
+            logger.debug("FileCheckpointStore: sweep directory {} missing; nothing to do.", directory)
+            return
+        } catch (e: IOException) {
+            logger.warn(
+                "FileCheckpointStore: could not list {} for orphan sweep ({}); skipping cleanup.",
+                directory, e.javaClass.simpleName, e,
+            )
+            return
+        }
+        stream.use { entries ->
+            for (orphan in entries) {
+                try {
+                    Files.deleteIfExists(orphan)
+                    logger.info("FileCheckpointStore: swept orphan checkpoint temp file {}", orphan)
+                    metrics.recordCheckpointOrphanSwept(SWEEP_OUTCOME_DELETED)
+                } catch (e: IOException) {
+                    // One unreadable file must not abort the rest of
+                    // the sweep — log and move on. The metric carries
+                    // the failure signal even if the log is muted.
+                    logger.warn(
+                        "FileCheckpointStore: failed to delete orphan {} ({}); leaving it in place.",
+                        orphan, e.javaClass.simpleName, e,
+                    )
+                    metrics.recordCheckpointOrphanSwept(SWEEP_OUTCOME_FAILED)
+                }
+            }
+        }
     }
 
     override fun load(key: String): String? {
@@ -117,7 +188,7 @@ class FileCheckpointStore(
         }
     }
 
-    private fun pathFor(key: String): Path = directory.resolve("${sanitise(key)}.json")
+    private fun pathFor(key: String): Path = directory.resolve("${sanitise(key)}$JSON_SUFFIX")
 
     private fun encode(key: String, value: String): String =
         """{"key":"${escape(key)}","value":"${escape(value)}"}"""
@@ -218,5 +289,9 @@ class FileCheckpointStore(
         private val logger = LoggerFactory.getLogger(FileCheckpointStore::class.java)
         private const val FIELD_KEY = "key"
         private const val FIELD_VALUE = "value"
+        private const val JSON_SUFFIX = ".json"
+        private const val TMP_SUFFIX = ".tmp"
+        private const val SWEEP_OUTCOME_DELETED = "deleted"
+        private const val SWEEP_OUTCOME_FAILED = "failed"
     }
 }

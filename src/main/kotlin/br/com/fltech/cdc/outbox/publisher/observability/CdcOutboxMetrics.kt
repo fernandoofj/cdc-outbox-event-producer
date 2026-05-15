@@ -142,6 +142,25 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         }
     }
 
+    /**
+     * Records that the file-backed checkpoint store touched an orphan
+     * `<key>.json.tmp` left behind by a crash between `fsync` and the
+     * final `ATOMIC_MOVE` of a prior `save`. The single-tag
+     * `outcome` carries `deleted` (the file was reclaimed) or
+     * `failed` (the cleanup itself raised IO). Operators alert on
+     * either: even `deleted` is a signal that a previous crash got
+     * close enough to a half-committed save to be worth a glance.
+     */
+    fun recordCheckpointOrphanSwept(outcome: String) {
+        registry?.let {
+            Counter.builder(CHECKPOINT_ORPHANS_SWEPT)
+                .description("Orphan checkpoint .tmp files encountered at startup, by sweep outcome")
+                .tags(Tags.of(TAG_OUTCOME, outcome))
+                .register(it)
+                .increment()
+        }
+    }
+
     companion object {
         const val MESSAGES_READ = "cdc.outbox.messages.read"
         const val MESSAGES_PUBLISHED = "cdc.outbox.messages.published"
@@ -155,6 +174,7 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         const val BINLOG_PARSE_ERRORS = "cdc.outbox.source.binlog.parse_errors"
         const val BINLOG_COLUMN_RESOLUTION_FALLBACKS =
             "cdc.outbox.source.binlog.column_resolution.fallbacks"
+        const val CHECKPOINT_ORPHANS_SWEPT = "cdc.outbox.checkpoint.orphans_swept"
 
         const val TAG_SLOT = "slot"
         const val TAG_SINK = "sink"
@@ -163,6 +183,7 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         const val TAG_REASON = "reason"
         const val TAG_ATTEMPT = "attempt"
         const val TAG_TABLE = "table"
+        const val TAG_OUTCOME = "outcome"
 
         /** Returns a no-op instance that records nothing. */
         fun noop(): CdcOutboxMetrics = CdcOutboxMetrics(null)
