@@ -438,7 +438,7 @@ presente no contexto (gated por `@ConditionalOnClass` +
     Branch legado:
     [`CdcOutboxHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxHealthIndicator.kt)
     (`DOWN` em pending-failure / not-running, `OUT_OF_SERVICE` em
-    idle além de `cdc.outbox.health.maxIdle`, `UP` caso contrário,
+    idle além de `cdc.outbox.health.max-idle`, `UP` caso contrário,
     detalhes `slot`, `running`, `lifecycleRunning`, `pendingFailureLsn`,
     `idleFor`, `maxIdle`). Branch hex:
     [`CdcProcessorHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcProcessorHealthIndicator.kt)
@@ -473,7 +473,7 @@ Os blocos principais:
   * `cdc.outbox.retry.*` — initial / max / multiplier / jitter para
     reconnect; `maxPublishAttempts`, `publishBackoffInitial`,
     `publishBackoffMax` para publish.
-  * `cdc.outbox.health.maxIdle` — limiar do indicator legado.
+  * `cdc.outbox.health.max-idle` — limiar do indicator legado.
   * `cdc.outbox.dead-letter.queueName` — DLQ SQS opcional.
   * `cdc.outbox.mappings` — lista declarativa de `TableMapping` (item 7
     da brief), consumida por
