@@ -34,8 +34,6 @@ apply {
 
 dependencies {
     implementation("org.springframework:spring-messaging:6.0.13")
-    implementation("io.awspring.cloud:spring-cloud-aws-messaging:2.4.4")
-    implementation("software.amazon.awssdk:sts:2.21.1")
     implementation("org.postgresql:postgresql:42.6.0")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.3")
     implementation("org.json:json:20240205")
@@ -52,17 +50,33 @@ dependencies {
     compileOnly("org.springframework.boot:spring-boot-actuator-autoconfigure:3.3.5")
     kapt("org.springframework.boot:spring-boot-configuration-processor:3.3.5")
 
+    // Wave 2b — Spring Cloud AWS 3.x. SCA 3 uses AWS SDK v2 and
+    // exposes `SnsTemplate` / `SqsTemplate` instead of the EOL
+    // `NotificationMessagingTemplate` / `QueueMessagingTemplate` from
+    // SCA 2. compileOnly so consumers without Boot still compile.
+    compileOnly("io.awspring.cloud:spring-cloud-aws-sns:3.2.1")
+    compileOnly("io.awspring.cloud:spring-cloud-aws-sqs:3.2.1")
+    implementation("software.amazon.awssdk:sns:2.27.21")
+    implementation("software.amazon.awssdk:sqs:2.27.21")
+    implementation("software.amazon.awssdk:sts:2.27.21")
+
     testImplementation(kotlin("test"))
-    testImplementation("io.mockk:mockk:1.12.8")
+    testImplementation("io.mockk:mockk:1.13.13")
     testImplementation("io.micrometer:micrometer-test:1.12.13")
     testImplementation("org.springframework.boot:spring-boot-autoconfigure:3.3.5")
     testImplementation("org.springframework.boot:spring-boot-actuator:3.3.5")
     testImplementation("org.springframework.boot:spring-boot-actuator-autoconfigure:3.3.5")
     testImplementation("org.springframework.boot:spring-boot-test:3.3.5")
-    testImplementation("org.testcontainers:testcontainers:1.19.1")
-    testImplementation("org.testcontainers:junit-jupiter:1.19.1")
-    testImplementation("org.testcontainers:postgresql:1.19.1")
-    testImplementation("org.testcontainers:localstack:1.19.1")
+    testImplementation("io.awspring.cloud:spring-cloud-aws-sns:3.2.1")
+    testImplementation("io.awspring.cloud:spring-cloud-aws-sqs:3.2.1")
+    testImplementation("org.testcontainers:testcontainers:1.20.4")
+    testImplementation("org.testcontainers:junit-jupiter:1.20.4")
+    testImplementation("org.testcontainers:postgresql:1.20.4")
+    testImplementation("org.testcontainers:localstack:1.20.4")
+    testImplementation("org.awaitility:awaitility:4.2.2")
+    // Wire an SLF4J binding for tests so Testcontainers' diagnostic
+    // logging is visible during integration runs.
+    testRuntimeOnly("org.slf4j:slf4j-simple:2.0.16")
 }
 
 java {
@@ -121,6 +135,28 @@ tasks.register("stopDockerCompose") {
 tasks.withType<Test> {
     dependsOn("startDockerCompose")
     finalizedBy("stopDockerCompose")
+
+    // Propagate Testcontainers-relevant env vars from the gradle-invoking
+    // shell into the Test JVM. Gradle 8 does not inherit env by default,
+    // so the Wave 2b integration tests (which spin up OrbStack/Colima
+    // containers) would otherwise fail with "Could not find a valid Docker
+    // environment". `DOCKER_API_VERSION` is essential when running against
+    // OrbStack — the bundled `docker-java` negotiates API 1.32, but
+    // OrbStack's server requires 1.40+. Fixing the floor here lets
+    // negotiation succeed.
+    listOf(
+        "DOCKER_HOST",
+        "DOCKER_API_VERSION",
+        "TESTCONTAINERS_RYUK_DISABLED",
+        "TESTCONTAINERS_CHECKS_DISABLE",
+        "RUN_TESTCONTAINERS",
+    ).forEach { name ->
+        System.getenv(name)?.let { value -> environment(name, value) }
+    }
+    // docker-java reads `api.version` as a JVM system property (in addition
+    // to the DOCKER_API_VERSION env var) and uses that as the floor when
+    // negotiating with the daemon. OrbStack rejects anything below 1.40.
+    System.getenv("DOCKER_API_VERSION")?.let { systemProperty("api.version", it) }
 }
 
 tasks.withType<Jar> {

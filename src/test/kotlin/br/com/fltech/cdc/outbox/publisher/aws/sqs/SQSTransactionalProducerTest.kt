@@ -1,47 +1,42 @@
 package br.com.fltech.cdc.outbox.publisher.aws.sqs
 
-import io.awspring.cloud.messaging.core.QueueMessagingTemplate
+import io.awspring.cloud.sqs.operations.SendResult
+import io.awspring.cloud.sqs.operations.SqsSendOptions
+import io.awspring.cloud.sqs.operations.SqsTemplate
 import io.mockk.every
-import io.mockk.impl.annotations.InjectMockKs
-import io.mockk.impl.annotations.MockK
-import io.mockk.junit5.MockKExtension
-import io.mockk.just
-import io.mockk.runs
+import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.extension.ExtendWith
+import java.util.function.Consumer
 
-@ExtendWith(MockKExtension::class)
 internal class SQSTransactionalProducerTest {
 
-    @MockK
-    private lateinit var queueMessagingTemplate: QueueMessagingTemplate
-
-    @InjectMockKs
-    private lateinit var sqsTransactionalProducer: SQSTransactionalProducer
+    private val sqsTemplate = mockk<SqsTemplate>()
+    private val producer = SQSTransactionalProducer(sqsTemplate)
 
     @Test
-    fun `send should produce a message`() {
-        // given
+    fun `send hands SqsTemplate a configurer that sets queue and payload`() {
         val queueName = "queueName"
         val payload = mapOf(
-            Pair("field1", "bla bla bla"),
-            Pair("field2", "bla bla bla 2")
+            "field1" to "bla bla bla",
+            "field2" to "bla bla bla 2",
         )
+        val captured = slot<Consumer<SqsSendOptions<Map<String, String>>>>()
+        every { sqsTemplate.send(capture(captured)) } returns mockk<SendResult<Map<String, String>>>(relaxed = true)
 
-        every {
-            queueMessagingTemplate.convertAndSend(queueName, payload)
-        } just runs
+        producer.send(queueName, payload)
 
-        // when
-        sqsTransactionalProducer.send(queueName, payload)
+        verify(exactly = 1) { sqsTemplate.send(any<Consumer<SqsSendOptions<Map<String, String>>>>()) }
 
-        // then
-        verify(exactly = 1) {
-            queueMessagingTemplate.convertAndSend(
-                any<String>(),
-                any<Map<String, String>>()
-            )
-        }
+        // Replay the captured lambda against a recording mock to confirm
+        // queue + payload were applied.
+        val options = mockk<SqsSendOptions<Map<String, String>>>()
+        every { options.queue(any()) } returns options
+        every { options.payload(any()) } returns options
+        captured.captured.accept(options)
+
+        verify(exactly = 1) { options.queue(queueName) }
+        verify(exactly = 1) { options.payload(payload) }
     }
 }

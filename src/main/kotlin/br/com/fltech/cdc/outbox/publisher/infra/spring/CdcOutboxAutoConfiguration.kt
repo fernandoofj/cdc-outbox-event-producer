@@ -2,6 +2,8 @@ package br.com.fltech.cdc.outbox.publisher.infra.spring
 
 import br.com.fltech.cdc.outbox.publisher.aws.sns.SNSProducer
 import br.com.fltech.cdc.outbox.publisher.aws.sqs.SQSProducer
+import br.com.fltech.cdc.outbox.publisher.deadletter.DeadLetterSink
+import br.com.fltech.cdc.outbox.publisher.deadletter.SqsDeadLetterSink
 import br.com.fltech.cdc.outbox.publisher.observability.CdcOutboxMetrics
 import br.com.fltech.cdc.outbox.publisher.replication.config.PostgresConfiguration
 import br.com.fltech.cdc.outbox.publisher.replication.config.ReplicationConfiguration
@@ -10,8 +12,11 @@ import br.com.fltech.cdc.outbox.publisher.replication.connector.HikariCPConnecti
 import br.com.fltech.cdc.outbox.publisher.retry.BackOff
 import br.com.fltech.cdc.outbox.publisher.retry.ExponentialBackOff
 import br.com.fltech.cdc.outbox.publisher.workflow.SlotReaderMessageProducer
+import io.awspring.cloud.sqs.operations.SqsTemplate
 import io.micrometer.core.instrument.MeterRegistry
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.autoconfigure.AutoConfiguration
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
@@ -111,6 +116,30 @@ open class CdcOutboxAutoConfiguration {
     open fun cdcOutboxMetrics(meterRegistry: MeterRegistry?): CdcOutboxMetrics =
         CdcOutboxMetrics(meterRegistry)
 
+    @Bean("cdcOutboxPublishBackOff")
+    @ConditionalOnMissingBean(name = ["cdcOutboxPublishBackOff"])
+    open fun cdcOutboxPublishBackOff(properties: CdcOutboxProperties): BackOff =
+        ExponentialBackOff(
+            initial = properties.retry.publishBackoffInitial,
+            max = properties.retry.publishBackoffMax,
+            multiplier = properties.retry.multiplier,
+            jitter = properties.retry.jitter,
+        )
+
+    @Bean
+    @ConditionalOnBean(SqsTemplate::class)
+    @ConditionalOnProperty(prefix = "cdc.outbox.dead-letter", name = ["queue-name"])
+    @ConditionalOnMissingBean
+    open fun cdcOutboxDeadLetterSink(
+        sqsTemplate: SqsTemplate,
+        properties: CdcOutboxProperties,
+    ): DeadLetterSink {
+        val queue = requireNotNull(properties.deadLetter.queueName) {
+            "cdc.outbox.dead-letter.queue-name must be set when the DLQ bean is wired"
+        }
+        return SqsDeadLetterSink(sqsTemplate, queue)
+    }
+
     @Bean
     @ConditionalOnMissingBean
     open fun slotReaderMessageProducer(
@@ -120,7 +149,9 @@ open class CdcOutboxAutoConfiguration {
         sqsProducer: SQSProducer,
         connectionProvider: ConnectionProvider,
         metrics: CdcOutboxMetrics,
-        cdcOutboxReconnectBackOff: BackOff,
+        @Qualifier("cdcOutboxReconnectBackOff") reconnectBackOff: BackOff,
+        @Qualifier("cdcOutboxPublishBackOff") publishBackOff: BackOff,
+        deadLetterSink: DeadLetterSink?,
         properties: CdcOutboxProperties,
     ): SlotReaderMessageProducer =
         SlotReaderMessageProducer(
@@ -130,8 +161,11 @@ open class CdcOutboxAutoConfiguration {
             sqsProducer = sqsProducer,
             connectionProvider = connectionProvider,
             metrics = metrics,
-            reconnectBackOff = cdcOutboxReconnectBackOff,
+            reconnectBackOff = reconnectBackOff,
             maxReconnectAttempts = properties.retry.maxReconnectAttempts,
+            deadLetterSink = deadLetterSink,
+            maxPublishAttempts = properties.retry.maxPublishAttempts,
+            publishBackOff = publishBackOff,
         )
 
     @Bean

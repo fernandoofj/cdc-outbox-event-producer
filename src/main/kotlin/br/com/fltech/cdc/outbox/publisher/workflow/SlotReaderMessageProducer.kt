@@ -3,6 +3,7 @@ package br.com.fltech.cdc.outbox.publisher.workflow
 import br.com.fltech.cdc.outbox.publisher.aws.sns.SNSProducer
 import br.com.fltech.cdc.outbox.publisher.aws.sns.dto.SNSMessage
 import br.com.fltech.cdc.outbox.publisher.aws.sqs.SQSProducer
+import br.com.fltech.cdc.outbox.publisher.deadletter.DeadLetterSink
 import br.com.fltech.cdc.outbox.publisher.helper.JsonHelper
 import br.com.fltech.cdc.outbox.publisher.jackson.ObjectMapperSingleton.defaultMapper
 import br.com.fltech.cdc.outbox.publisher.observability.CdcOutboxMetrics
@@ -61,7 +62,7 @@ import java.util.concurrent.TimeUnit
 // short, focused, and each plays a distinct role in the streaming loop.
 // Will be split into application/CdcProcessor + adapter when the
 // hexagonal refactor lands (Wave 3+).
-@Suppress("TooManyFunctions")
+@Suppress("TooManyFunctions", "LongParameterList")
 class SlotReaderMessageProducer(
     private val postgresConfiguration: PostgresConfiguration,
     private val replicationConfiguration: ReplicationConfiguration,
@@ -71,9 +72,34 @@ class SlotReaderMessageProducer(
     private val metrics: CdcOutboxMetrics = CdcOutboxMetrics.noop(),
     private val reconnectBackOff: BackOff = ExponentialBackOff(),
     private val maxReconnectAttempts: Int = DEFAULT_MAX_RECONNECT_ATTEMPTS,
+    /**
+     * Optional dead-letter sink. When null, head-of-line retries
+     * continue indefinitely until success, restart, or operator
+     * intervention — the slot stays put on the failing LSN. When set,
+     * messages that exhaust [maxPublishAttempts] are forwarded here and
+     * the slot is allowed to advance past them.
+     */
+    private val deadLetterSink: DeadLetterSink? = null,
+    /**
+     * Maximum publish attempts per message, INCLUDING the initial
+     * attempt. After this many failures, the message is dead-lettered
+     * if [deadLetterSink] is set, or kept stuck otherwise.
+     */
+    private val maxPublishAttempts: Int = DEFAULT_MAX_PUBLISH_ATTEMPTS,
+    /**
+     * Back-off policy applied BETWEEN publish retries on the same
+     * message (separate from [reconnectBackOff] which governs the
+     * outer connection-level loop).
+     */
+    private val publishBackOff: BackOff = ExponentialBackOff(
+        initial = Duration.ofMillis(DEFAULT_PUBLISH_BACKOFF_INITIAL_MS),
+        max = Duration.ofSeconds(DEFAULT_PUBLISH_BACKOFF_MAX_SECONDS),
+    ),
 ) {
+    // `running` is `internal` so unit tests can drive the retry/dead-letter
+    // state machine without going through the full streaming loop.
     @Volatile
-    private var running = false
+    internal var running = false
 
     @Volatile
     private var lastFlushedTime: Long = 0
@@ -222,7 +248,9 @@ class SlotReaderMessageProducer(
     ): PostgresConnector =
         PostgresConnector(postgresConfiguration, replicationConfiguration, connectionProvider)
 
-    private fun initializeCallback(postgresConnector: PostgresConnector) {
+    // `internal` so tests can wire a callback with a mocked PostgresConnector
+    // and exercise [processMessage] in isolation.
+    internal fun initializeCallback(postgresConnector: PostgresConnector) {
         slotReaderCallback = SlotReaderCallback(this, postgresConnector, metrics)
     }
 
@@ -281,10 +309,12 @@ class SlotReaderMessageProducer(
 
     // TooGenericExceptionCaught: catching the full Exception hierarchy is
     // intentional here so that an unexpected sink-specific exception does
-    // not crash the streaming loop. The captured throwable is forwarded to
-    // onFailure for logging + metrics, and the slot stays put for redelivery.
+    // not crash the streaming loop. The captured throwable drives the
+    // retry/dead-letter state machine; the slot only advances on success
+    // (per-message LSN), explicit discard, or successful dead-letter.
+    // `internal` so unit tests can drive it without spinning the full loop.
     @Suppress("TooGenericExceptionCaught")
-    private fun processMessage(messageChange: MessageChange, fallbackLsn: LogSequenceNumber) {
+    internal fun processMessage(messageChange: MessageChange, fallbackLsn: LogSequenceNumber) {
         // Prefer the per-message LSN carried inside the wal2json payload over
         // the stream's high-water-mark fallback (see class KDoc).
         val lsn = resolveLsn(messageChange, fallbackLsn)
@@ -292,22 +322,93 @@ class SlotReaderMessageProducer(
         val destinationName = prefixPair.second
         val sink = prefixPair.first.name.lowercase()
         logger.info("Processing message for prefix {} (lsn {})", messageChange.prefix, lsn)
+
+        var attempt = 0
+        var lastException: Exception? = null
+        while (attempt < maxPublishAttempts && running) {
+            attempt += 1
+            try {
+                when (prefixPair.first) {
+                    DestinationType.SNS -> processSNSMessage(destinationName, messageChange, lsn)
+                    DestinationType.SQS -> processSQSMessage(destinationName, messageChange, lsn)
+                }
+                // Successful publish: clear the pending failure marker so the
+                // idle-flush path can resume advancing the slot on quiet stretches.
+                if (pendingFailureLsn == lsn) {
+                    pendingFailureLsn = null
+                }
+                return
+            } catch (e: Exception) {
+                lastException = e
+                pendingFailureLsn = lsn
+                slotReaderCallback.onFailure(lsn, messageChange.prefix, sink, e)
+                if (attempt < maxPublishAttempts) {
+                    metrics.recordRetry(sink = sink, topic = messageChange.prefix, attempt = attempt)
+                    val delay = publishBackOff.nextDelay(attempt)
+                    logger.warn(
+                        "Publish attempt #{}/{} for prefix {} (lsn {}) failed: {}. Sleeping {} ms before retry.",
+                        attempt,
+                        maxPublishAttempts,
+                        messageChange.prefix,
+                        lsn,
+                        e.javaClass.simpleName,
+                        delay.toMillis(),
+                    )
+                    sleepInterruptibly(delay.toMillis())
+                }
+            }
+        }
+
+        // Exhausted retries (or stopped). Try dead-letter; if it succeeds, advance
+        // the slot. If not, stay stuck — operator must intervene.
+        val cause = lastException ?: IllegalStateException("publish retries exhausted without an exception")
+        handleExhaustedRetries(lsn, messageChange, sink, cause)
+    }
+
+    private fun handleExhaustedRetries(
+        lsn: LogSequenceNumber,
+        messageChange: MessageChange,
+        sink: String,
+        cause: Throwable,
+    ) {
+        val dlq = deadLetterSink
+        if (dlq == null) {
+            logger.error(
+                "Publish exhausted {} attempts for prefix {} (lsn {}) and no dead-letter sink is configured — " +
+                    "the slot will stay at the last successful LSN. Operator intervention required.",
+                maxPublishAttempts,
+                messageChange.prefix,
+                lsn,
+                cause,
+            )
+            return
+        }
         try {
-            when (prefixPair.first) {
-                DestinationType.SNS -> processSNSMessage(destinationName, messageChange, lsn)
-                DestinationType.SQS -> processSQSMessage(destinationName, messageChange, lsn)
-            }
-            // Successful publish: clear any prior pending failure marker if it
-            // referred to this LSN (the message has now been redelivered and acked).
-            // With wal2json `include-lsn=true` the same payload produces the same
-            // LSN on redelivery, so this comparison is now exact.
-            if (pendingFailureLsn == lsn) {
-                pendingFailureLsn = null
-            }
-        } catch (e: Exception) {
-            // Remember the failing LSN so the idle-flush path does not jump past it.
-            pendingFailureLsn = lsn
-            slotReaderCallback.onFailure(lsn, messageChange.prefix, sink, e)
+            dlq.send(lsn, messageChange, cause)
+            metrics.recordDeadLettered(
+                sink = sink,
+                topic = messageChange.prefix,
+                cause = cause.javaClass.simpleName,
+            )
+            slotReaderCallback.discardMessage(lsn, type = REASON_DEAD_LETTERED)
+            logger.warn(
+                "Dead-lettered message for prefix {} (lsn {}) after {} failed attempts ({})",
+                messageChange.prefix,
+                lsn,
+                maxPublishAttempts,
+                cause.javaClass.simpleName,
+            )
+        } catch (dlqException: Exception) {
+            metrics.recordDeadLetterFailure(cause = dlqException.javaClass.simpleName)
+            logger.error(
+                "Dead-letter publish failed for prefix {} (lsn {}); slot stays at last successful LSN. " +
+                    "Original cause: {}; DLQ cause: {}",
+                messageChange.prefix,
+                lsn,
+                cause.javaClass.simpleName,
+                dlqException.javaClass.simpleName,
+                dlqException,
+            )
         }
     }
 
@@ -374,7 +475,11 @@ class SlotReaderMessageProducer(
         private const val REASON_SQL = "sql_exception"
         private const val REASON_IO = "io_exception"
         private const val REASON_UNKNOWN = "unknown"
+        private const val REASON_DEAD_LETTERED = "dead_lettered"
         const val DEFAULT_MAX_RECONNECT_ATTEMPTS = 30
+        const val DEFAULT_MAX_PUBLISH_ATTEMPTS = 5
+        const val DEFAULT_PUBLISH_BACKOFF_INITIAL_MS = 100L
+        const val DEFAULT_PUBLISH_BACKOFF_MAX_SECONDS = 5L
 
         @Suppress("UNCHECKED_CAST")
         private fun String.parseToObject(): SNSMessage<Any> {

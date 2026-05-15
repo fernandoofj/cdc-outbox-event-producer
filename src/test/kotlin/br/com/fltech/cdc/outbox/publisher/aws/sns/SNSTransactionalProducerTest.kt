@@ -2,32 +2,24 @@ package br.com.fltech.cdc.outbox.publisher.aws.sns
 
 import br.com.fltech.cdc.outbox.publisher.aws.sns.dto.SNSMessage
 import br.com.fltech.cdc.outbox.publisher.aws.sns.dto.SNSMessageBody
-import io.awspring.cloud.messaging.core.NotificationMessagingTemplate
+import io.awspring.cloud.sns.core.SnsTemplate
+import io.mockk.Runs
 import io.mockk.every
-import io.mockk.impl.annotations.InjectMockKs
-import io.mockk.impl.annotations.MockK
-import io.mockk.junit5.MockKExtension
 import io.mockk.just
-import io.mockk.runs
+import io.mockk.mockk
 import io.mockk.verify
+import org.junit.jupiter.api.Test
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.extension.ExtendWith
 
-@ExtendWith(MockKExtension::class)
 internal class SNSTransactionalProducerTest {
 
-    @MockK
-    private lateinit var notificationMessagingTemplate: NotificationMessagingTemplate
-
-    @InjectMockKs
-    private lateinit var snsTransactionalProducer: SNSTransactionalProducer
+    private val snsTemplate = mockk<SnsTemplate>()
+    private val producer = SNSTransactionalProducer(snsTemplate)
 
     @Test
-    fun `send should produce a message`() {
-        // given
+    fun `send delegates to SnsTemplate convertAndSend with topic, body and headers`() {
         val topicName = "topicName"
         val messageBody = SNSMessageBody(
             eventUUID = UUID.randomUUID(),
@@ -36,32 +28,24 @@ internal class SNSTransactionalProducerTest {
             domain = "domain",
             eventTimestamp = LocalDateTime.now(),
             payload = mapOf(
-                Pair("field1", "bla bla bla"),
-                Pair("field2", "bla bla bla 2")
-            )
+                "field1" to "bla bla bla",
+                "field2" to "bla bla bla 2",
+            ),
         )
         val message = SNSMessage(
             headers = mapOf(
-                Pair("eventType", messageBody.eventType),
-                Pair("eventTimestamp", messageBody.eventTimestamp.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                "eventType" to messageBody.eventType,
+                "eventTimestamp" to messageBody.eventTimestamp.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
             ),
-            body = messageBody
+            body = messageBody,
         )
 
-        every {
-            notificationMessagingTemplate.convertAndSend(topicName, message.body, message.headers)
-        } just runs
+        every { snsTemplate.convertAndSend(topicName, message.body, message.headers) } just Runs
 
-        // when
-        snsTransactionalProducer.send(topicName, message)
+        producer.send(topicName, message)
 
-        // then
         verify(exactly = 1) {
-            notificationMessagingTemplate.convertAndSend(
-                any<String>(),
-                any<Any>(),
-                any<Map<String, Any>>()
-            )
+            snsTemplate.convertAndSend(topicName, message.body, message.headers)
         }
     }
 }

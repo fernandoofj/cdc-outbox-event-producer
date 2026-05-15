@@ -80,7 +80,10 @@ class CdcOutboxAutoConfigurationTest {
     fun `registers HikariCP, BackOff, metrics, producer, lifecycle, and health indicator`() {
         runner.run { ctx ->
             assertNotNull(ctx.getBean(HikariCPConnectionProvider::class.java))
-            assertTrue(ctx.getBean(BackOff::class.java) is ExponentialBackOff)
+            // Two BackOff beans live side by side after Wave 2b — the reconnect
+            // policy is independent of the publish-retry policy.
+            assertTrue(ctx.getBean("cdcOutboxReconnectBackOff", BackOff::class.java) is ExponentialBackOff)
+            assertTrue(ctx.getBean("cdcOutboxPublishBackOff", BackOff::class.java) is ExponentialBackOff)
             assertNotNull(ctx.getBean(CdcOutboxMetrics::class.java))
             assertNotNull(ctx.getBean(SlotReaderMessageProducer::class.java))
             assertNotNull(ctx.getBean("cdcOutboxHealthIndicator", HealthIndicator::class.java))

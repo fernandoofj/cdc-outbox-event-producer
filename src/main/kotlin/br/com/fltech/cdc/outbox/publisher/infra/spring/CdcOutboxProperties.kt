@@ -38,6 +38,9 @@ data class CdcOutboxProperties(
 
     @NestedConfigurationProperty
     val health: Health = Health(),
+
+    @NestedConfigurationProperty
+    val deadLetter: DeadLetter = DeadLetter(),
 ) {
 
     data class Postgres(
@@ -83,6 +86,22 @@ data class CdcOutboxProperties(
         val multiplier: Double = 2.0,
         val jitter: Double = 0.3,
         val maxReconnectAttempts: Int = 30,
+        /** Maximum publish attempts per message INCLUDING the first try. */
+        val maxPublishAttempts: Int = 5,
+        /** Initial delay between publish retries on the same message. */
+        val publishBackoffInitial: Duration = Duration.ofMillis(100),
+        /** Cap on the publish-retry delay. */
+        val publishBackoffMax: Duration = Duration.ofSeconds(5),
+    )
+
+    data class DeadLetter(
+        /**
+         * SQS queue name (or ARN) to forward dead-lettered messages to.
+         * When null or blank, the dead-letter sink is NOT wired and
+         * messages that exhaust their retries leave the slot stuck —
+         * operator must intervene. Set this for production.
+         */
+        val queueName: String? = null,
     )
 
     data class Health(

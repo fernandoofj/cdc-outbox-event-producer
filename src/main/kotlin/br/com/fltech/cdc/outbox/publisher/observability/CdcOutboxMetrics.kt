@@ -80,19 +80,53 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         }
     }
 
+    fun recordRetry(sink: String, topic: String, attempt: Int) {
+        registry?.let {
+            Counter.builder(PUBLISH_RETRIES)
+                .description("Publish-retry attempts (does not include the initial try)")
+                .tags(Tags.of(TAG_SINK, sink, TAG_TOPIC, topic, TAG_ATTEMPT, attempt.toString()))
+                .register(it)
+                .increment()
+        }
+    }
+
+    fun recordDeadLettered(sink: String, topic: String, cause: String) {
+        registry?.let {
+            Counter.builder(DEAD_LETTERED)
+                .description("Messages forwarded to the dead-letter sink after exhausting retries")
+                .tags(Tags.of(TAG_SINK, sink, TAG_TOPIC, topic, TAG_CAUSE, cause))
+                .register(it)
+                .increment()
+        }
+    }
+
+    fun recordDeadLetterFailure(cause: String) {
+        registry?.let {
+            Counter.builder(DEAD_LETTER_FAILURES)
+                .description("Dead-letter publishes that themselves raised an exception — operator must intervene")
+                .tags(Tags.of(TAG_CAUSE, cause))
+                .register(it)
+                .increment()
+        }
+    }
+
     companion object {
         const val MESSAGES_READ = "cdc.outbox.messages.read"
         const val MESSAGES_PUBLISHED = "cdc.outbox.messages.published"
         const val MESSAGES_FAILED = "cdc.outbox.messages.failed"
         const val MESSAGES_DISCARDED = "cdc.outbox.messages.discarded"
         const val PUBLISH_DURATION = "cdc.outbox.publish.duration"
+        const val PUBLISH_RETRIES = "cdc.outbox.publish.retries"
         const val RECONNECTS = "cdc.outbox.reconnect.attempts"
+        const val DEAD_LETTERED = "cdc.outbox.messages.dead_lettered"
+        const val DEAD_LETTER_FAILURES = "cdc.outbox.dead_letter.failures"
 
         const val TAG_SLOT = "slot"
         const val TAG_SINK = "sink"
         const val TAG_TOPIC = "topic"
         const val TAG_CAUSE = "cause"
         const val TAG_REASON = "reason"
+        const val TAG_ATTEMPT = "attempt"
 
         /** Returns a no-op instance that records nothing. */
         fun noop(): CdcOutboxMetrics = CdcOutboxMetrics(null)

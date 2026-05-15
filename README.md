@@ -305,7 +305,7 @@ Mapped to the items in the brief plus follow-ups raised in review:
 | 1 | Survey existing libs | [§ Alternatives](#alternatives-in-the-ecosystem) | done in this README |
 | 2 | Code quality: pool, reconnect, delivery, observability | HikariCP for the query connection (wired as default); back-off + jitter on every reconnect with a configurable attempt cap; `@Volatile` running flag + cooperative interrupt-aware shutdown; Micrometer counters/timers (no-op when no registry); LSN skip-on-failure bug fixed at the callback API level; idle-flush no longer fast-forwards past pending failures. | Wave 1 — done |
 | 2a | Quality follow-ups originally deferred from Wave 1 | True per-message LSN extracted from the wal2json `lsn` field (`include-lsn=true` is the default in `ReplicationConfiguration`), closing the residual race against `lastReceiveLSN()`; `pendingFailureLsn` made `@Volatile` so the Wave 2 health indicator can safely read it; unused AWS SDK v1 `aws-java-sdk-sts` dependency removed. | Wave 1.5 — done |
-| 2b | Quality follow-ups still open | Head-of-line retry with DLQ (depends on the `EventSink` port from Wave 4); Testcontainers integration regression that asserts at-least-once with a flapping sink; Spring Cloud AWS Messaging 2.4 → 3.x migration (entangled with the multi-broker work and reaches into both SNS and SQS producers, so it lands in Wave 4). | later waves |
+| 2b | Quality follow-ups originally deferred from Wave 1 (final batch) | Head-of-line publish retry with bounded attempts and an injectable [BackOff]; configurable SQS-backed dead-letter sink (`cdc.outbox.dead-letter.queue-name`) consumed by exhausted retries; Spring Cloud AWS Messaging 2.4 → 3.2 migration (`NotificationMessagingTemplate`/`QueueMessagingTemplate` replaced by `SnsTemplate`/`SqsTemplate` on AWS SDK v2); Testcontainers integration regression `AtLeastOnceDeliveryIT` that emits three transactional WAL messages against a real Postgres + LocalStack pair and asserts all three arrive at the subscribed SQS queue even when the first publish attempt throws. | Wave 2b — done |
 | 3 | Spring Boot integration | `CdcOutboxAutoConfiguration` + `CdcOutboxProperties` (`cdc.outbox.*` prefix, all knobs of [PostgresConfiguration], [ReplicationConfiguration], pool, retry, health); `CdcOutboxLifecycle` (`SmartLifecycle`) starts/stops the streaming loop with the Spring context; `CdcOutboxHealthIndicator` reports `DOWN` when there is a pending publish failure or the producer thread is gone. Spring Boot dependencies are `compileOnly` so the library jar stays usable in non-Boot apps. | Wave 2 — done |
 | 4 | Multi-DB via hexagonal | `core` module exposing `CdcSource` port; `adapter-postgres` (modernized, pgoutput option, PG16+), `adapter-mysql` (binlog + outbox table fallback). Stubs for `adapter-sqlserver` (CT/CDC) and `adapter-oracle` (LogMiner / OpenLogReplicator) | Wave 3 |
 | 5 | Multi-broker via hexagonal | `EventSink` port; adapters: `adapter-sink-sns`, `adapter-sink-sqs`, `adapter-sink-kafka`, `adapter-sink-rabbitmq`. Composite + Router sinks for fan-out and migration scenarios | Wave 4 |
@@ -542,22 +542,44 @@ class.
 [`shell-scripts/localstack/`](shell-scripts/localstack/) create the test
 SNS topic and SQS queue.
 
-### Toolchain (post Wave 1)
+### Running the Testcontainers regression suite
 
-| Tool          | Version |
-|---------------|---------|
-| Kotlin        | 1.9.25  |
-| JVM target    | 17 (compiled with JDK 21) |
-| Gradle wrapper| 8.10.2  |
-| Spring (msg)  | 6.0.13 (transitive) |
-| AWS SDK v2    | 2.21.1  |
-| AWS SDK v1    | 1.12.566 *(legacy, to remove in Wave 2)* |
-| pgjdbc        | 42.6.0  |
-| HikariCP      | 5.1.0   |
-| Micrometer    | 1.12.13 |
-| Detekt        | 1.23.7  |
-| ktlint plugin | 12.1.1  |
-| Testcontainers| 1.19.1  |
+`AtLeastOnceDeliveryIT` does not use `docker-compose` — it provisions its
+own Postgres + LocalStack containers via Testcontainers. To run it:
+
+```sh
+export RUN_TESTCONTAINERS=1
+# OrbStack / Colima: the Testcontainers-bundled docker-java negotiates
+# API 1.32, which OrbStack rejects (it requires ≥ 1.40). Force a higher
+# floor so version negotiation succeeds.
+export DOCKER_API_VERSION=1.43
+export DOCKER_HOST=unix:///var/run/docker.sock   # or the orbstack socket directly
+
+./gradlew test --tests '*AtLeastOnceDeliveryIT'
+```
+
+Without `RUN_TESTCONTAINERS=1` the test is skipped via
+`@EnabledIfEnvironmentVariable`, so it does not slow down the default
+`./gradlew test` slice.
+
+### Toolchain (post Wave 2b)
+
+| Tool                      | Version |
+|---------------------------|---------|
+| Kotlin                    | 1.9.25  |
+| JVM target                | 17 (compiled with JDK 21) |
+| Gradle wrapper            | 8.10.2  |
+| Spring (msg)              | 6.0.13 (transitive) |
+| Spring Boot (compileOnly) | 3.3.5   |
+| Spring Cloud AWS          | 3.2.1 (SnsTemplate / SqsTemplate, AWS SDK v2 backed) |
+| AWS SDK v2                | 2.27.21 |
+| pgjdbc                    | 42.6.0  |
+| HikariCP                  | 5.1.0   |
+| Micrometer                | 1.12.13 |
+| Detekt                    | 1.23.7  |
+| ktlint plugin             | 12.1.1  |
+| Testcontainers            | 1.20.4  |
+| Awaitility (test)         | 4.2.2   |
 
 ---
 
