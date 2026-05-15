@@ -30,6 +30,11 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * fields and `@JsonIgnoreProperties(ignoreUnknown = true)` keeps the
  * existing fixtures parsing.
  */
+// LongParameterList: wal2json format-version=2 envelope carries 9
+// optional fields by design (M/I/U/D action shapes share one DTO);
+// splitting into per-action subtypes loses the single Jackson
+// deserialisation path and forces consumers to dispatch twice.
+@Suppress("LongParameterList")
 @JsonIgnoreProperties(ignoreUnknown = true)
 class SlotMessageV2 @JsonCreator constructor(
     @param:JsonProperty(value = "xid", required = true)

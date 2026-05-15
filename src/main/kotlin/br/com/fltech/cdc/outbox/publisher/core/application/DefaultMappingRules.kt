@@ -38,6 +38,11 @@ class DefaultMappingRules(
         }
     }
 
+    // ReturnCount: 3 explicit returns map to 3 filter steps (no table
+    // mapping, op excluded by capture set, mapped event). Each guard
+    // is a distinct cause for the caller to register the row as
+    // ignored — folding them loses that signal.
+    @Suppress("ReturnCount")
     override fun map(rowChange: RowChange): OutboxEvent? {
         val mapping = byTable[rowChange.table] ?: return null
         if (rowChange.op !in mapping.capture) return null

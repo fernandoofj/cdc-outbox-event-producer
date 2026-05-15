@@ -137,6 +137,11 @@ class CdcProcessor(
         val pendingFailureCheckpoint: String? = null,
     )
 
+    // LoopWithTooManyJumpStatements: the poll loop's `continue` branches
+    // are the structurally clearest way to express "skip this iteration"
+    // for both poll failures and empty polls — flattening them obscures
+    // the fact that BOTH paths sleep + retry from the same place.
+    @Suppress("LoopWithTooManyJumpStatements")
     private fun runLoop() {
         while (running) {
             // Record activity BEFORE the poll so a hang inside poll
@@ -163,6 +168,11 @@ class CdcProcessor(
         }
     }
 
+    // ReturnCount: 3 explicit returns map to 3 distinct outcomes
+    // (successful publish, scheme misconfigured, shutdown-during-retry).
+    // Folding them into a single return path loses the per-outcome
+    // logging clarity right above each return.
+    @Suppress("ReturnCount")
     private fun processEvent(event: OutboxEvent) {
         var attempt = 0
         var lastException: Exception? = null

@@ -127,6 +127,10 @@ class ByteToClassParserImplV1(
      * and degrade to null — the slot keeps draining rather than
      * head-of-line blocking on a malformed record.
      */
+    // ReturnCount: missing names and missing values are different
+    // wal2json shapes (truncate, message-only, malformed) — each
+    // null guard carries operational meaning the caller can register.
+    @Suppress("ReturnCount")
     private fun zipColumns(record: V1RowRecord): List<Wal2JsonColumn>? {
         val names = record.columnNames ?: return null
         val values = record.columnValues ?: return null
@@ -146,6 +150,9 @@ class ByteToClassParserImplV1(
      * projection. Same null-tolerance and length-mismatch semantics as
      * [zipColumns].
      */
+    // ReturnCount: same guard rationale as [zipColumns] — 4 null
+    // shapes (no oldkeys block, no keyNames, no keyValues, mismatched).
+    @Suppress("ReturnCount")
     private fun zipIdentity(oldKeys: V1OldKeys?): List<Wal2JsonColumn>? {
         if (oldKeys == null) return null
         val names = oldKeys.keyNames ?: return null

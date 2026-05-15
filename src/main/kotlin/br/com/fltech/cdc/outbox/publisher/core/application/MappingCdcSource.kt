@@ -44,6 +44,10 @@ class MappingCdcSource(
         rowSource.open()
     }
 
+    // ReturnCount: 3 explicit returns (no row available, row filtered
+    // out, mapped event) — each is a distinct outcome the orchestrator
+    // disambiguates on.
+    @Suppress("ReturnCount")
     override fun poll(): OutboxEvent? {
         val row = rowSource.poll() ?: return null
         val event = mappingRules.map(row)

@@ -412,6 +412,9 @@ class SlotReaderMessageProducer(
         }
     }
 
+    // ReturnCount: 3 outcomes (no embedded lsn, INVALID_LSN sentinel,
+    // valid parsed). Single-return would hide the diagnostic WARN log.
+    @Suppress("ReturnCount")
     internal fun resolveLsn(messageChange: MessageChange, fallback: LogSequenceNumber): LogSequenceNumber {
         val embedded = messageChange.lsn ?: return fallback
         // pgjdbc's LogSequenceNumber.valueOf never throws — it returns

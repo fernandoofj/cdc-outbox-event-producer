@@ -62,6 +62,11 @@ class PgLogicalReplicationCdcSource(
         logger.info("PgLogicalReplicationCdcSource opened on slot '{}'", replicationConfiguration.slotName)
     }
 
+    // ReturnCount: 3 distinct outcomes (nothing to read, no message
+    // change in batch, mapped event). Single-return would have to
+    // hoist a nullable through the parse step and obscure the
+    // empty-batch case.
+    @Suppress("ReturnCount")
     override fun poll(): OutboxEvent? {
         val conn = checkOpen()
         val byteBuffer = conn.readPending() ?: return null
@@ -99,7 +104,10 @@ class PgLogicalReplicationCdcSource(
         if (embedded.isNullOrBlank()) return fallback
         val parsed = LogSequenceNumber.valueOf(embedded)
         return if (parsed == LogSequenceNumber.INVALID_LSN) {
-            logger.warn("Embedded wal2json lsn '{}' parsed as INVALID_LSN; falling back to stream LSN {}", embedded, fallback)
+            logger.warn(
+                "Embedded wal2json lsn '{}' parsed as INVALID_LSN; falling back to stream LSN {}",
+                embedded, fallback,
+            )
             fallback
         } else {
             parsed

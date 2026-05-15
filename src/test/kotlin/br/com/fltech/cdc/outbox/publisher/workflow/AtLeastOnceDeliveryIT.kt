@@ -77,7 +77,12 @@ class AtLeastOnceDeliveryIT {
             withDatabaseName("cdc")
             withUsername(PG_USER)
             withPassword(PG_PASSWORD)
-            withCommand("postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=4", "-c", "max_wal_senders=4")
+            withCommand(
+                "postgres",
+                "-c", "wal_level=logical",
+                "-c", "max_replication_slots=4",
+                "-c", "max_wal_senders=4",
+            )
         }
 
         private val localstack = LocalStackContainer(
@@ -169,6 +174,11 @@ class AtLeastOnceDeliveryIT {
         runCatching { sqsAsyncClient.close() }
     }
 
+    // LongMethod: end-to-end IT body cannot be trimmed further — each
+    // step (build producer + sink, drive 3 inserts, await receive,
+    // assert attempt count + bodies) is one logical phase the
+    // assertion narrative depends on.
+    @Suppress("LongMethod")
     @Test
     fun `transient failure on the first publish does not lose the message — retry recovers it`() {
         val received = ConcurrentHashMap.newKeySet<String>()
@@ -181,7 +191,7 @@ class AtLeastOnceDeliveryIT {
             override fun <T : Any> send(topicName: String, message: SNSMessage<T>) {
                 val count = publishAttempts.incrementAndGet()
                 if (count == 1) {
-                    throw RuntimeException("simulated transient broker failure on attempt #1")
+                    error("simulated transient broker failure on attempt #1")
                 }
                 delegate.send(topicArn, message)
             }
@@ -244,7 +254,10 @@ class AtLeastOnceDeliveryIT {
 
         // At least 1 publish failure (the simulated one) must have been
         // attempted; receive count must include all 3 emitted payloads.
-        assertTrue(publishAttempts.get() >= 4, "expected ≥4 publish attempts (3 messages + 1 retry); got ${publishAttempts.get()}")
+        assertTrue(
+            publishAttempts.get() >= 4,
+            "expected ≥4 publish attempts (3 messages + 1 retry); got ${publishAttempts.get()}",
+        )
         // Bodies are JSON; for each emitted ID, assert there's a body containing it.
         sent.forEach { expected ->
             assertTrue(

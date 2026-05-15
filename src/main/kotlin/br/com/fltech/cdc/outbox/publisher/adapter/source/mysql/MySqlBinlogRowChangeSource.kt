@@ -86,7 +86,14 @@ import javax.sql.DataSource
  * KDoc still applies — the binlog-client's internal thread is not the
  * orchestrator thread.
  */
-@Suppress("LongParameterList")
+// LongParameterList: the binlog client needs JDBC handle + checkpoint
+// store + metrics + the host/port/credentials surface; collapsing into
+// a config object would scatter the wiring across files.
+// TooManyFunctions: one method per binlog event type (TABLE_MAP,
+// WRITE_ROWS, UPDATE_ROWS, DELETE_ROWS, QUERY) plus the lifecycle
+// methods is intentionally on the class — splitting hurts
+// discoverability for adapter readers.
+@Suppress("LongParameterList", "TooManyFunctions")
 class MySqlBinlogRowChangeSource(
     private val host: String,
     private val port: Int,
@@ -176,6 +183,11 @@ class MySqlBinlogRowChangeSource(
     @Volatile
     private var lastAckedCheckpoint: String? = null
 
+    // TooGenericExceptionCaught: the connect()-thread catch is the
+    // last line of defence — anything that escapes would silently
+    // kill the daemon and leave the buffer dry forever. We log at
+    // ERROR so the operator notices, but never re-throw.
+    @Suppress("TooGenericExceptionCaught")
     override fun open() {
         if (!opened.compareAndSet(false, true)) {
             logger.debug("MySqlBinlogRowChangeSource already opened; ignoring duplicate open()")
@@ -229,6 +241,10 @@ class MySqlBinlogRowChangeSource(
      * wired, when the store is empty, or when the persisted value
      * cannot be parsed back into `<filename>:<position>`.
      */
+    // ReturnCount: guard-clause sequence (no store → no persisted →
+    // load failed → unparseable). Flattening to nested ifs hurts
+    // readability; each guard is a distinct outcome.
+    @Suppress("ReturnCount")
     private fun resumeFromCheckpoint(c: BinaryLogClient) {
         val store = checkpointStore ?: return
         val persisted = try {
@@ -261,6 +277,9 @@ class MySqlBinlogRowChangeSource(
 
     private fun checkpointKey(): String = "binlog:$serverId"
 
+    // ReturnCount: 3 distinct invalid shapes (missing colon, position
+    // not numeric, well-formed) — multi-return is the natural form.
+    @Suppress("ReturnCount")
     private fun parseCheckpoint(raw: String): Pair<String, Long>? {
         val idx = raw.lastIndexOf(':')
         if (idx <= 0 || idx == raw.length - 1) return null
@@ -293,74 +312,86 @@ class MySqlBinlogRowChangeSource(
             val header = event.getHeader<com.github.shyiko.mysql.binlog.event.EventHeaderV4>()
             when (header.eventType) {
                 EventType.ROTATE -> {
-                    val data = event.getData<RotateEventData>()
-                    currentBinlogFile = data.binlogFilename
+                    currentBinlogFile = event.getData<RotateEventData>().binlogFilename
                 }
                 EventType.QUERY -> {
                     // QUERY events (BEGIN/COMMIT/DDL) are control plane — keep the
                     // binlog file moving but don't emit RowChanges.
                     event.getData<QueryEventData>()
                 }
-                EventType.TABLE_MAP -> {
-                    val data = event.getData<TableMapEventData>()
-                    tableCache[data.tableId] = "${data.database}.${data.table}"
-                    invalidateOnColumnCountChange(data.tableId, data.columnTypes.size, data.database, data.table)
-                    resolveColumnNames(data.tableId, data.database, data.table)
-                }
-                EventType.EXT_WRITE_ROWS, EventType.WRITE_ROWS -> {
-                    val data = event.getData<WriteRowsEventData>()
-                    val table = tableCache[data.tableId] ?: return
-                    val names = columnNamesByTableId[data.tableId]
-                    data.rows.forEach { row ->
-                        offer(
-                            RowChange(
-                                op = RowChange.Op.INSERT,
-                                table = table,
-                                sourceCheckpoint = "$currentBinlogFile:${header.nextPosition}",
-                                occurredAt = Instant.ofEpochMilli(header.timestamp),
-                                after = row.namedAsMap(names),
-                            ),
-                        )
-                    }
-                }
-                EventType.EXT_UPDATE_ROWS, EventType.UPDATE_ROWS -> {
-                    val data = event.getData<UpdateRowsEventData>()
-                    val table = tableCache[data.tableId] ?: return
-                    val names = columnNamesByTableId[data.tableId]
-                    data.rows.forEach { entry ->
-                        offer(
-                            RowChange(
-                                op = RowChange.Op.UPDATE,
-                                table = table,
-                                sourceCheckpoint = "$currentBinlogFile:${header.nextPosition}",
-                                occurredAt = Instant.ofEpochMilli(header.timestamp),
-                                before = entry.key.namedAsMap(names),
-                                after = entry.value.namedAsMap(names),
-                            ),
-                        )
-                    }
-                }
-                EventType.EXT_DELETE_ROWS, EventType.DELETE_ROWS -> {
-                    val data = event.getData<DeleteRowsEventData>()
-                    val table = tableCache[data.tableId] ?: return
-                    val names = columnNamesByTableId[data.tableId]
-                    data.rows.forEach { row ->
-                        offer(
-                            RowChange(
-                                op = RowChange.Op.DELETE,
-                                table = table,
-                                sourceCheckpoint = "$currentBinlogFile:${header.nextPosition}",
-                                occurredAt = Instant.ofEpochMilli(header.timestamp),
-                                before = row.namedAsMap(names),
-                            ),
-                        )
-                    }
-                }
+                EventType.TABLE_MAP -> handleTableMap(event.getData())
+                EventType.EXT_WRITE_ROWS, EventType.WRITE_ROWS -> handleWriteRows(event.getData(), header)
+                EventType.EXT_UPDATE_ROWS, EventType.UPDATE_ROWS -> handleUpdateRows(event.getData(), header)
+                EventType.EXT_DELETE_ROWS, EventType.DELETE_ROWS -> handleDeleteRows(event.getData(), header)
                 else -> Unit  // ignore other event types
             }
         } catch (t: Throwable) {
             logger.warn("MySqlBinlogRowChangeSource failed to handle event {} ({})", event, t.javaClass.simpleName)
             metrics.recordBinlogParseError(t.javaClass.simpleName)
+        }
+    }
+
+    private fun handleTableMap(data: TableMapEventData) {
+        tableCache[data.tableId] = "${data.database}.${data.table}"
+        invalidateOnColumnCountChange(data.tableId, data.columnTypes.size, data.database, data.table)
+        resolveColumnNames(data.tableId, data.database, data.table)
+    }
+
+    private fun handleWriteRows(
+        data: WriteRowsEventData,
+        header: com.github.shyiko.mysql.binlog.event.EventHeaderV4,
+    ) {
+        val table = tableCache[data.tableId] ?: return
+        val names = columnNamesByTableId[data.tableId]
+        data.rows.forEach { row ->
+            offer(
+                RowChange(
+                    op = RowChange.Op.INSERT,
+                    table = table,
+                    sourceCheckpoint = "$currentBinlogFile:${header.nextPosition}",
+                    occurredAt = Instant.ofEpochMilli(header.timestamp),
+                    after = row.namedAsMap(names),
+                ),
+            )
+        }
+    }
+
+    private fun handleUpdateRows(
+        data: UpdateRowsEventData,
+        header: com.github.shyiko.mysql.binlog.event.EventHeaderV4,
+    ) {
+        val table = tableCache[data.tableId] ?: return
+        val names = columnNamesByTableId[data.tableId]
+        data.rows.forEach { entry ->
+            offer(
+                RowChange(
+                    op = RowChange.Op.UPDATE,
+                    table = table,
+                    sourceCheckpoint = "$currentBinlogFile:${header.nextPosition}",
+                    occurredAt = Instant.ofEpochMilli(header.timestamp),
+                    before = entry.key.namedAsMap(names),
+                    after = entry.value.namedAsMap(names),
+                ),
+            )
+        }
+    }
+
+    private fun handleDeleteRows(
+        data: DeleteRowsEventData,
+        header: com.github.shyiko.mysql.binlog.event.EventHeaderV4,
+    ) {
+        val table = tableCache[data.tableId] ?: return
+        val names = columnNamesByTableId[data.tableId]
+        data.rows.forEach { row ->
+            offer(
+                RowChange(
+                    op = RowChange.Op.DELETE,
+                    table = table,
+                    sourceCheckpoint = "$currentBinlogFile:${header.nextPosition}",
+                    occurredAt = Instant.ofEpochMilli(header.timestamp),
+                    before = row.namedAsMap(names),
+                ),
+            )
         }
     }
 
@@ -397,6 +428,10 @@ class MySqlBinlogRowChangeSource(
      * metric per *row event*, but we WARN-log only at resolution time
      * (not per row) to avoid log spam.
      */
+    // ReturnCount: 4 distinct early-exits (already cached, no DataSource,
+    // lookup raised, empty result). Each is a different operational
+    // signal and emits a different log/metric; nesting would obscure them.
+    @Suppress("ReturnCount")
     private fun resolveColumnNames(tableId: Long, schema: String, table: String) {
         if (columnNamesByTableId.containsKey(tableId)) return
         val ds = dataSource
@@ -481,12 +516,15 @@ class MySqlBinlogRowChangeSource(
             conn.prepareStatement(COLUMN_LOOKUP_SQL).use { stmt ->
                 stmt.setString(1, schema)
                 stmt.setString(2, table)
-                stmt.executeQuery().use { rs ->
-                    val names = mutableListOf<String>()
-                    while (rs.next()) names += rs.getString(1)
-                    if (names.isEmpty()) null else names
-                }
+                readColumnNames(stmt)
             }
         }
+
+        private fun readColumnNames(stmt: java.sql.PreparedStatement): List<String>? =
+            stmt.executeQuery().use { rs ->
+                val names = mutableListOf<String>()
+                while (rs.next()) names += rs.getString(1)
+                if (names.isEmpty()) null else names
+            }
     }
 }

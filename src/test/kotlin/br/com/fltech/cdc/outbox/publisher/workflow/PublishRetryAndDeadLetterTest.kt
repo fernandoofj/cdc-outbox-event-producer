@@ -99,7 +99,7 @@ class PublishRetryAndDeadLetterTest {
         var attempt = 0
         every { snsProducer.send(any(), any<SNSMessage<Any>>()) } answers {
             attempt += 1
-            if (attempt < 3) throw RuntimeException("transient $attempt")
+            if (attempt < 3) error("transient $attempt")
             // third call returns normally
         }
         val producer = buildProducer()

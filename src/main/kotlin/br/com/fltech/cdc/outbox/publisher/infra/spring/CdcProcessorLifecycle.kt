@@ -25,6 +25,11 @@ class CdcProcessorLifecycle(
     @Volatile
     private var running = false
 
+    // TooGenericExceptionCaught: the hex processor thread is the
+    // top-level driver of the orchestrator loop; same rationale as
+    // CdcOutboxLifecycle.start — catch Throwable + ERROR-log so the
+    // health indicator can surface DOWN even on Error/OOM surprises.
+    @Suppress("TooGenericExceptionCaught")
     override fun start() {
         if (running) {
             logger.debug("CdcProcessorLifecycle already running; ignoring start()")

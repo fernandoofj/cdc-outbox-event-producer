@@ -21,6 +21,11 @@ import java.time.Duration
  * Set `cdc.outbox.enabled = false` (or simply omit the configuration) to
  * keep the auto-configuration dormant.
  */
+// MagicNumber: every numeric literal here is a tunable default for a
+// named `@ConfigurationProperties` field — the property name IS the
+// semantic name. Extracting each to a sibling constant would double the
+// file with no readability gain.
+@Suppress("MagicNumber")
 @ConfigurationProperties(prefix = "cdc.outbox")
 data class CdcOutboxProperties(
     /** Master switch. When false the auto-configuration registers no beans. */

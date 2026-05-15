@@ -113,7 +113,10 @@ class FileCheckpointStore(
             // `createDirectories` above and here, or otherwise gone).
             // Mirrors the `save` idiom of treating the directory as
             // lazy: nothing to sweep, nothing to log loudly about.
-            logger.debug("FileCheckpointStore: sweep directory {} missing; nothing to do.", directory)
+            logger.debug(
+                "FileCheckpointStore: sweep directory {} missing; nothing to do.",
+                directory, e,
+            )
             return
         } catch (e: IOException) {
             logger.warn(
@@ -142,11 +145,19 @@ class FileCheckpointStore(
         }
     }
 
+    // ReturnCount: three early-exit branches (file missing, unreadable,
+    // decoded) are clearer than a nested if/else; each is a distinct
+    // outcome the caller has to handle.
+    @Suppress("ReturnCount")
     override fun load(key: String): String? {
         val file = pathFor(key)
         val raw = try {
             Files.readString(file, StandardCharsets.UTF_8)
         } catch (e: NoSuchFileException) {
+            logger.debug(
+                "FileCheckpointStore: checkpoint file {} not present; treating as missing.",
+                file, e,
+            )
             return null
         } catch (e: Exception) {
             // Treat unreadable files (permissions, locked) the same as
@@ -182,7 +193,7 @@ class FileCheckpointStore(
             logger.warn(
                 "FileCheckpointStore: filesystem at {} does not support atomic moves; " +
                     "falling back to non-atomic REPLACE_EXISTING. Crash mid-move could lose checkpoint.",
-                directory,
+                directory, e,
             )
             Files.move(tmp, canonical, StandardCopyOption.REPLACE_EXISTING)
         }
@@ -193,6 +204,10 @@ class FileCheckpointStore(
     private fun encode(key: String, value: String): String =
         """{"key":"${escape(key)}","value":"${escape(value)}"}"""
 
+    // ReturnCount: parser preflight is naturally a sequence of guards
+    // (shape, required field, key match) — flattening to nested ifs
+    // would make each invariant harder to read.
+    @Suppress("ReturnCount")
     private fun decode(raw: String, expectedKey: String, file: Path): String? {
         val trimmed = raw.trim()
         if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
@@ -231,6 +246,10 @@ class FileCheckpointStore(
      * class, the shape is known, and a stray dependency in a leaf
      * adapter would muddy the hexagonal boundary.
      */
+    // ReturnCount: a small hand-rolled JSON-string scanner naturally
+    // has multiple bail-outs (not found, closing quote, EOF) — each
+    // is a distinct case the caller does not need to disambiguate.
+    @Suppress("ReturnCount")
     private fun extractField(json: String, field: String): String? {
         val needle = "\"$field\":\""
         val start = json.indexOf(needle)
