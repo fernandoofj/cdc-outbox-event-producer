@@ -406,7 +406,7 @@ sequência MySQL binlog → Kafka) estão em
 | Player                                           | Adapter                                                                                                                                                          | Estado                                                                          |
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
 | PostgreSQL via `wal2json` + `pg_logical_emit_message` | [`PgLogicalReplicationCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt)                    | Pronto. Default wal2json v2, include-lsn=true.                                  |
-| PostgreSQL row-level (`I/U/D` via wal2json)      | [`PgWalRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgWalRowChangeSource.kt)                                      | Pronto desde a Onda 5.2. Consome `I/U/D` do wal2json (format-version=2), surface `before`/`after` em `RowChange`. Coexiste com `PgLogicalReplicationCdcSource` (slots distintos); auto-config escolhe um ou outro pelo bean wiring. |
+| PostgreSQL row-level (`I/U/D` via wal2json)      | [`PgWalRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgWalRowChangeSource.kt)                                      | Pronto desde a Onda 5.2. Consome `I/U/D` do wal2json (`format-version=2` por default; `format-version=1` também suportado desde Round 10 — paridade `columns`/`identity` no parser V1), surface `before`/`after` em `RowChange`. Coexiste com `PgLogicalReplicationCdcSource` (slots distintos); auto-config escolhe um ou outro pelo bean wiring. |
 | MySQL via tabela `outbox_events` + `SKIP LOCKED` | [`MySqlOutboxTableCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt)                               | Pronto. MySQL 8+; identifier hard-validated contra SQLi.                        |
 | MySQL via binlog (`mysql-binlog-connector-java`) | [`MySqlBinlogRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt)                             | Pronto. Resolve nomes de coluna via `INFORMATION_SCHEMA` (fallback para `col0`/`col1`/… reporta counter `binlog.column_resolution.fallbacks`); invalida o cache quando o `columnCount` muda mid-stream (ALTER TABLE). Checkpoint persiste via `CheckpointStore` quando `cdc.outbox.checkpoint.enabled=true` (Onda 5.2) — restart retoma da posição confirmada; sem essa property o comportamento histórico in-memory permanece. IT MySQL coberto por `MysqlRabbitMqE2EIT` (gated por `RUN_TESTCONTAINERS=1`). |
 | SQL Server                                       | [`SqlServerCdcSourceStub`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/sqlserver/SqlServerCdcSourceStub.kt)                                 | Stub. Lança `UnsupportedOperationException`. Implementação real fica para uma onda futura. |
@@ -451,8 +451,17 @@ presente no contexto (gated por `@ConditionalOnClass` +
     `cdc.outbox.messages.dead_lettered{sink,topic,cause}`,
     `cdc.outbox.dead_letter.failures{cause}`,
     `cdc.outbox.reconnect.attempts{reason}`,
-    `cdc.outbox.messages.discarded{reason}`. Timer:
-    `cdc.outbox.publish.duration{sink}`.
+    `cdc.outbox.messages.discarded{reason}`,
+    `cdc.outbox.source.binlog.parse_errors{cause}`,
+    `cdc.outbox.source.binlog.column_resolution.fallbacks{table}`,
+    `cdc.outbox.checkpoint.orphans_swept{outcome}` (sweep do
+    `FileCheckpointStore` no startup; `outcome=deleted|failed`).
+    Timer: `cdc.outbox.publish.duration{sink}`. Gauge:
+    `cdc.outbox.source.lag_bytes{source=postgres|mysql}` —
+    amostrado por `LagProbeScheduler` no intervalo
+    `cdc.outbox.lag.interval` (default 10s), exposto como
+    `Double.NaN` quando ainda não há amostra ou quando a
+    consulta falha temporariamente.
   * **Spring Boot Actuator** via
     [`CdcOutboxHealthAutoConfiguration`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxHealthAutoConfiguration.kt).
     Branch legado:
@@ -472,8 +481,13 @@ presente no contexto (gated por `@ConditionalOnClass` +
   * **Ferramentas upstream:** replication slot do Postgres
     (`pg_stat_replication`, `pg_replication_slots`, `confirmed_flush_lsn`,
     `pg_wal_lsn_diff`) e binlog do MySQL (`SHOW BINARY LOGS`,
-    `mysql.gtid_executed`). O lag ainda não é exposto como gauge no
-    producer — fica para uma onda futura (não está em 5.2).
+    `mysql.gtid_executed`). O lag em bytes agora é exposto pelo
+    producer como o gauge `cdc.outbox.source.lag_bytes` (ver
+    listagem acima); o `LagProbeScheduler` consulta o upstream
+    diretamente (`pg_replication_slots` no Postgres,
+    `SHOW MASTER STATUS` comparado com a posição persistida em
+    `CheckpointStore` no MySQL) e parqueia o valor num cache
+    `AtomicLong` lido pelo gauge.
 
 ### Superfície de configuração (`cdc.outbox.*`)
 
@@ -500,6 +514,15 @@ Os blocos principais:
   * `cdc.outbox.checkpoint.*` — `enabled` (default `false`) + `directory`.
     Wave 5.2. Liga o `FileCheckpointStore` default; adapters row-level
     (MySQL binlog, `PgWalRowChangeSource`) consomem em `open()` / `ack()`.
+    A varredura de `.tmp` órfãos (deixados por crash mid-save) roda
+    no construtor e publica `cdc.outbox.checkpoint.orphans_swept`.
+  * `cdc.outbox.lag.*` — `enabled` (default `true`) + `interval`
+    (default `PT10S`). Liga o `LagProbeScheduler` que alimenta o
+    gauge `cdc.outbox.source.lag_bytes`. Quando o adapter de origem
+    é um `RowChangeSource` row-level (Postgres WAL ou MySQL binlog),
+    um `LagProbe` apropriado é wired automaticamente via
+    `@ConditionalOnBean`. Consumidores podem sobrescrever expondo
+    um bean `LagProbe` próprio.
   * `cdc.outbox.dead-letter.queueName` — DLQ SQS opcional.
   * `cdc.outbox.mappings` — lista declarativa de `TableMapping` (item 7
     da brief), consumida por
@@ -685,7 +708,7 @@ com split hexagonal). Debezium Engine resolve um problema parecido
 | 9 | **Wave 5.1 — binlog usability + idle health + E2E coverage** | `MySqlBinlogRowChangeSource` resolves column names from `INFORMATION_SCHEMA` (fallback to `col0/col1/…` with a `binlog.column_resolution.fallbacks{table}` Micrometer counter + WARN log). New `cdc.outbox.source.binlog.parse_errors{cause}` counter from the binlog listener thread. `CdcProcessor.snapshotState()` exposes `msSinceLastActivity`; `CdcProcessorHealthIndicator` now reports `OUT_OF_SERVICE` past `cdc.outbox.health.max-idle`. Two new end-to-end ITs gated by `RUN_TESTCONTAINERS=1`: `PostgresSnsE2EIT` (hex chain → LocalStack SNS+SQS) and `MysqlRabbitMqE2EIT` (hex chain via binlog → RabbitMQ). README + `docs/ARCHITECTURE.md` rewritten with Mermaid diagrams (functional + technical architecture, retry/DLQ state machine, sequence flows). | Wave 5.1 — done |
 | 10 | **Wave 5.2 — persisted binlog checkpoint, Postgres I/U/D row source, hex health pending-failure detail** | New port `core/port/CheckpointStore` + file-backed adapter `adapter/checkpoint/FileCheckpointStore` (atomic save: write `.tmp` → `fsync` → `ATOMIC_MOVE`). `MySqlBinlogRowChangeSource` accepts an optional `CheckpointStore` and persists `binlog:<serverId> → "<file>:<nextPosition>"` per ack — restart resumes exactly. Also drops the cached column-name list when a `TABLE_MAP` reports a different `columnCount` (mid-stream `ALTER TABLE`). New `adapter/source/postgres/PgWalRowChangeSource` consumes wal2json `I/U/D` (`schema`/`table`/`columns`/`identity`) via the extended `ByteToClassParserImplV2` + `SlotMessageV2`/`Wal2JsonColumn`, emitting `RowChange` with `before`/`after` column maps; coexists with `PgLogicalReplicationCdcSource`. `CdcProcessor.ProcessorState.pendingFailureCheckpoint` exposes the in-flight failure to `CdcProcessorHealthIndicator` (precedence: pending > not-running > not-iterating > idle > UP) — paridade funcional com o `pendingFailureLsn` do indicador legado. Auto-config: `cdcOutboxSource` resolve `MappingCdcSource(RowChangeSource, MappingRules)` quando há bean `RowChangeSource` (binlog ou Postgres WAL), fallback para `PgLogicalReplicationCdcSource`. Novas propriedades `cdc.outbox.checkpoint.{enabled,directory}` (default disabled). | Wave 5.2 — done |
 | 11 | **Wave 6 — Multi-module Gradle split** | Split the single module into `core/`, `adapter-source-*/`, `adapter-sink-*/`, `spring-boot-starter/` so the hexagonal boundaries are enforced at the build graph, not just by package convention. | open |
-| 12 | **Follow-ups deferred from Wave 5.2** | (a) Expose Postgres slot lag / MySQL binlog lag as a Micrometer gauge — apenas counters per-source existem hoje (já notado em §Observabilidade). (b) `FileCheckpointStore` orphan-`.tmp` sweep on `open()`: um crash mid-save deixa um `<key>.json.tmp` órfão; hoje nada poda — fica para uma onda futura. | open |
+| 12 | **Wave 5.2 follow-ups landed in Round 10** | (a) **Lag-as-gauge**: novo port `core/port/LagProbe` + `PostgresLagProbe` (consulta `pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)` no `pg_replication_slots`) + `MysqlLagProbe` (compara `SHOW MASTER STATUS` com a posição persistida em `CheckpointStore`; rotação de binlog → `null` + INFO uma vez) + `LagProbeScheduler` (daemon `ScheduledExecutorService`, intervalo `cdc.outbox.lag.interval` = 10s default, cache `AtomicLong`). Métrica `cdc.outbox.source.lag_bytes{source=postgres\|mysql}`. (b) **`FileCheckpointStore` orphan-`.tmp` sweep**: varredura on-construct das `<key>.json.tmp` deixadas por crash mid-save; counter `cdc.outbox.checkpoint.orphans_swept{outcome=deleted\|failed}`. (c) **V1 wal2json column surfacing**: `ByteToClassParserImplV1` agora também emite `columns`/`identity` (paridade V1↔V2), zipando os arrays paralelos `columnnames`/`columntypes`/`columnvalues` (+ `oldkeys.*` em U/D). | Wave 5.2 follow-ups — done |
 
 Wave boundaries are deliberate so each wave merges to `main`
 independently and the library stays usable in between.

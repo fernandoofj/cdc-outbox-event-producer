@@ -267,6 +267,19 @@ posição natural. Chamado na thread única do orquestrador. Opcional —
 sources aceitam `CheckpointStore?` e mantêm o comportamento
 in-memory quando `null`.
 
+### Driven — `LagProbe`
+
+[LagProbe.kt](../src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/LagProbe.kt)
+(Round 10 follow-up). `interface LagProbe { val sourceLabel: String; fun lagBytes(): Long? }`.
+Reporta o lag de replicação em bytes (quanto a origem está atrás
+da cabeça do WAL/binlog upstream). Retorna `null` quando a
+medição é temporariamente indisponível (rotação de binlog,
+falha de consulta) — o gauge expõe isso como `Double.NaN`. O
+`sourceLabel` é o valor da tag `source` do gauge. Chamado pelo
+`LagProbeScheduler` numa cadência mais lenta que o scrape do
+Micrometer; o resultado é parqueado num `AtomicLong` e lido
+pelo gauge a custo zero.
+
 ## Núcleo de aplicação (`core/application`)
 
 ### `CdcProcessor`
@@ -420,7 +433,14 @@ message-only (slots distintos; auto-config garante exclusividade).
   * Os parsers (`ByteToClassParserImplV2` default, V1 fallback) foram
     estendidos para surfacer `schema`/`table`/`columns`/`identity`
     em `SlotMessageV2` + `Wal2JsonColumn`; o fluxo message-only não
-    muda graças a `@JsonIgnoreProperties(ignoreUnknown=true)`.
+    muda graças a `@JsonIgnoreProperties(ignoreUnknown=true)`. O
+    `ByteToClassParserImplV1` ganhou a mesma paridade no Round 10:
+    zipa os arrays paralelos `columnnames` / `columntypes` /
+    `columnvalues` (e `oldkeys.keynames` / `keytypes` / `keyvalues`
+    em `U` / `D`) em `List<Wal2JsonColumn>`, propaga o
+    `nextlsn` do envelope para cada child `Change`, e preserva o
+    caminho `pg_logical_emit_message` (kind=`message`) que o IT
+    `format_v1 - without type` exercita.
 
 ### `SqlServerCdcSourceStub` / `OracleCdcSourceStub`
 
@@ -504,6 +524,58 @@ Filesystems sem atomic-move (mounts de rede) caem para
 registrado quando `cdc.outbox.checkpoint.enabled=true` e nenhum
 `CheckpointStore` concorrente existe. `cdc.outbox.checkpoint.directory`
 deve apontar para um volume durável.
+
+**Crash-recovery sweep (Round 10).** O construtor varre o diretório
+e remove qualquer `<key>.json.tmp` deixado por um crash entre o
+`Files.write` e o `ATOMIC_MOVE`. Cada entrada incrementa
+`cdc.outbox.checkpoint.orphans_swept{outcome=deleted|failed}`. A
+varredura é eager-on-construct (não num `init()` separado) porque
+mantém a call-site `FileCheckpointStore(directory, metrics)` única
+e libera o teste de observar o estado pós-sweep diretamente — sem
+fixtures extras. O bean factory em `CdcOutboxHexagonalAutoConfiguration`
+injeta o `CdcOutboxMetrics` do contexto para que o counter saia do
+noop em produção (Round 10 follow-up; antes dessa wiring o counter
+ficava na facade vazia).
+
+## Adaptador de lag-probe
+
+Tres componentes formam a cadeia de exposição do lag de replicação
+como gauge Micrometer (Round 10 follow-up; resolve o item (a) do
+roadmap row 12).
+
+  * [PostgresLagProbe.kt](../src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/lag/postgres/PostgresLagProbe.kt).
+    Consulta
+    `SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) FROM pg_replication_slots WHERE slot_name = ?`.
+    Diferencia `confirmed_flush_lsn` SQL `NULL` (slot definido mas
+    nunca streamed) de zero-byte lag via `wasNull()`. `SQLException`
+    → WARN + `null`.
+  * [MysqlLagProbe.kt](../src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/lag/mysql/MysqlLagProbe.kt).
+    Consulta `SHOW MASTER STATUS` para o `(File, Position)` corrente
+    do servidor, lê a posição persistida em `CheckpointStore` sob
+    `"binlog:<serverId>"` e calcula `serverPosition − checkpointPosition`
+    quando os files batem. File divergente (binlog rotacionou
+    além do checkpoint) → `null` + INFO uma única vez (debounce via
+    `AtomicBoolean`) — branch conservador; estimar via tamanhos de
+    binlog rotacionados é frágil quando o servidor já fez `PURGE`.
+  * [LagProbeScheduler.kt](../src/main/kotlin/br/com/fltech/cdc/outbox/publisher/observability/LagProbeScheduler.kt).
+    `ScheduledExecutorService` daemon (não usa `@Scheduled` para
+    manter o producer agnóstico ao Spring Scheduling). Amostra
+    `LagProbe.lagBytes()` no intervalo `cdc.outbox.lag.interval`,
+    parqueia o `Long` num `AtomicLong` com sentinel `Long.MIN_VALUE`
+    para "sem amostra". O gauge registrado em `CdcOutboxMetrics`
+    via `registerLagGauge(sourceLabel) { … }` lê do cache; sentinel
+    é traduzido para `Double.NaN` (Prometheus convenciona NaN como
+    "no data").
+
+Wiring em `CdcOutboxHexagonalAutoConfiguration`: três beans
+condicionais, gated por `cdc.outbox.lag.enabled=true` (default) +
+`@ConditionalOnMissingBean(LagProbe::class)` + `@ConditionalOnBean`
+do source concreto (`PgWalRowChangeSource` ou
+`MySqlBinlogRowChangeSource`). Consumidores que quiserem outra
+implementação registram um `LagProbe` próprio e o autoconfig respeita.
+`MySqlBinlogRowChangeSource.serverId` virou `val` público no Round 10
+exatamente para o probe poder montar a key de checkpoint sem ler
+properties duplicadas.
 
 ## Máquina de estado de retry + DLQ
 
@@ -653,6 +725,13 @@ puro — Postgres exige conexão crua para `replication=database`).
 |--------------|----------------------------|-------------------------------------------------------------------------------|
 | `enabled`    | `false`                    | Liga o `FileCheckpointStore` default. Onda 5.2.                               |
 | `directory`  | `.cdc-outbox-checkpoints`  | Diretório onde o store escreve `<sanitised-key>.json`. Operadores devem apontar para volume durável. |
+
+### `cdc.outbox.lag.*`
+
+| Propriedade  | Default  | Significado                                                                  |
+|--------------|----------|------------------------------------------------------------------------------|
+| `enabled`    | `true`   | Liga o `LagProbeScheduler`. Round 10 follow-up.                              |
+| `interval`   | `PT10S`  | Intervalo de amostragem do `LagProbe` (gauge `cdc.outbox.source.lag_bytes`). |
 
 ### `cdc.outbox.dead-letter.*`
 

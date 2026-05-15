@@ -4,12 +4,15 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
-## Round 10 — Round-9 follow-ups + Wave 5.2 (persisted checkpoint, Postgres I/U/D row source, hex pending-failure)
+## Round 10 — Round-9 follow-ups + Wave 5.2 + parallel V1/orphan/lag drilldown
 
-Two feature branches merged into `main`, with a small README drift
-patch in between. Round 9 landed Wave 5.1 + the two E2E ITs + the
-arquitetura docs; Round 10 closes the residual MINORs that the Round
-9 architect review flagged AND ships Wave 5.2 (roadmap row 10).
+Six feature/doc branches merged into `main` plus one wiring follow-up
+commit, with a small README drift patch between the first two. Round
+9 landed Wave 5.1 + the two E2E ITs + the arquitetura docs; Round 10
+closes the residual MINORs that the Round 9 architect review flagged,
+ships Wave 5.2 (roadmap row 10), and clears the three deferrals row
+12 was tracking — all via four parallel agents in worktrees, merged
+sequentially into `main` once each landed.
 
 **Branch 1 — `chore/round-9-followups` (cleanup) → merge `9c9a007`**
 
@@ -122,15 +125,153 @@ that was left for this round.
     `a159fa7`.
   * `docs/HISTORY.md` — this entry.
 
+**Branch 3 — `docs/round-10` (Architect refresh) → merge `811fdbb`**
+
+Architect agent ran in worktree `/private/tmp/cdc-outbox-docs-r10`
+against post-merge `main` at `a159fa7`. Three docs touched: README
+(+85/−22), ARCHITECTURE (+152/−42), HISTORY (+133/0) — see the
+"Documentation in this round" block above for the per-file detail.
+Tech Lead self-walk: PASS with the trims already applied before
+commit (V1 row removed from row 12 after confirming the V1 parser
+already had polymorphic dispatch; Mermaid quote-and-colon fix on
+the `Ckp.save(...)` arrow; ARCHITECTURE.md final length 767 lines,
+17 over the soft 750 cap — pragmatic overshoot accepted given the
+new port + two new adapter sections).
+
+**Branch 4 — `feat/wave-5.2-orphan-sweep` → merge `f92391b`**
+
+  * `FileCheckpointStore` sweeps orphan `<key>.json.tmp` files at
+    construction time, recovering disk left half-committed by a
+    crash between `Files.write` and `ATOMIC_MOVE`. Each entry is
+    `Files.delete(...)`'d and recorded as
+    `cdc.outbox.checkpoint.orphans_swept{outcome=deleted|failed}`.
+    Eager-on-construction (rather than an `init()` hop) avoids a
+    second-file touch on auto-config, which is in the worker's
+    file-allowlist for this commit; rationale documented in the
+    class KDoc.
+  * `CdcOutboxMetrics` adds `recordCheckpointOrphanSwept(outcome)`
+    plus the `CHECKPOINT_ORPHANS_SWEPT` / `TAG_OUTCOME` constants.
+  * 7 new `FileCheckpointStoreTest` cases (single + multiple sweep,
+    non-`.tmp` left alone, empty/missing dir no-op, idempotent on
+    double construction, POSIX-only IO-error path guarded by
+    `supportsPosix(...)`).
+  * Scope cut: the `CdcOutboxMetrics` ctor arg defaulted to
+    `noop()` because auto-config was on the worker's "must not
+    touch" list. The orchestrator's follow-up commit `6fd6bab`
+    (see below) threads the bean's metrics through.
+
+**Branch 5 — `feat/wave-5.2-v1-columns` → merge `a3ca1d4`**
+
+  * `ByteToClassParserImplV1` translates V1 wal2json rows into the
+    canonical `InsertChange` / `UpdateChange` / `DeleteChange`
+    subtypes with `columns` / `identity` populated as
+    `List<Wal2JsonColumn>`, zipping the parallel `columnnames` /
+    `columntypes` / `columnvalues` arrays (and
+    `oldkeys.keynames` / `keytypes` / `keyvalues` on `U` / `D`).
+    Closes V1↔V2 parity so `PgWalRowChangeSource` works against
+    a `format-version=1` slot transparently — no source-side
+    edits needed (it dispatches on the in-memory `Change`
+    subtype, not on the wire format).
+  * **Caveat caught mid-pass:** first draft dropped the
+    `pg_logical_emit_message` path on V1, which would have
+    `ClassCastException`'d the existing
+    `SlotReaderMessageProducerIT format_v1 - without type` case
+    at the `change as MessageChange` cast. Fixed by routing
+    `kind=message` through the translator and adding a regression
+    test.
+  * New file `replication/model/v1/V1RowFields.kt` (permissive
+    Jackson DTOs `V1RowRecord` + `V1OldKeys`). `SlotMessageV1`
+    moved to `List<V1RowRecord>` + nullable wrapper `nextlsn`
+    that propagates to every child `Change`.
+  * 11 new `ByteToClassParserImplV1ColumnsTest` cases covering
+    I / U / D column surfacing, message-record handling, null
+    column values, length-mismatched parallel arrays (degrade
+    gracefully), wrapper-LSN propagation, truncate-style records,
+    malformed input.
+
+**Branch 6 — `feat/wave-5.2-lag-probe` → merge `6d963e9`**
+
+  * **New port** `core/port/LagProbe` returning lag in bytes (or
+    `null` when temporarily unavailable). `sourceLabel` field
+    carries the tag value used by the Micrometer gauge.
+  * **`PostgresLagProbe`** queries
+    `pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)`
+    against `pg_replication_slots` for the configured
+    `slot_name`. Discriminates SQL `NULL` `confirmed_flush_lsn`
+    (slot never streamed from) from a real zero-byte lag using
+    `wasNull()`. `SQLException` → WARN log + `null`.
+  * **`MysqlLagProbe`** queries `SHOW MASTER STATUS`, parses the
+    server's current `(File, Position)`, then reads the
+    persisted `binlog:<serverId>` value from the
+    `CheckpointStore`. When the files match → returns the byte
+    delta; when they diverge (binlog rotated past the checkpoint)
+    → returns `null` and logs INFO once (debounced via
+    `AtomicBoolean`) per the conservative branch in the brief.
+    Negative deltas treated as anomalies and returned as `null`.
+  * **`LagProbeScheduler`** wraps a daemon-thread
+    `ScheduledExecutorService` that samples the probe at
+    `cdc.outbox.lag.interval` (default 10s) and parks the result
+    in an `AtomicLong` cache, with `Long.MIN_VALUE` as the
+    "no sample yet" sentinel — exposed to Prometheus as
+    `Double.NaN`. Decouples Micrometer scrape rate from the
+    SQL cost of probing.
+  * **`CdcOutboxMetrics.registerLagGauge(sourceLabel, supplier)`**
+    registers a `Gauge` reading from the scheduler's cache. New
+    constants `SOURCE_LAG_BYTES` (metric name) and `TAG_SOURCE`
+    (tag key).
+  * **Metric**: `cdc.outbox.source.lag_bytes{source=postgres|mysql}`.
+  * **Auto-config**: three new conditional beans in
+    `CdcOutboxHexagonalAutoConfiguration` keyed off
+    `cdc.outbox.lag.enabled=true` (default) AND off the concrete
+    `PgWalRowChangeSource` / `MySqlBinlogRowChangeSource` beans
+    via `@ConditionalOnBean`. Consumers can override `LagProbe`
+    directly. `CdcOutboxProperties` gains a `Lag` block with
+    `enabled` / `interval`.
+  * `MySqlBinlogRowChangeSource` exposes `serverId` as a public
+    `val` so the lag probe can build the matching
+    `binlog:<serverId>` checkpoint key without a second
+    properties knob.
+  * Tests: `PostgresLagProbeTest`, `MysqlLagProbeTest`,
+    `LagProbeSchedulerTest`, `LagProbeAutoConfigurationTest`,
+    plus 2 new `CdcOutboxMetricsTest` cases.
+  * Merge conflict resolution: `CdcOutboxMetrics(.kt|Test.kt)`
+    were touched by branches 4 and 6 in different regions
+    (counter vs gauge surface). Both sides kept verbatim — the
+    APIs are additive and independent.
+
+**Follow-up commit — `6fd6bab`**
+
+`fix(metrics): thread CdcOutboxMetrics into FileCheckpointStore`
+closes the scope cut declared by Branch 4. The bean factory in
+`CdcOutboxHexagonalAutoConfiguration` now injects the
+application's `CdcOutboxMetrics` into the `FileCheckpointStore`
+ctor; without this the
+`cdc.outbox.checkpoint.orphans_swept{outcome}` counter would
+have stayed on the no-op facade in production deployments and
+operators wouldn't see crash-recovery signal.
+
+**Documentation gap acknowledged**
+
+The Architect's Branch 3 docs were written BEFORE branches 4–6
+landed (the four agents ran in parallel against a common base).
+README row 12 still lists the lag-as-gauge and orphan-`.tmp`
+items as deferred, and neither the README nor ARCHITECTURE
+describes the new `LagProbe` port, V1 column surfacing, or the
+orphan-sweep adapter behaviour. The orchestrator's next commit
+patches the three files to flip row 12 to "done", add a
+`LagProbe` subsection to ARCHITECTURE, and note V1↔V2 parser
+parity in the Origens table.
+
 **Verification (post-merge)**
 
-  * `./gradlew compileKotlin compileTestKotlin` PASS on JDK 21.
+  * `./gradlew compileKotlin compileTestKotlin` PASS on JDK 21
+    (Corretto host; project source/target 17).
   * Unit-test sweep (excluding `RUN_TESTCONTAINERS=1`):
-    **142 tests, 142 successes, 0 failures, 0 skipped**. The two
-    Testcontainers E2E ITs (`PostgresSnsE2EIT`,
-    `MysqlRabbitMqE2EIT`) remain gated by `RUN_TESTCONTAINERS=1`
-    and are skipped via `@EnabledIfEnvironmentVariable` in the
-    default sweep.
+    **198 tests, 195 successes, 0 failures, 3 skipped**. The
+    three Testcontainers E2E ITs (`PostgresSnsE2EIT`,
+    `MysqlRabbitMqE2EIT`, `AtLeastOnceDeliveryIT`) remain gated
+    by `RUN_TESTCONTAINERS=1` and are skipped via
+    `@EnabledIfEnvironmentVariable` in the default sweep.
 
 **Tech Lead persona**
 
