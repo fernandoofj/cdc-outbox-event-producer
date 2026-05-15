@@ -53,7 +53,11 @@ class MysqlLagProbe(
     // failure mode that warrants its own log line. Collapsing them
     // into a state machine would obscure the readable narrative for
     // a probe whose value is in the diagnostic logging itself.
-    @Suppress("ReturnCount")
+    //
+    // LongMethod (61 vs 60): the per-branch diagnostic logs push the
+    // method one line over the cap; extracting helpers would split
+    // the narrative across files for one line of gain.
+    @Suppress("ReturnCount", "LongMethod")
     override fun lagBytes(): Long? {
         val persisted =
             try {

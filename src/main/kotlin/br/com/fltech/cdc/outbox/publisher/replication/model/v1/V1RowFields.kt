@@ -32,6 +32,11 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * subtype so consumers downstream see the same in-memory
  * representation as V2.
  */
+// LongParameterList: wal2json format-version=1 row record carries 10
+// optional fields (I/U/D/M action shapes share one DTO + an additional
+// pg_logical_emit_message payload pair). Same rationale as
+// SlotMessageV2 — single Jackson dispatch keeps the parser simple.
+@Suppress("LongParameterList")
 @JsonIgnoreProperties(ignoreUnknown = true)
 class V1RowRecord @JsonCreator constructor(
     @param:JsonProperty(value = "kind", required = true)

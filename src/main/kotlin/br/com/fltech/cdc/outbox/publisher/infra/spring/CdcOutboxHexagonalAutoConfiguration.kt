@@ -156,6 +156,10 @@ open class CdcOutboxHexagonalAutoConfiguration {
     open fun cdcOutboxDeadLetterPort(legacy: DeadLetterSink): DeadLetterPort =
         LegacyDeadLetterPortAdapter(legacy)
 
+    // LongParameterList: same rationale as the legacy factory — Spring
+    // wires collaborators by type, not by aggregate; a wrapper object
+    // would just be ceremony.
+    @Suppress("LongParameterList")
     @Bean("cdcOutboxProcessor")
     @ConditionalOnBean(value = [CdcSource::class, EventSinkRegistry::class])
     @ConditionalOnMissingBean(CdcProcessor::class)

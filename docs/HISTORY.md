@@ -4,6 +4,75 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+## Round 11 — detekt baseline cleanup (57 → 0 weighted issues)
+
+`./gradlew detekt` was failing with 57 weighted issues that had
+accumulated across Waves 1–5.2. None of them were behavioural bugs;
+they were a mix of style debt (MagicNumber on `@ConfigurationProperties`
+defaults, MaxLineLength), guard-clause-friendly patterns the rule
+defaults flag as overly verbose (ReturnCount, NestedBlockDepth), and
+intentional design decisions the rule cannot infer (LongParameterList
+on Spring `@Bean` factories, TooManyFunctions on row-source adapters,
+TooGenericExceptionCaught on top-level orchestrator threads).
+
+The cleanup distinguishes between three buckets, each handled
+differently:
+
+  * **Mechanical line wraps (6 MaxLineLength)** — broken at a natural
+    seam (long `WARN` log, long `withCommand`/`prepareStatement`,
+    `assertTrue` message) so the next reader sees the call shape
+    immediately.
+  * **Real fixes (3 SwallowedException, 2 TooGenericExceptionThrown)** —
+    `FileCheckpointStore` now passes `e` through every `catch` (so the
+    cause shows up in WARN-level logs, even at debug); test fixtures
+    use Kotlin's `error("...")` idiom instead of `throw RuntimeException`
+    so the intent ("test simulates a fault") reads correctly.
+  * **`@Suppress` with rationale (rest)** — each suppression carries
+    a comment explaining *why* the design is intentional. The
+    `ReturnCount` suppressions all say "guard-clause sequence, each
+    branch carries operational meaning"; the lifecycle/composite
+    `TooGenericExceptionCaught` suppressions say "last line of
+    defence — anything that escapes silently kills the daemon".
+    Site-local `@Suppress` is preferred to a global `detekt-config.yml`
+    relaxation because any *new* code that violates the rule still
+    gets flagged.
+
+Behavioural refactor (only one in the round): `handleEvent` in
+`MySqlBinlogRowChangeSource` was over the LongMethod (73 vs 60) and
+CyclomaticComplexMethod (15) thresholds. Extracted four per-event
+handlers (`handleTableMap`, `handleWriteRows`, `handleUpdateRows`,
+`handleDeleteRows`) so the top-level dispatch is a four-line `when`
+and each handler reads one row-shape end-to-end. Pure refactor — the
+existing 198 tests cover every event type and stayed green.
+
+`MySqlBinlogRowChangeSource.defaultColumnLookup` (NestedBlockDepth)
+got a sibling helper `readColumnNames(stmt)` that owns the
+ResultSet scope; the outer function keeps the Connection+Statement
+ordering intact.
+
+**Verification**
+
+  * `./gradlew detekt` PASS (0 weighted issues, down from 57).
+  * Full sweep with `RUN_TESTCONTAINERS=1` +
+    `DOCKER_API_VERSION=1.43` (OrbStack): **198 tests, 198
+    successes, 0 failures, 0 skipped**. Same number as Round 10
+    closeout — confirms the cleanup did not silently drop tests.
+  * 23 files touched (+256/-75 lines), main `chore/round-11-detekt-baseline`
+    merged via `--no-ff`.
+
+**Tech Lead persona**
+
+Tech Lead persona: **PASS**. Disclaimers up front to the user before
+starting:
+  (a) style fixes have no behavioural change, so no new tests are
+      warranted — the existing 198 are the guarantee;
+  (b) suppressions are valid resolution when they document an
+      informed design decision, and accepted on rules where the
+      design IS intentional (LongParameterList on Spring `@Bean`,
+      TooManyFunctions on row-source adapters, etc.).
+  (c) the one behavioural refactor (`handleEvent` decomposition) was
+      kept narrow — same dispatch, same tests, no behaviour change.
+
 ## Round 10 — Round-9 follow-ups + Wave 5.2 + parallel V1/orphan/lag drilldown
 
 Six feature/doc branches merged into `main` plus one wiring follow-up

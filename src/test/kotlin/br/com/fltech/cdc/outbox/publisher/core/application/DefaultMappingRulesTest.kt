@@ -13,6 +13,11 @@ class DefaultMappingRulesTest {
 
     private val now = Instant.parse("2026-05-15T00:00:00Z")
 
+    // LongParameterList: test fixture builder — each kwarg corresponds
+    // to a TableMapping knob the suite exercises independently.
+    // Compressing into nested DTOs would obscure which knob each test
+    // is tuning.
+    @Suppress("LongParameterList")
     private fun mappingOrders(
         capture: Set<RowChange.Op> = RowChange.Op.values().toSet(),
         keyColumns: List<String> = listOf("id"),

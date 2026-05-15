@@ -30,6 +30,12 @@ class CdcOutboxLifecycle(
     @Volatile
     private var running = false
 
+    // TooGenericExceptionCaught: the executor body is the producer's
+    // top-level thread. A surprise here would leave the SmartLifecycle
+    // marked running while no one drains the slot. Catching Throwable
+    // + logging ERROR + clearing `running` in `finally` gives the
+    // operator a chance to react via /actuator/health.
+    @Suppress("TooGenericExceptionCaught")
     override fun start() {
         if (running) {
             logger.debug("CdcOutboxLifecycle already running; ignoring start()")

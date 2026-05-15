@@ -79,6 +79,12 @@ class MySqlOutboxTableCdcSource(
         dataSource.connection.use { it.isValid(VALIDATION_TIMEOUT_SECONDS) }
     }
 
+    // NestedBlockDepth: SKIP LOCKED transactional poll needs the
+    // connection / statement / result-set scopes nested so AutoCloseable
+    // ordering matches the FOR UPDATE locking semantics — flattening
+    // would force the inflight-connection state to live OUTSIDE the
+    // try/catch and risk an unrolled-back tx on a parse exception.
+    @Suppress("NestedBlockDepth")
     override fun poll(): OutboxEvent? {
         cleanupInflight()
         val conn = dataSource.connection
@@ -130,7 +136,9 @@ class MySqlOutboxTableCdcSource(
         }
         val id = inflightId ?: return
         try {
-            conn.prepareStatement("UPDATE $tableName SET published_at = CURRENT_TIMESTAMP(6) WHERE id = ?").use { stmt ->
+            conn.prepareStatement(
+                "UPDATE $tableName SET published_at = CURRENT_TIMESTAMP(6) WHERE id = ?",
+            ).use { stmt ->
                 stmt.setLong(1, id)
                 stmt.executeUpdate()
             }

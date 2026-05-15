@@ -60,6 +60,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Single-threaded contract per [RowChangeSource] holds.
  */
+// TooManyFunctions: one method per wal2json change type (Insert,
+// Update, Delete, Message) plus lifecycle (open/poll/ack/close) plus
+// internal helpers (toRowChange, parseLsnOrNull, checkOpen, buffer
+// management). Splitting hurts the adapter-reader's ability to
+// follow the dispatch — the class IS the adapter for one wire format.
+@Suppress("TooManyFunctions")
 class PgWalRowChangeSource(
     private val postgresConfiguration: PostgresConfiguration,
     private val replicationConfiguration: ReplicationConfiguration,
@@ -72,8 +78,9 @@ class PgWalRowChangeSource(
      * connections — same pattern as the MySQL binlog adapter's
      * `clientFactory`.
      */
-    private val connectorFactory: (PostgresConfiguration, ReplicationConfiguration, ConnectionProvider) -> PostgresConnector =
-        { p, r, c -> PostgresConnector(p, r, c) },
+    private val connectorFactory:
+        (PostgresConfiguration, ReplicationConfiguration, ConnectionProvider) -> PostgresConnector =
+            { p, r, c -> PostgresConnector(p, r, c) },
 ) : RowChangeSource {
 
     private val parser = ByteToClassParserStrategy(
@@ -123,6 +130,11 @@ class PgWalRowChangeSource(
         logger.info("PgWalRowChangeSource opened on slot '{}'", replicationConfiguration.slotName)
     }
 
+    // ReturnCount: 3 distinct outcomes (buffered residue, nothing read,
+    // freshly-parsed batch). Single-return would have to inline the
+    // batch-parsing block behind a non-empty check and obscure the
+    // buffered fast path.
+    @Suppress("ReturnCount")
     override fun poll(): RowChange? {
         if (buffer.isNotEmpty()) return buffer.poll()
         val conn = checkOpen()

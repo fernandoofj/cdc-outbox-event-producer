@@ -140,6 +140,11 @@ open class CdcOutboxAutoConfiguration {
         return SqsDeadLetterSink(sqsTemplate, queue)
     }
 
+    // LongParameterList: Spring @Bean factories collect collaborators by
+    // bean type — grouping them into a wrapper object would force a
+    // parallel POJO that adds zero semantics. The legacy producer
+    // legitimately depends on 10 wired beans.
+    @Suppress("LongParameterList")
     @Bean
     @ConditionalOnMissingBean
     open fun slotReaderMessageProducer(

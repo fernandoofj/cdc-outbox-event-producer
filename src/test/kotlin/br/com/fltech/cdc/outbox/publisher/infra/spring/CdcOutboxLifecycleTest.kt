@@ -58,7 +58,11 @@ class CdcOutboxLifecycleTest {
         every { producer.startStreaming() } answers {
             started.countDown()
             while (!Thread.currentThread().isInterrupted) {
-                try { Thread.sleep(SLEEP_INTERVAL_MS) } catch (e: InterruptedException) { Thread.currentThread().interrupt() }
+                try {
+                    Thread.sleep(SLEEP_INTERVAL_MS)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
             }
         }
         every { producer.stopStreaming() } just Runs
