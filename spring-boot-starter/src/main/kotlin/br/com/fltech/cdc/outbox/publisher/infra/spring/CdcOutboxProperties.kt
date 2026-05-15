@@ -58,6 +58,9 @@ data class CdcOutboxProperties(
     @NestedConfigurationProperty
     val lag: Lag = Lag(),
 
+    @NestedConfigurationProperty
+    val dlq: Dlq = Dlq(),
+
     /**
      * Declarative table-mapping list (Wave 3.5 / item 7 of the brief).
      * Each entry binds one source-table FQ name to its outbound shape
@@ -278,6 +281,45 @@ data class CdcOutboxProperties(
         companion object {
             /** Default sampler period in seconds. */
             const val DEFAULT_INTERVAL_SECONDS: Long = 10
+        }
+    }
+
+    /**
+     * DLQ replay tooling (Round 14). Controls the optional
+     * Actuator endpoint `/actuator/cdcOutboxDlq` that lets
+     * an authenticated operator peek, replay, or abandon
+     * messages from the SQS dead-letter queue. Disabled by
+     * default — operators must explicitly opt in AND have
+     * Spring Security on the classpath (the auto-config refuses
+     * to wire otherwise).
+     */
+    data class Dlq(
+        @NestedConfigurationProperty
+        val replay: Replay = Replay(),
+    ) {
+        data class Replay(
+            /**
+             * Master switch. Default `false` — replay endpoint
+             * does not register beans until set to `true`.
+             */
+            val enabled: Boolean = false,
+            /**
+             * Name of the SQS DLQ queue to read from. Must match
+             * the queue the `SqsDeadLetterSink` writes to (i.e.
+             * `cdc.outbox.dead-letter.queue-name`). Required when
+             * [enabled] is `true`.
+             */
+            val queueName: String = "",
+            /**
+             * Visibility timeout (seconds) applied while peeking.
+             * Short by design so a crashed operator process does
+             * not lock messages out. Defaults to 5s.
+             */
+            val peekVisibilityTimeoutSeconds: Int = DEFAULT_PEEK_VISIBILITY_SECONDS,
+        ) {
+            companion object {
+                const val DEFAULT_PEEK_VISIBILITY_SECONDS: Int = 5
+            }
         }
     }
 }

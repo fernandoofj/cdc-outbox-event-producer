@@ -189,6 +189,33 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         }
     }
 
+    /**
+     * Records an operator-driven DLQ replay action. `outcome`
+     * differentiates `success`, `success_delete_failed` (publish
+     * went through but the SQS delete did not — the message will
+     * resurface and may be replayed twice), `publish_failed`,
+     * `abandoned`, and `abandon_failed`. `sourceCause` is the
+     * `failureType` field from the original DLQ envelope (the
+     * exception class that caused the dead-letter); `targetScheme`
+     * is the sink scheme the replay was directed at (which may
+     * differ from the original via an operator override).
+     */
+    fun recordDlqReplay(outcome: String, sourceCause: String, targetScheme: String) {
+        registry?.let {
+            Counter.builder(DLQ_REPLAYS)
+                .description("DLQ messages replayed back into the sink registry by operator action")
+                .tags(
+                    Tags.of(
+                        TAG_OUTCOME, outcome,
+                        TAG_SOURCE_CAUSE, sourceCause,
+                        TAG_TARGET_SCHEME, targetScheme,
+                    ),
+                )
+                .register(it)
+                .increment()
+        }
+    }
+
     companion object {
         const val MESSAGES_READ = "cdc.outbox.messages.read"
         const val MESSAGES_PUBLISHED = "cdc.outbox.messages.published"
@@ -204,6 +231,7 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
             "cdc.outbox.source.binlog.column_resolution.fallbacks"
         const val CHECKPOINT_ORPHANS_SWEPT = "cdc.outbox.checkpoint.orphans_swept"
         const val SOURCE_LAG_BYTES = "cdc.outbox.source.lag_bytes"
+        const val DLQ_REPLAYS = "cdc.outbox.dlq.replays"
 
         const val TAG_SLOT = "slot"
         const val TAG_SINK = "sink"
@@ -214,6 +242,8 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         const val TAG_TABLE = "table"
         const val TAG_OUTCOME = "outcome"
         const val TAG_SOURCE = "source"
+        const val TAG_SOURCE_CAUSE = "source_cause"
+        const val TAG_TARGET_SCHEME = "target_scheme"
 
         /** Returns a no-op instance that records nothing. */
         fun noop(): CdcOutboxMetrics = CdcOutboxMetrics(null)

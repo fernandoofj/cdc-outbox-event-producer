@@ -4,6 +4,104 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+## Round 14 — DLQ replay tooling
+
+Novo módulo `dlq-replay` expõe um Actuator endpoint
+`/actuator/cdcOutboxDlq` pra operador interagir com a SQS DLQ sem
+abrir o console da AWS ou rodar script ad-hoc. Caso de uso típico:
+mensagens presas no DLQ por uma falha transitória (broker fora,
+bug que foi corrigido), operador inspeciona o lote e re-injeta no
+sink original via `EventSinkRegistry` — mesmo caminho que o
+producer usa no happy path.
+
+**Sem migration de envelope**: o reader lê o EXATO `linkedMapOf`
+que `SqsDeadLetterSink` escreve há rounds atrás
+(`originalPrefix` / `lsn` / `content` / `failureType` /
+`failureMessage` / `deadLetteredAt`). DLQs já acumuladas em
+produção são replayáveis no momento que o módulo sobe.
+
+**4 operações sob `/actuator/cdcOutboxDlq`**:
+  * `GET /` — peek N mensagens (não consome; usa VisibilityTimeout
+    curto, default 5s).
+  * `POST /replay` body `{handle, envelope, [overrideScheme,
+    overrideTarget]}` — re-publica via Registry e deleta da DLQ
+    no sucesso. Override opcional permite re-rotear se o sink
+    original migrou.
+  * `POST /replay-bulk` body `{bulkMax, dryRun}` — peek-and-replay
+    em batch, com `dryRun=true` que mostra preview sem efeitos.
+  * `DELETE /{handle}` — abandona sem replay.
+
+**Defence-in-depth na autenticação**:
+  1. Auto-config `@ConditionalOnClass(SecurityFilterChain)` —
+     se Spring Security não está no classpath do consumidor, o
+     endpoint NÃO sobe, com WARN log explicando.
+  2. Cada método do endpoint chama `requireAuthenticated()` que
+     inspeciona `SecurityContextHolder` e rejeita com 403 se a
+     request veio anônima — mesmo se o consumidor (por bug)
+     configurou `permitAll()` em `/actuator/cdcOutboxDlq`.
+
+**Outcomes explícitos** (refletem a contract at-least-once):
+  * `success` — publish ok + delete ok.
+  * `success_delete_failed` — publish ok, delete falhou (handle
+    expirado). Mensagem volta à fila → próxima ação manual ou
+    timeout natural. **Risco de double-publish documentado**:
+    consumer-side idempotência é assumida.
+  * `publish_failed` — não deleta, message fica no DLQ pra outra
+    tentativa.
+  * `abandoned` / `abandon_failed` — operações de descarte
+    manual sem replay.
+
+Métrica nova: `cdc.outbox.dlq.replays{outcome, source_cause,
+target_scheme}` — counter Micrometer.
+
+**Mecânica**:
+  * Novo módulo `dlq-replay` (compilação opt-in via Gradle, e
+    runtime opt-in via `cdc.outbox.dlq.replay.enabled=true`).
+  * Properties novas em `CdcOutboxProperties.Dlq.Replay`:
+    `enabled`, `queueName`, `peekVisibilityTimeoutSeconds`.
+  * Auto-config `CdcOutboxDlqReplayAutoConfiguration` no
+    `spring-boot-starter`, listado no
+    `AutoConfiguration.imports`.
+  * Bean factory `SqsDlqReader` injeta o `SqsClient` que o
+    consumidor já tem do SCA AWS — sem `SqsClient` próprio.
+
+**Tests novos (19, todos verde com `RUN_TESTCONTAINERS=1`)**:
+  * `SqsDlqReaderTest` (8 cases): peek vazio, deserializa,
+    clamp do batch, drop de envelope malformado, tolerância a
+    campo desconhecido (forward-compat), erro do delete propaga
+    em vez de swallow, stats com/sem attributes.
+  * `DlqReplayServiceTest` (10 cases): peek clamp, replay
+    success, publish fail não deleta, success_delete_failed,
+    routing override honrado, bulk dry-run sem efeitos, bulk
+    live com sucesso parcial, abandon sucesso, abandon fail,
+    fallback de `deadLetteredAt` malformado.
+  * `DlqReplayIT` (1 case, LocalStack): envelope shape real do
+    `SqsDeadLetterSink` → `SqsDlqReader` → `DlqReplayService` →
+    sink stub captura — round-trip end-to-end.
+
+**Verification**
+
+  * `./gradlew detekt` PASS (0 weighted issues — incluindo o
+    módulo novo).
+  * Full sweep com `RUN_TESTCONTAINERS=1` +
+    `DOCKER_API_VERSION=1.43`:
+    **217 tests, 217 successes, 0 failures, 0 skipped** (198
+    do Round 12 + 19 novos).
+  * 12 arquivos novos, 5 modificados.
+
+**Tech Lead persona**
+
+Tech Lead persona: **PASS**.
+  (a) Envelope shape backwards-compat — DLQs em produção
+      continuam legíveis. Sugestão original "migrar pra envelope
+      novo" foi descartada pelo usuário com bom motivo.
+  (b) Auth enforcement no nível do código (não só na config) —
+      `@ConditionalOnClass(SecurityFilterChain)` + runtime
+      `requireAuthenticated()`. Refuse-to-start + refuse-to-run.
+  (c) Replay usa pipeline normal (`EventSinkRegistry.publish`)
+      em vez de fast-path especial — at-least-once + retry +
+      DLQ semantics naturalmente aplicam ao próprio replay.
+
 ## Round 12 — Wave 6 — multi-module Gradle split
 
 Closes roadmap row 11. The single Gradle module became 13 sibling

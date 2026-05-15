@@ -20,6 +20,7 @@ dependencies {
     compileOnly(project(":sink-rabbitmq"))
     compileOnly(project(":lag-probes"))
     compileOnly(project(":legacy"))
+    compileOnly(project(":dlq-replay"))
 
     compileOnly("org.springframework.boot:spring-boot-autoconfigure:3.3.5")
     compileOnly("org.springframework.boot:spring-boot-actuator:3.3.5")
@@ -33,6 +34,7 @@ dependencies {
 
     compileOnly("com.mysql:mysql-connector-j:8.4.0")
     compileOnly("com.zendesk:mysql-binlog-connector-java:0.29.2")
+    compileOnly("org.springframework.security:spring-security-web:6.3.4")
 
     testImplementation(project(":checkpoint-file"))
     testImplementation(project(":source-postgres"))
@@ -43,6 +45,7 @@ dependencies {
     testImplementation(project(":sink-composition"))
     testImplementation(project(":lag-probes"))
     testImplementation(project(":legacy"))
+    testImplementation(project(":dlq-replay"))
     testImplementation(project(":test-support"))
 
     testImplementation("org.springframework.boot:spring-boot-autoconfigure:3.3.5")
