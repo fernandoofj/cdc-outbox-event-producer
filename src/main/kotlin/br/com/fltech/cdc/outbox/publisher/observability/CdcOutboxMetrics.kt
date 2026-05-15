@@ -110,6 +110,38 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         }
     }
 
+    /**
+     * Records a failure while parsing or handling an event off the
+     * MySQL binlog. The listener thread keeps going (otherwise the
+     * adapter would silently die); this counter is the only durable
+     * signal that the parse failed.
+     */
+    fun recordBinlogParseError(cause: String) {
+        registry?.let {
+            Counter.builder(BINLOG_PARSE_ERRORS)
+                .description("MySQL binlog events that raised on parse/handle in the listener thread")
+                .tags(Tags.of(TAG_CAUSE, cause))
+                .register(it)
+                .increment()
+        }
+    }
+
+    /**
+     * Records that the binlog adapter fell back from named columns to
+     * indexed `col0`/`col1`/… for a given table. Reasons include: no
+     * DataSource configured, INFORMATION_SCHEMA returned nothing for
+     * the table, or the lookup itself raised.
+     */
+    fun recordBinlogColumnResolutionFallback(table: String) {
+        registry?.let {
+            Counter.builder(BINLOG_COLUMN_RESOLUTION_FALLBACKS)
+                .description("MySQL binlog rows emitted with indexed column names because name resolution failed")
+                .tags(Tags.of(TAG_TABLE, table))
+                .register(it)
+                .increment()
+        }
+    }
+
     companion object {
         const val MESSAGES_READ = "cdc.outbox.messages.read"
         const val MESSAGES_PUBLISHED = "cdc.outbox.messages.published"
@@ -120,6 +152,9 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         const val RECONNECTS = "cdc.outbox.reconnect.attempts"
         const val DEAD_LETTERED = "cdc.outbox.messages.dead_lettered"
         const val DEAD_LETTER_FAILURES = "cdc.outbox.dead_letter.failures"
+        const val BINLOG_PARSE_ERRORS = "cdc.outbox.source.binlog.parse_errors"
+        const val BINLOG_COLUMN_RESOLUTION_FALLBACKS =
+            "cdc.outbox.source.binlog.column_resolution.fallbacks"
 
         const val TAG_SLOT = "slot"
         const val TAG_SINK = "sink"
@@ -127,6 +162,7 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         const val TAG_CAUSE = "cause"
         const val TAG_REASON = "reason"
         const val TAG_ATTEMPT = "attempt"
+        const val TAG_TABLE = "table"
 
         /** Returns a no-op instance that records nothing. */
         fun noop(): CdcOutboxMetrics = CdcOutboxMetrics(null)

@@ -56,6 +56,18 @@ class CdcProcessor(
     @Volatile
     private var running = false
 
+    /**
+     * Epoch-millis timestamp of the last `source.poll()` call. `0L`
+     * means "the loop has never iterated" — translated to
+     * [Long.MAX_VALUE] in `snapshotState().msSinceLastActivity` to
+     * match the convention of `SlotReaderMessageProducer.snapshotState`
+     * (so health indicators can treat "never" as "not idle for
+     * threshold purposes"). `@Volatile` because the health indicator
+     * reads it from a different thread.
+     */
+    @Volatile
+    private var lastActivityMs: Long = 0L
+
     fun start() {
         if (running) {
             logger.debug("CdcProcessor already running; ignoring duplicate start()")
@@ -79,8 +91,43 @@ class CdcProcessor(
 
     fun isRunning(): Boolean = running
 
+    /**
+     * Read-only snapshot of orchestrator state for health checks. Safe
+     * to call from a different thread (relies on `@Volatile` fields).
+     */
+    fun snapshotState(): ProcessorState = ProcessorState(
+        slot = slotLabel,
+        running = running,
+        msSinceLastActivity = msSinceLastActivity(),
+    )
+
+    private fun msSinceLastActivity(): Long {
+        val ts = lastActivityMs
+        return if (ts == 0L) Long.MAX_VALUE else System.currentTimeMillis() - ts
+    }
+
+    /**
+     * Health-check projection of the orchestrator. `msSinceLastActivity`
+     * uses [Long.MAX_VALUE] as the "never iterated" sentinel — same
+     * convention as `SlotReaderMessageProducer.ProducerState` so the
+     * two health indicators behave identically when the loop has not
+     * yet started.
+     */
+    data class ProcessorState(
+        val slot: String,
+        val running: Boolean,
+        val msSinceLastActivity: Long,
+    )
+
     private fun runLoop() {
         while (running) {
+            // Record activity BEFORE the poll so a hang inside poll
+            // counts as "active" until the call returns — the goal of
+            // the idle metric is to detect a stalled loop, not a slow
+            // upstream. The order also means the very first iteration
+            // moves `lastActivityMs` off `0L`, flipping the "never
+            // iterated" sentinel to a real elapsed measurement.
+            lastActivityMs = System.currentTimeMillis()
             val event = try {
                 source.poll()
             } catch (e: Exception) {
