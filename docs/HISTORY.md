@@ -4,6 +4,96 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+## Round 12 — Wave 6 — multi-module Gradle split
+
+Closes roadmap row 11. The single Gradle module became 13 sibling
+modules so the hexagonal boundary is enforced by the build graph, not
+just by package convention. `core` cannot see Spring at compile time;
+`source-postgres` cannot see Kafka; an accidental import that crosses
+the boundary now fails the build.
+
+**Module layout** (12 production + 1 test-support):
+
+| Module | Contents | External deps |
+|---|---|---|
+| `core` | `core/domain`, `core/port`, `core/application`, `helper`, `jackson`, `retry`, `observability/CdcOutboxMetrics` | slf4j, micrometer, jackson |
+| `checkpoint-file` | `adapter/checkpoint/FileCheckpointStore` | — |
+| `source-postgres` | `adapter/source/postgres/*`, `replication/*` (config, connector, enums, model, strategy parsers) | pgjdbc, hikari, spring-context (compileOnly for `@Component`) |
+| `source-mysql` | `adapter/source/mysql/*` | hikari, mysql-connector-j (compileOnly), mysql-binlog-connector-java (compileOnly) |
+| `source-stubs` | Oracle + SQL Server placeholder adapters | — |
+| `sink-composition` | `CompositeEventSink`, `SchemeRouterEventSink`, `DefaultEventSinkRegistry` | — |
+| `sink-aws` | `SnsEventSink`, `SqsEventSink` | aws-sdk (sns/sqs/sts), spring-cloud-aws (compileOnly) |
+| `sink-kafka` | `KafkaEventSink` | spring-kafka (compileOnly) |
+| `sink-rabbitmq` | `RabbitMqEventSink` | spring-amqp (compileOnly) |
+| `lag-probes` | `PostgresLagProbe`, `MysqlLagProbe`, `LagProbeScheduler` | (transitive via source-postgres + source-mysql + checkpoint-file) |
+| `legacy` | `workflow/*` (`SlotReaderMessageProducer`), `deadletter/*` legacy, `LegacyDeadLetterPortAdapter`, `aws/*` (SNSProducer/SQSProducer + DTOs) | spring-cloud-aws (compileOnly) |
+| `spring-boot-starter` | All of `infra/spring/` + `META-INF` + `application.properties` | spring-boot-* (compileOnly), all adapter modules (compileOnly) |
+| `test-support` | `IntegrationBase`, `E2EContainers`, `InMemoryCheckpointStore`, `PostgresConfigurationMother`, `ReplicationConfigurationMother`, `AWSParamaters` (shared test data class) | testcontainers (postgresql/mysql/rabbitmq/localstack), junit-jupiter, awaitility |
+
+**Build-graph guarantees**
+
+  * `core` has zero framework deps — verifying that the hexagonal
+    domain stays clean at compile time, not just by convention.
+  * Every adapter module declares its driver/template as `compileOnly`
+    so a consumer dropping the unused sink (e.g. an SNS-only app) does
+    NOT pay for Kafka/Rabbit transitive classes.
+  * `spring-boot-starter` is the only module that knows the full
+    adapter surface; its `compileOnly` declarations let `@ConditionalOnClass`
+    / `@ConditionalOnBean` rules pick adapters at runtime without
+    forcing them at compile time.
+  * `test-support` exposes shared fixtures via `src/main/kotlin` so
+    other modules consume them as a normal `testImplementation(project(":test-support"))`
+    dependency — no `testFixtures` plugin ceremony.
+
+**Mechanics**
+
+  * 134 source-file moves via `git mv` (preserves history).
+  * Old `src/main/kotlin/...` and `src/test/kotlin/...` paths are now
+    empty leaves; Gradle no longer reads them.
+  * `settings.gradle.kts` lists all 13 modules; root
+    `build.gradle.kts` is parent-only with `subprojects {}` shared
+    plugin config (kotlin, detekt, ktlint, jacoco, junit) and the
+    docker-compose tasks for the `:legacy` IT stack.
+  * `application.properties` (test fixture used by legacy ITs) moved
+    from root `src/test/resources/` to `legacy/src/test/resources/`.
+  * Two test re-homings required to honour module boundaries:
+    `PostgresConnectorIT` moved to `legacy` (uses SNS + legacy slot
+    reader), and `AWSParamaters` moved to `test-support` (shared
+    fixture between `legacy` and `source-postgres` ITs).
+  * Two parser/probe wiring tweaks: `source-postgres` adds
+    `spring-context` as `compileOnly` so the parser `@Component`
+    annotations resolve; `spring-boot-starter` test scope adds
+    `assertj-core` + `spring-boot-test-autoconfigure` for the
+    `AssertableApplicationContext` family.
+
+**Verification**
+
+  * `./gradlew compileKotlin compileTestKotlin` across all 13 modules
+    PASS on JDK 21 (Corretto). Inter-module classpath checked clean.
+  * `./gradlew detekt` PASS — 0 weighted issues across all modules.
+  * Full sweep with `RUN_TESTCONTAINERS=1` +
+    `DOCKER_API_VERSION=1.43` (OrbStack):
+    **198 tests, 198 successes, 0 failures, 0 skipped** — same
+    number as Round 10/11 closeout, confirming the split moved
+    every test to its target module without dropping any.
+
+**Tech Lead persona**
+
+Tech Lead persona: **PASS**.
+  (a) Behaviour is byte-identical — no production code changed
+      beyond the moves themselves; the four exception cases
+      (`compileOnly spring-context` on source-postgres,
+      `compileOnly` adapter chain on starter, `IntegrationBase`
+      to test-support, `PostgresConnectorIT` to legacy) were
+      forced by the new boundary, not chosen.
+  (b) `legacy` is intentionally a single module rather than
+      further-decomposed into `legacy-workflow` + `legacy-deadletter`
+      + `legacy-aws-producers` — that's churn for negligible
+      hexagonal gain since the legacy chain is one logical unit.
+  (c) The 13-module count is deliberate: more granularity (e.g.
+      per-driver source modules) hurts discoverability without
+      changing what compile-time enforcement provides.
+
 ## Round 11 — detekt baseline cleanup (57 → 0 weighted issues)
 
 `./gradlew detekt` was failing with 57 weighted issues that had
