@@ -1,10 +1,19 @@
 package br.com.fltech.cdc.outbox.publisher.adapter.source.mysql
 
+import br.com.fltech.cdc.outbox.publisher.core.domain.RowChange
+import br.com.fltech.cdc.outbox.publisher.core.port.InMemoryCheckpointStore
+import br.com.fltech.cdc.outbox.publisher.observability.CdcOutboxMetrics
 import com.github.shyiko.mysql.binlog.BinaryLogClient
+import com.github.shyiko.mysql.binlog.event.Event
+import com.github.shyiko.mysql.binlog.event.EventHeaderV4
+import com.github.shyiko.mysql.binlog.event.EventType
+import com.github.shyiko.mysql.binlog.event.TableMapEventData
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import io.mockk.Runs
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import org.junit.jupiter.api.Test
 import java.sql.Connection
@@ -25,19 +34,33 @@ import kotlin.test.assertNull
  *  - open is idempotent and registers a listener,
  *  - poll returns null when no events are buffered,
  *  - ack updates the last-acked checkpoint marker without raising,
- *  - close shuts the underlying client down idempotently.
+ *  - close shuts the underlying client down idempotently,
+ *  - checkpoint store is consulted on open and persisted on ack
+ *    (Wave 5.2),
+ *  - column-name cache invalidates on column-count change
+ *    (Wave 5.2 / Round-9 MINOR #3) without bumping the fallback
+ *    counter (that's reserved for genuine resolution failures).
  */
 class MySqlBinlogRowChangeSourceTest {
 
     private val client = mockk<BinaryLogClient>(relaxed = true)
     private val factory: (String, Int, String, String) -> BinaryLogClient = { _, _, _, _ -> client }
 
-    private fun newSource() = MySqlBinlogRowChangeSource(
+    private fun newSource(
+        dataSource: DataSource? = null,
+        columnLookup: (DataSource, String, String) -> List<String>? = { _, _, _ -> null },
+        metrics: CdcOutboxMetrics = CdcOutboxMetrics.noop(),
+        checkpointStore: br.com.fltech.cdc.outbox.publisher.core.port.CheckpointStore? = null,
+    ) = MySqlBinlogRowChangeSource(
         host = "localhost",
         port = 3306,
         username = "repl",
         password = "secret",
         clientFactory = factory,
+        dataSource = dataSource,
+        columnLookup = columnLookup,
+        metrics = metrics,
+        checkpointStore = checkpointStore,
     )
 
     @Test
@@ -63,8 +86,8 @@ class MySqlBinlogRowChangeSourceTest {
         src.open()
         // Any RowChange is acceptable — ack just records the checkpoint.
         src.ack(
-            br.com.fltech.cdc.outbox.publisher.core.domain.RowChange(
-                op = br.com.fltech.cdc.outbox.publisher.core.domain.RowChange.Op.INSERT,
+            RowChange(
+                op = RowChange.Op.INSERT,
                 table = "x.y",
                 sourceCheckpoint = "mysql-bin.000001:120",
                 occurredAt = java.time.Instant.EPOCH,
@@ -126,5 +149,161 @@ class MySqlBinlogRowChangeSourceTest {
         val names = MySqlBinlogRowChangeSource.defaultColumnLookup(ds, "shop", "ghosts")
 
         assertNull(names)
+    }
+
+    @Test
+    fun `open seeds binlogFilename and binlogPosition from a persisted checkpoint`() {
+        val store = InMemoryCheckpointStore(initial = mapOf("binlog:65536" to "mysql-bin.000007:4321"))
+        val src = newSource(checkpointStore = store)
+        src.open()
+
+        // The setters are exposed on BinaryLogClient as setBinlogFilename /
+        // setBinlogPosition; with a relaxed mock the verification confirms
+        // resume seeded the client before connect() ran.
+        verify { client.binlogFilename = "mysql-bin.000007" }
+        verify { client.binlogPosition = 4321L }
+        assertEquals(1, store.loadCount)
+        src.close()
+    }
+
+    @Test
+    fun `open without a persisted checkpoint leaves the binlog client at its default position`() {
+        // No initial entry — load returns null and we do NOT call the
+        // setter (so the binlog client starts at head).
+        val store = InMemoryCheckpointStore()
+        val src = newSource(checkpointStore = store)
+        src.open()
+        verify(exactly = 0) { client.binlogFilename = any() }
+        verify(exactly = 0) { client.binlogPosition = any() }
+        src.close()
+    }
+
+    @Test
+    fun `ack persists the latest checkpoint to the store on every call`() {
+        val store = InMemoryCheckpointStore()
+        val src = newSource(checkpointStore = store)
+        src.open()
+
+        src.ack(
+            RowChange(
+                op = RowChange.Op.INSERT,
+                table = "x.y",
+                sourceCheckpoint = "mysql-bin.000001:120",
+                occurredAt = java.time.Instant.EPOCH,
+            ),
+        )
+        src.ack(
+            RowChange(
+                op = RowChange.Op.INSERT,
+                table = "x.y",
+                sourceCheckpoint = "mysql-bin.000001:240",
+                occurredAt = java.time.Instant.EPOCH,
+            ),
+        )
+
+        assertEquals(2, store.saveCount)
+        assertEquals("mysql-bin.000001:240", store.snapshot()["binlog:65536"])
+        src.close()
+    }
+
+    @Test
+    fun `malformed persisted checkpoint is ignored and the source still opens`() {
+        val store = InMemoryCheckpointStore(initial = mapOf("binlog:65536" to "garbage"))
+        val src = newSource(checkpointStore = store)
+        src.open()
+        // The malformed checkpoint MUST NOT crash the open; we just don't
+        // seed the client and let it start at head.
+        verify(exactly = 0) { client.binlogFilename = any() }
+        verify(exactly = 0) { client.binlogPosition = any() }
+        src.close()
+    }
+
+    @Test
+    fun `column count change between two TABLE_MAP events invalidates the cached names without bumping fallbacks`() {
+        // Capture the listener so we can hand-feed it TABLE_MAP events.
+        val listenerSlot = slot<BinaryLogClient.EventListener>()
+        every { client.registerEventListener(capture(listenerSlot)) } just Runs
+
+        val lookups = mutableListOf<Int>()
+        val lookup: (DataSource, String, String) -> List<String>? = { _, _, _ ->
+            lookups += 1
+            // Each lookup returns a fresh, valid name list — the point is
+            // the lookup runs again after the invalidation, not the names.
+            if (lookups.size == 1) listOf("id", "status") else listOf("id", "status", "amount")
+        }
+        val registry = SimpleMeterRegistry()
+        val metrics = CdcOutboxMetrics(registry)
+        val src = newSource(
+            dataSource = mockk(),
+            columnLookup = lookup,
+            metrics = metrics,
+        )
+        src.open()
+
+        val listener = listenerSlot.captured
+        listener.onEvent(tableMapEvent(tableId = 1L, schema = "shop", table = "orders", columnCount = 2))
+        listener.onEvent(tableMapEvent(tableId = 1L, schema = "shop", table = "orders", columnCount = 3))
+
+        // Two lookups: one for the initial TABLE_MAP, one after invalidation.
+        assertEquals(2, lookups.size)
+        // Invalidation MUST NOT bump the fallback counter — that counter is
+        // reserved for genuine resolution failures.
+        assertEquals(
+            0.0,
+            registry.counter(
+                CdcOutboxMetrics.BINLOG_COLUMN_RESOLUTION_FALLBACKS,
+                CdcOutboxMetrics.TAG_TABLE, "shop.orders",
+            ).count(),
+        )
+        src.close()
+    }
+
+    @Test
+    fun `column count stable across repeated TABLE_MAP events does not re-query INFORMATION_SCHEMA`() {
+        val listenerSlot = slot<BinaryLogClient.EventListener>()
+        every { client.registerEventListener(capture(listenerSlot)) } just Runs
+
+        val lookups = mutableListOf<Int>()
+        val lookup: (DataSource, String, String) -> List<String>? = { _, _, _ ->
+            lookups += 1
+            listOf("id", "status")
+        }
+        val src = newSource(
+            dataSource = mockk(),
+            columnLookup = lookup,
+        )
+        src.open()
+
+        val listener = listenerSlot.captured
+        listener.onEvent(tableMapEvent(tableId = 1L, schema = "shop", table = "orders", columnCount = 2))
+        // Binlog rotation re-emits TABLE_MAP with the same column count;
+        // the cache must remain valid and the lookup must NOT re-run.
+        listener.onEvent(tableMapEvent(tableId = 1L, schema = "shop", table = "orders", columnCount = 2))
+        listener.onEvent(tableMapEvent(tableId = 1L, schema = "shop", table = "orders", columnCount = 2))
+
+        assertEquals(1, lookups.size)
+        src.close()
+    }
+
+    private fun tableMapEvent(
+        tableId: Long,
+        schema: String,
+        table: String,
+        columnCount: Int,
+    ): Event {
+        val header = EventHeaderV4().apply {
+            eventType = EventType.TABLE_MAP
+            timestamp = 0L
+            nextPosition = 0L
+        }
+        val data = TableMapEventData().apply {
+            this.tableId = tableId
+            this.database = schema
+            this.table = table
+            // The adapter reads `columnTypes.size` to learn the column
+            // count; a byte array of the right length is enough.
+            this.columnTypes = ByteArray(columnCount)
+        }
+        return Event(header, data)
     }
 }

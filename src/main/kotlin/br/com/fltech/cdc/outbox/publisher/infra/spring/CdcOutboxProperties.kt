@@ -47,6 +47,9 @@ data class CdcOutboxProperties(
     @NestedConfigurationProperty
     val processor: Processor = Processor(),
 
+    @NestedConfigurationProperty
+    val checkpoint: Checkpoint = Checkpoint(),
+
     /**
      * Declarative table-mapping list (Wave 3.5 / item 7 of the brief).
      * Each entry binds one source-table FQ name to its outbound shape
@@ -211,5 +214,30 @@ data class CdcOutboxProperties(
          * indicator regardless of this knob.
          */
         val maxIdle: Duration = Duration.ofMinutes(10),
+    )
+
+    /**
+     * Persisted-checkpoint settings (Wave 5.2). Controls the optional
+     * [br.com.fltech.cdc.outbox.publisher.core.port.CheckpointStore] bean
+     * that source adapters consult on `open()` and persist to on `ack()`.
+     */
+    data class Checkpoint(
+        /**
+         * When true, the auto-configuration wires a default
+         * [br.com.fltech.cdc.outbox.publisher.adapter.checkpoint.FileCheckpointStore]
+         * under [directory]. Consumers who supply their own
+         * `CheckpointStore` bean always win regardless. Disabled by
+         * default so the existing in-memory behaviour is preserved
+         * for pre-Wave-5.2 deployments.
+         */
+        val enabled: Boolean = false,
+        /**
+         * Directory under which the file-backed store writes one JSON
+         * file per checkpoint key. Created on first use if missing.
+         * Operators are expected to point this at a persistent volume
+         * — defaulting to a tmp-friendly relative path keeps tests
+         * cheap and demo deployments self-contained.
+         */
+        val directory: String = ".cdc-outbox-checkpoints",
     )
 }
