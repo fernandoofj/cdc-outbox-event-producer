@@ -164,4 +164,31 @@ class CdcOutboxMetricsTest {
         metrics.recordCheckpointOrphanSwept("deleted")
         metrics.recordCheckpointOrphanSwept("failed")
     }
+
+    @Test
+    fun `lag gauge is registered with the source tag and reads from the supplier`() {
+        val registry = SimpleMeterRegistry()
+        val metrics = CdcOutboxMetrics(registry)
+        var current: Long = 1024
+        metrics.registerLagGauge("postgres") { current }
+
+        val gauge = registry.find(CdcOutboxMetrics.SOURCE_LAG_BYTES)
+            .tag(CdcOutboxMetrics.TAG_SOURCE, "postgres")
+            .gauge()
+        assertNotNull(gauge)
+        assertEquals(1024.0, gauge.value())
+
+        // Updating the underlying source moves the gauge on next read —
+        // proves the supplier is invoked lazily, not snapshotted at
+        // registration time.
+        current = 4096
+        assertEquals(4096.0, gauge.value())
+    }
+
+    @Test
+    fun `lag gauge registration is a no-op without a registry`() {
+        val metrics = CdcOutboxMetrics.noop()
+        // Must not throw — exercises the null-registry branch.
+        metrics.registerLagGauge("mysql") { 0L }
+    }
 }

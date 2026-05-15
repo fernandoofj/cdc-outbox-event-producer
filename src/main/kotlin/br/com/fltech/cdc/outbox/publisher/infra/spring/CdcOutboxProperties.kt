@@ -50,6 +50,9 @@ data class CdcOutboxProperties(
     @NestedConfigurationProperty
     val checkpoint: Checkpoint = Checkpoint(),
 
+    @NestedConfigurationProperty
+    val lag: Lag = Lag(),
+
     /**
      * Declarative table-mapping list (Wave 3.5 / item 7 of the brief).
      * Each entry binds one source-table FQ name to its outbound shape
@@ -240,4 +243,36 @@ data class CdcOutboxProperties(
          */
         val directory: String = ".cdc-outbox-checkpoints",
     )
+
+    /**
+     * Lag-probe settings (Wave 5.2 / Round 10). Controls the
+     * Micrometer `cdc.outbox.source.lag_bytes` gauge and the
+     * background sampler that feeds it. When [enabled] is `false`,
+     * no probe bean is registered and the gauge is absent — keeps
+     * the metric surface honest on deployments that haven't opted
+     * in.
+     */
+    data class Lag(
+        /**
+         * Master switch for the lag probe + gauge. Default `true`
+         * so a deployment that wires a recognised row source picks
+         * up the metric for free; consumers who don't want the
+         * Micrometer surface can flip this off.
+         */
+        val enabled: Boolean = true,
+        /**
+         * Cadence at which the background sampler queries the
+         * source for its current lag. Defaults to
+         * [DEFAULT_INTERVAL_SECONDS]s — far slower than typical
+         * Prometheus scrape intervals so the SQL cost is bounded
+         * by this knob, not by the scrape rate. Values below 1s
+         * are clamped to 1s by the scheduler.
+         */
+        val interval: Duration = Duration.ofSeconds(DEFAULT_INTERVAL_SECONDS),
+    ) {
+        companion object {
+            /** Default sampler period in seconds. */
+            const val DEFAULT_INTERVAL_SECONDS: Long = 10
+        }
+    }
 }

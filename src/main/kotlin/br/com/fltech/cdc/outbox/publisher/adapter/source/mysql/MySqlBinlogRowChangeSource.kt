@@ -92,7 +92,14 @@ class MySqlBinlogRowChangeSource(
     private val port: Int,
     private val username: String,
     private val password: String,
-    private val serverId: Long = DEFAULT_SERVER_ID,
+    /**
+     * MySQL replication `server_id` used both as the binlog
+     * client's identity and as the suffix of the checkpoint key
+     * (`binlog:<serverId>`). Exposed (not `private`) so collaborators
+     * — most notably the lag-probe adapter — can derive the
+     * matching checkpoint key without a second source of truth.
+     */
+    val serverId: Long = DEFAULT_SERVER_ID,
     /** Capacity of the internal buffer between binlog-thread and poller. */
     private val bufferSize: Int = DEFAULT_BUFFER_SIZE,
     /** Factory for the underlying client — overridable for tests. */
