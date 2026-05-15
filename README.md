@@ -1,102 +1,495 @@
 # cdc-outbox-event-producer
 
-> **Status:** repository revived from the public archive
+> **Status:** repositório revivido a partir do arquivo público
 > [`inventa-shop/kotlin-postgres-cdc-to-sns-module`](https://github.com/inventa-shop/kotlin-postgres-cdc-to-sns-module)
-> (last commit Feb/2024) and re-published privately to evolve the design.
-> The code as-is still works; everything below from
-> [Roadmap](#roadmap) onward is a forward-looking plan.
+> (último commit Fev/2024) e republicado privadamente para evoluir o
+> desenho. A partir da Onda 3 o projeto se reorganizou em hexagonal e
+> ganhou suporte a múltiplas origens (Postgres / MySQL) e múltiplos
+> brokers (SNS / SQS / Kafka / RabbitMQ).
 
-A Kotlin/JVM library that turns a PostgreSQL database into a **transactional
-outbox event producer**: it tails the WAL, picks up messages emitted with
-`pg_logical_emit_message(...)` inside the same transaction as the business
-write, and publishes them to AWS SNS / SQS.
-
-Despite the original "CDC" naming, the module does **not** propagate raw
-`INSERT/UPDATE/DELETE` row events. It implements the **Transactional Outbox
-Pattern** with **zero outbox table**: the outbox row is replaced by a logical
-WAL message that lives only in the replication stream. Insert/update/delete
-events that arrive in the slot are deliberately discarded
-([SlotReaderMessageProducer.kt:124](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt:124)).
+Biblioteca Kotlin/JVM (publicável como Spring Boot starter) que
+**transforma um banco de dados relacional em produtor de eventos**
+seguindo o **Transactional Outbox Pattern**. Captura mudanças no banco
+de origem (logical replication slot do PostgreSQL, binlog ou tabela
+outbox no MySQL) e publica nos brokers configurados, com garantia
+**at-least-once**, retry com backoff exponencial + jitter, dead-letter
+opcional, métricas Micrometer e health indicator Actuator.
 
 ---
 
-## Table of contents
+## Sumário
 
-1. [How it works today](#how-it-works-today)
-2. [Quick start](#quick-start)
-3. [Prefix routing convention](#prefix-routing-convention)
-4. [Configuration reference](#configuration-reference)
-5. [Honest assessment of the current code](#honest-assessment-of-the-current-code)
-6. [Alternatives in the ecosystem](#alternatives-in-the-ecosystem)
-7. [Roadmap](#roadmap)
-8. [Target architecture (hexagonal)](#target-architecture-hexagonal)
-9. [Testing strategy](#testing-strategy)
-10. [Build & local dev](#build--local-dev)
+1. [Arquitetura funcional](#arquitetura-funcional)
+2. [Arquitetura técnica (visão executiva)](#arquitetura-técnica-visão-executiva)
+3. [Diagrama hexagonal](#diagrama-hexagonal)
+4. [Etapas do processo](#etapas-do-processo)
+5. [Players integrados](#players-integrados)
+6. [Quick start](#quick-start)
+7. [Convenção de routing](#convenção-de-routing)
+8. [Referência de configuração](#referência-de-configuração)
+9. [Alternativas no ecossistema](#alternativas-no-ecossistema)
+10. [Roadmap](#roadmap)
+11. [Testes e build local](#testes-e-build-local)
+12. [Trabalhando com Claude / agentes de IA neste repositório](#trabalhando-com-claude--agentes-de-ia-neste-repositório)
+13. [Licença e créditos](#licença-e-créditos)
 
 ---
 
-## How it works today
+## Arquitetura funcional
+
+### O que o producer faz
+
+O serviço fica observando um banco de dados (Postgres ou MySQL) e
+**emite eventos para brokers de mensageria sempre que mudanças
+relevantes acontecem dentro de transações de negócio**. A garantia
+chave é: ou o INSERT/UPDATE da aplicação e o evento publicado existem
+ambos, ou nenhum dos dois — sem janela em que a aplicação acreditou
+que persistiu mas o evento se perdeu.
+
+Quem emite? A própria aplicação consumidora, escrevendo dentro da
+transação de negócio:
+
+  * **No Postgres:** chamando `pg_logical_emit_message(true, '<scheme>://<target>', '<json>')`
+    no mesmo `BEGIN`/`COMMIT` do INSERT da entidade. A mensagem viaja
+    pelo WAL junto com a row, então fica atômica com ela. Não existe
+    tabela outbox — esse é o ponto da variante "WAL message" do
+    pattern (contraste em [Outbox vs publish-while-committing](#outbox-vs-publish-while-committing)).
+  * **No MySQL (poller):** fazendo `INSERT INTO outbox_events(prefix,
+    payload, headers)` dentro da transação. O producer consome a
+    tabela com `SELECT … FOR UPDATE SKIP LOCKED` e marca cada row como
+    publicada.
+  * **No MySQL (binlog):** o aplicativo faz INSERT/UPDATE/DELETE
+    normalmente nas tabelas mapeadas. O producer lê o binlog em modo
+    `ROW`, filtra pelas tabelas configuradas em `cdc.outbox.mappings`
+    e projeta cada row em `OutboxEvent`.
+
+O `OutboxEvent` resultante carrega `id` (LSN, GTID ou PK), `routing`
+(`scheme://target`), `payload` (bytes opacos) e `headers`. O producer
+resolve o broker pelo `scheme` (`sns`, `sqs`, `kafka`, `amqp`) e
+publica.
+
+### Outbox vs publish-while-committing
+
+A variante de PostgreSQL com `pg_logical_emit_message` **não** é
+exatamente "Transactional Outbox" tradicional — é uma forma de
+"publish-while-committing" onde a tabela outbox é substituída por uma
+mensagem lógica na WAL. As propriedades funcionais são equivalentes
+(emissão atômica com o commit da transação), mas:
+
+  * **Pattern clássico (outbox table):** tabela `outbox_events` no
+    banco, INSERT junto da transação, poller separado consome e
+    publica. Visível e auditável no banco; latência mais alta; usado
+    no nosso adapter MySQL poller.
+  * **WAL message (Postgres):** mensagem só existe no slot
+    de replicação, nunca encosta em tabela. Latência menor;
+    visibilidade é só nos logs/Actuator do producer; usado no nosso
+    adapter Postgres logical.
+  * **Row-level CDC (MySQL binlog):** não há intenção explícita do
+    aplicativo de emitir evento — o producer infere os eventos das
+    mudanças nas tabelas mapeadas. Custo zero pra quem produz, mas
+    exige `cdc.outbox.mappings` correto.
+
+Os três usam exatamente a mesma porta `CdcSource` (eventualmente via
+`MappingCdcSource` + `MappingRules`), e o orquestrador `CdcProcessor`
+não sabe qual sabor está rodando.
+
+### Garantias
+
+  * **At-least-once.** O checkpoint da origem (LSN no Postgres, GTID
+    ou `<file>:<pos>` no MySQL binlog, PK no MySQL poller) só avança
+    depois do publish OK ou do dead-letter OK. Duplicatas downstream
+    são consequência aceita do contrato — consumers devem deduplicar
+    por `event.id`.
+  * **Backoff exponencial com jitter.** Falhas transientes (broker
+    fora, timeout) entram em retry head-of-line. `cdc.outbox.retry.*`
+    controla limites e tempos.
+  * **Dead-letter opcional.** Configurar `cdc.outbox.dead-letter.queue-name`
+    instala um `DeadLetterPort` para SQS. Sem isso, mensagens que
+    esgotam retry **ficam presas** no slot até intervenção do operador
+    — é deliberado, melhor pausar que perder.
+  * **Shutdown limpo.** O loop conclui o ciclo atual e termina sem
+    avançar checkpoint a meio caminho. Se uma mensagem estava em
+    retry, encerra sem ack — o próximo start replaya.
+  * **Single-writer por slot/source.** Postgres rejeita dois readers
+    no mesmo slot (SQLSTATE 55006). O MySQL poller depende do `FOR
+    UPDATE SKIP LOCKED`. Cada instância da aplicação roda um
+    `CdcProcessor`; deploys multi-AZ devem fixar o slot a uma
+    réplica ativa.
+
+### Modos de falha visíveis
+
+| Sintoma                                      | O que aconteceu                                         | Onde olhar primeiro                                        |
+|----------------------------------------------|---------------------------------------------------------|------------------------------------------------------------|
+| `/actuator/health` → `DOWN`                  | Loop não está iterando, ou publish falhou e está preso. | `details.pendingFailureLsn`, `details.reason`, logs ERROR. |
+| Slot do Postgres crescendo (lag bytes)       | Producer parado, ou broker fora há muito tempo.         | Métrica `cdc.outbox.messages.failed` por cause.            |
+| `cdc.outbox.dead_letter.failures` > 0        | A DLQ também falhou — operador deve atuar.              | Logs ERROR; configuração da queue SQS.                     |
+| Eventos publicados duas vezes                | Producer reiniciou no meio de um publish.               | Esperado em at-least-once; consumer precisa dedup.         |
+| `NoSinkForSchemeException` repetida          | Routing aponta para scheme sem adapter na classpath.    | Confira `cdc.outbox.mappings[].routing.sink` + jars de sink. |
+
+## Arquitetura técnica (visão executiva)
+
+> Documento completo, port-by-port, em
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Esta seção é o resumo.
+
+Layout hexagonal:
 
 ```
-┌──────────────────────────┐    pg_logical_emit_message      ┌─────────────────┐
-│ Application transaction  │ ─────────────────────────────▶  │ Postgres WAL    │
-│ (INSERT + emit_message)  │                                 │ (logical slot)  │
-└──────────────────────────┘                                 └────────┬────────┘
-                                                                      │ wal2json v2
-                                                                      ▼
-                              ┌────────────────────────────────────────────────┐
-                              │  PostgresConnector (JDBC replication API)      │
-                              │   ├── streamingConnection (replication = true) │
-                              │   └── queryConnection     (regular SQL)        │
-                              └────────────────────────────────────────────────┘
-                                                  │
-                                                  ▼  ByteBuffer → MessageChange
-                              ┌────────────────────────────────────────────────┐
-                              │  SlotReaderMessageProducer (blocking loop)     │
-                              │   parsePrefix("SNS|topic" | "SQS|queue")       │
-                              └────────────────────────────────────────────────┘
-                                                  │
-                              ┌────────────────────────────┐
-                              ▼                            ▼
-                   SNSTransactionalProducer       SQSTransactionalProducer
-                  (Spring Cloud AWS Messaging 2.4 — deprecated, see roadmap)
+core/                                  ← Kotlin puro, sem Spring, sem drivers
+├── domain/   OutboxEvent, Routing, RowChange, TableMapping
+├── port/     CdcSource, RowChangeSource (driving)
+│             EventSink, EventSinkRegistry, DeadLetterPort, MappingRules (driven)
+└── application/  CdcProcessor, MappingCdcSource, DefaultMappingRules
+
+adapter/                               ← anel adaptador
+├── source/{postgres,mysql,sqlserver,oracle}
+├── sink/{sns,sqs,kafka,rabbitmq,composite,router,registry}
+└── deadletter/LegacyDeadLetterPortAdapter
+
+infra/spring/                          ← auto-configs (anotações Spring vivem só aqui)
+workflow/                              ← orquestrador legado (pré-Onda 3, opt-in)
+replication/, aws/, deadletter/, retry/, observability/   ← peças usadas pelo legado
 ```
 
-Flow:
+  * **Domínio:**
+    [`OutboxEvent`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/OutboxEvent.kt),
+    [`Routing`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/Routing.kt),
+    [`RowChange`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/RowChange.kt),
+    [`TableMapping`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/TableMapping.kt).
+    Tipos de valor imutáveis, `equals`/`hashCode` corretos para `ByteArray`.
+  * **Portas driving** (entrada):
+    [`CdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/CdcSource.kt)
+    (alto nível, entrega `OutboxEvent`) e
+    [`RowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/RowChangeSource.kt)
+    (baixo nível, entrega `RowChange`). Single-thread por instância.
+  * **Portas driven** (saída):
+    [`EventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/EventSink.kt),
+    [`EventSinkRegistry`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/EventSinkRegistry.kt),
+    [`DeadLetterPort`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/DeadLetterPort.kt),
+    [`MappingRules`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/MappingRules.kt).
+    Interfaces puras sem dependência de framework ou driver.
+  * **Aplicação:**
+    [`CdcProcessor`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/CdcProcessor.kt)
+    (loop hexagonal),
+    [`MappingCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/MappingCdcSource.kt)
+    (decorator `RowChangeSource` → `CdcSource`),
+    [`DefaultMappingRules`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/DefaultMappingRules.kt)
+    (motor de `TableMapping`).
+  * **Adaptadores de origem:**
+    [`PgLogicalReplicationCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt),
+    [`MySqlOutboxTableCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt),
+    [`MySqlBinlogRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt),
+    e stubs SQL Server / Oracle (Onda 5.2+).
+  * **Adaptadores de destino:**
+    [`SnsEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sns/SnsEventSink.kt),
+    [`SqsEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sqs/SqsEventSink.kt),
+    [`KafkaEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/kafka/KafkaEventSink.kt),
+    [`RabbitMqEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/rabbitmq/RabbitMqEventSink.kt),
+    [`CompositeEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/composite/CompositeEventSink.kt),
+    [`SchemeRouterEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/router/SchemeRouterEventSink.kt),
+    [`DefaultEventSinkRegistry`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/registry/DefaultEventSinkRegistry.kt).
+  * **Adaptador de dead-letter legado:**
+    [`LegacyDeadLetterPortAdapter`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/deadletter/LegacyDeadLetterPortAdapter.kt)
+    para reaproveitar
+    [`SqsDeadLetterSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/deadletter/SqsDeadLetterSink.kt).
 
-1. The application opens a JDBC transaction and, inside it, calls
-   `SELECT pg_logical_emit_message(true, '<prefix>', '<json content>')`
-   together with the business `INSERT`/`UPDATE`. Both reach the WAL
-   atomically — that is the outbox guarantee.
-2. `PostgresConnector` keeps **two** raw `DriverManager` connections:
-   one in replication mode (`replication=database`), one for regular queries
-   such as `pg_current_wal_lsn()`. It creates the logical slot with the
-   `wal2json` output plugin and `format-version=2` by default.
-3. `SlotReaderMessageProducer.startStreaming()` is an unbounded
-   `while (running)` loop that calls `readPending()`, parses the JSON
-   payload via `ByteToClassParserImplV2`, and routes by prefix.
-4. After a successful publish, the LSN is advanced
-   (`setAppliedLSN` + `setFlushedLSN`) so Postgres can recycle WAL.
-5. Failures are logged but do **not** retry the publish (see
-   [Honest assessment](#honest-assessment-of-the-current-code) §3).
+### Toggle hexagonal × legado
 
----
+`cdc.outbox.processor.kind` aceita `HEXAGONAL` (default desde Onda 5)
+ou `LEGACY`. O hexagonal monta `CdcSource` + `EventSinkRegistry` +
+`CdcProcessor` + `CdcProcessorLifecycle`. O legado monta
+[`SlotReaderMessageProducer`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt)
++ `CdcOutboxLifecycle`. Os dois ciclos são mutuamente exclusivos via
+`@ConditionalOnProperty`, então nunca tem duas streaming-threads
+concorrentes. O Actuator health indicator também tem duas variantes
+([`CdcOutboxHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxHealthIndicator.kt)
+para legado,
+[`CdcProcessorHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcProcessorHealthIndicator.kt)
+para hex), também mutuamente exclusivas.
+
+## Diagrama hexagonal
+
+```mermaid
+flowchart LR
+  subgraph DB[Banco de dados]
+    PG[(PostgreSQL<br/>WAL + slot)]
+    MY[(MySQL<br/>binlog ou outbox_events)]
+  end
+
+  subgraph Adapters_In[Adaptadores de origem]
+    PgSrc[PgLogicalReplicationCdcSource]
+    MyBinlog[MySqlBinlogRowChangeSource]
+    MyTable[MySqlOutboxTableCdcSource]
+  end
+
+  subgraph Core["core/ — domínio + portas + aplicação"]
+    direction TB
+    Domain["domain<br/>OutboxEvent, Routing<br/>RowChange, TableMapping"]
+    Ports["ports<br/>CdcSource, RowChangeSource<br/>EventSink, EventSinkRegistry<br/>DeadLetterPort, MappingRules"]
+    App["application<br/>CdcProcessor<br/>MappingCdcSource<br/>DefaultMappingRules"]
+    Domain --- Ports --- App
+  end
+
+  subgraph Adapters_Out[Adaptadores de destino]
+    Sns[SnsEventSink]
+    Sqs[SqsEventSink]
+    Kfk[KafkaEventSink]
+    Rmq[RabbitMqEventSink]
+    Comp[CompositeEventSink]
+    Reg[DefaultEventSinkRegistry]
+  end
+
+  subgraph DLQ[Dead-letter]
+    DlqAdapter[LegacyDeadLetterPortAdapter]
+    DlqSqs[SqsDeadLetterSink]
+  end
+
+  subgraph Brokers
+    SNS[(AWS SNS)]
+    SQS[(AWS SQS)]
+    KAFKA[(Apache Kafka)]
+    RABBIT[(RabbitMQ)]
+    DLQQ[(SQS DLQ)]
+  end
+
+  subgraph Ops[Observabilidade]
+    Met[Micrometer<br/>cdc.outbox.*]
+    Hea["/actuator/health"]
+  end
+
+  PG --> PgSrc --> Core
+  MY --> MyBinlog --> Core
+  MY --> MyTable --> Core
+
+  Core --> Reg
+  Reg --> Sns --> SNS
+  Reg --> Sqs --> SQS
+  Reg --> Kfk --> KAFKA
+  Reg --> Rmq --> RABBIT
+  Reg --> Comp
+
+  Core -. retry esgotado .-> DlqAdapter --> DlqSqs --> DLQQ
+  Core --> Met
+  Core --> Hea
+```
+
+Sequência feliz (Postgres → SNS):
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Aplicação
+    participant PG as Postgres (WAL)
+    participant Src as PgLogicalReplicationCdcSource
+    participant Proc as CdcProcessor
+    participant Reg as EventSinkRegistry
+    participant Sink as SnsEventSink
+    participant SNS as AWS SNS
+
+    App->>PG: BEGIN; INSERT orders; pg_logical_emit_message(true, 'sns://orders.events', json); COMMIT
+    PG-->>Src: WAL message
+    Proc->>Src: poll()
+    Src-->>Proc: OutboxEvent(id=LSN, routing=sns://orders.events)
+    Proc->>Reg: publish(routing, event)
+    Reg->>Sink: publish(routing, event)
+    Sink->>SNS: convertAndSend(target, payload, attrs)
+    SNS-->>Sink: ok
+    Proc->>Src: ack(event)
+    Src->>PG: setStreamLsn(LSN)
+```
+
+Outros diagramas (composição de sinks, máquina de estado retry+DLQ,
+sequência MySQL binlog → Kafka) estão em
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Etapas do processo
+
+### Sabor Postgres (`pg_logical_emit_message`)
+
+1. **Emissão atômica.** Aplicação faz
+   `pg_logical_emit_message(true, '<scheme>://<target>', '<payload>')`
+   dentro da mesma transação dos `INSERT`/`UPDATE` de negócio.
+2. **WAL.** O Postgres grava a mensagem na WAL junto com o COMMIT.
+3. **Slot lógico.** O producer mantém um slot de replicação lógica
+   (`wal2json` por default) consumindo as mensagens em ordem.
+4. **`PgLogicalReplicationCdcSource.poll()`** lê um `ByteBuffer` via
+   `readPending()`, parseia (`ByteToClassParserImplV2` por default,
+   formato wal2json v2), filtra só `MessageChange` (records `M`).
+5. **Resolução de LSN.** `include-lsn=true` faz o wal2json embedar
+   o LSN por record; o adapter usa esse valor. Fallback para
+   `lastReceivedLsn` quando ausente.
+6. **`OutboxEvent`.** `id = sourceCheckpoint = LSN.asString()`,
+   `routing = Routing.parsePrefix(prefix)`, `payload = content.bytes`.
+7. **Mapping (opcional).** Sabor message-only não precisa de
+   `TableMapping` — a aplicação já entrega o evento pronto. O sabor
+   row-level Postgres (Onda 5.1/6) sim passará por `MappingCdcSource`.
+8. **Publish.** `CdcProcessor` chama `EventSinkRegistry.publish` que
+   resolve o `EventSink` pelo `scheme` e delega.
+9. **Retry head-of-line** com `ExponentialBackOff` até
+   `maxPublishAttempts`. Falhas permanentes
+   (`NoSinkForSchemeException`) saem do retry imediato.
+10. **Ack.** Só depois do publish OK,
+    `PgLogicalReplicationCdcSource.ack(event)` chama
+    `setStreamLsn(LSN)` — o slot avança e o Postgres pode reciclar a
+    WAL.
+11. **Dead-letter (opcional).** Esgotou retry e há
+    `DeadLetterPort` → DLQ recebe envelope (`originalPrefix`, `lsn`,
+    `content`, `failureType`, `failureMessage`, `deadLetteredAt`),
+    `ack` propaga. Sem DLQ → loop fica preso (intencional).
+
+### Sabor MySQL — outbox table (poller)
+
+1. **Emissão atômica.** Aplicação faz
+   `INSERT INTO outbox_events(prefix, payload, headers)` dentro da
+   transação de negócio (`prefix` no formato `scheme://target`).
+2. **`MySqlOutboxTableCdcSource.poll()`** abre uma conexão, executa
+   `SELECT … FOR UPDATE SKIP LOCKED LIMIT batchSize` ordenado por
+   `id` ascendente, lê a row, retorna `OutboxEvent`
+   (`id = sourceCheckpoint = row.id`).
+3. A transação fica **aberta** segurando o row lock até `ack`.
+4. **Publish + retry + DLQ** seguem o mesmo fluxo do Postgres.
+5. **`ack(event)`** executa
+   `UPDATE outbox_events SET published_at = NOW() WHERE id = ?`,
+   comita a transação, fecha a conexão. Outros pollers da mesma
+   instância (ou de outras instâncias) ignoram a row a partir desse
+   ponto.
+
+### Sabor MySQL — binlog (row-level CDC)
+
+1. **Emissão implícita.** Aplicação faz INSERT/UPDATE/DELETE
+   normalmente nas tabelas mapeadas em `cdc.outbox.mappings`.
+2. **`MySqlBinlogRowChangeSource`** mantém um `BinaryLogClient`
+   conectado (thread daemon separada). Processa `ROTATE` (atualiza
+   binlog atual), `TABLE_MAP` (cache de `tableId → schema.table`) e
+   `WRITE_ROWS`/`UPDATE_ROWS`/`DELETE_ROWS` (gera `RowChange`).
+3. Eventos vão para um `LinkedBlockingQueue` interno (cap 1024) com
+   back-pressure — se o orquestrador atrasa, o cliente binlog
+   bloqueia no `put`.
+4. **`MappingCdcSource.poll()`** drena um `RowChange`, consulta o
+   `DefaultMappingRules` correspondente, projeta key + payload +
+   eventType + routing/attributes em `OutboxEvent`.
+5. Se a tabela **não** está em `cdc.outbox.mappings` ou a op está
+   fora do `capture`, o decorator faz `ack` na origem e devolve
+   `null` — o orquestrador chama `poll` de novo no próximo ciclo.
+6. **Publish + retry + DLQ** idem.
+7. **`ack(event)`** consulta o buffer interno do decorator, recupera
+   o `RowChange` original, faz `rowSource.ack(rowChange)` que
+   atualiza `lastAckedCheckpoint = "<binlog file>:<nextPosition>"`.
+   *Limitação atual:* o checkpoint só vive em memória — restart
+   reinicia do início do binlog disponível. Persistência entra na
+   Onda 5.1.
+
+## Players integrados
+
+### Origens (sources)
+
+| Player                                           | Adapter                                                                                                                                                          | Estado                                                                          |
+|--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
+| PostgreSQL via `wal2json` + `pg_logical_emit_message` | [`PgLogicalReplicationCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt)                    | Pronto. Default wal2json v2, include-lsn=true.                                  |
+| PostgreSQL row-level (`I/U/D` via wal2json)      | —                                                                                                                                                                | **Open** — Onda 5.1 / 6 (item 9 da roadmap).                                    |
+| MySQL via tabela `outbox_events` + `SKIP LOCKED` | [`MySqlOutboxTableCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt)                               | Pronto. MySQL 8+; identifier hard-validated contra SQLi.                        |
+| MySQL via binlog (`mysql-binlog-connector-java`) | [`MySqlBinlogRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt)                             | Pronto com limitações (colunas como `col0`/`col1`, checkpoint só em memória, IT MySQL Testcontainers pendente — fila Onda 5.1). |
+| SQL Server                                       | [`SqlServerCdcSourceStub`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/sqlserver/SqlServerCdcSourceStub.kt)                                 | Stub. Lança `UnsupportedOperationException`. Implementação real Onda 5.2+.      |
+| Oracle                                           | [`OracleCdcSourceStub`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/oracle/OracleCdcSourceStub.kt)                                          | Stub. Implementação real Onda 5.2+ (LogMiner / OpenLogReplicator / GoldenGate). |
+
+Pré-requisitos de operação:
+
+  * **Postgres ≥ 14.** `wal_level=logical`, `max_replication_slots ≥ 1`
+    por producer, `max_wal_senders ≥ 1`, role com `REPLICATION` + `LOGIN`,
+    plugin `wal2json` instalado (imagem `debezium/postgres` do
+    docker-compose já vem com ele).
+  * **MySQL ≥ 8.** Para o binlog: `binlog_format=ROW`,
+    `binlog_row_metadata=FULL`, `binlog_row_image=FULL`, `GTID_MODE=ON`,
+    usuário com `REPLICATION SLAVE` + `REPLICATION CLIENT`.
+
+### Destinos (sinks)
+
+| Player        | Adapter                                                                                                                                                       | Scheme  | Template (SCA 3 / Spring)                                       |
+|---------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|-----------------------------------------------------------------|
+| AWS SNS       | [`SnsEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sns/SnsEventSink.kt)                                                          | `sns`   | `io.awspring.cloud.sns.core.SnsTemplate` (SCA 3.2.x, AWS SDK v2). |
+| AWS SQS       | [`SqsEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sqs/SqsEventSink.kt)                                                          | `sqs`   | `io.awspring.cloud.sqs.operations.SqsTemplate` (SCA 3.2.x, AWS SDK v2). |
+| Apache Kafka  | [`KafkaEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/kafka/KafkaEventSink.kt)                                                    | `kafka` | `org.springframework.kafka.core.KafkaTemplate<String, ByteArray>`. Publish bloqueante (`send().get()`). |
+| RabbitMQ      | [`RabbitMqEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/rabbitmq/RabbitMqEventSink.kt)                                           | `amqp`  | `org.springframework.amqp.rabbit.core.RabbitTemplate`. `target` é `exchange/routingKey`. |
+| Composite     | [`CompositeEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/composite/CompositeEventSink.kt)                                        | —       | Fan-out (`failFast=true` default). Dual-write em migrações.    |
+| Scheme router | [`SchemeRouterEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/router/SchemeRouterEventSink.kt)                                     | —       | Re-roteia via `EventSinkRegistry`.                              |
+
+Cada sink é registrado **apenas** se o template correspondente está
+presente no contexto (gated por `@ConditionalOnClass` +
+`@ConditionalOnBean`). Adicionar um broker novo = mais um jar com um
+`EventSink` registrado sob um novo `scheme` no
+`DefaultEventSinkRegistry`.
+
+### Observabilidade
+
+  * **Micrometer** via
+    [`CdcOutboxMetrics`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/observability/CdcOutboxMetrics.kt).
+    No-op quando não há `MeterRegistry` no contexto. Counters principais:
+    `cdc.outbox.messages.read{slot}`,
+    `cdc.outbox.messages.published{sink,topic}`,
+    `cdc.outbox.messages.failed{sink,topic,cause}`,
+    `cdc.outbox.publish.retries{sink,topic,attempt}`,
+    `cdc.outbox.messages.dead_lettered{sink,topic,cause}`,
+    `cdc.outbox.dead_letter.failures{cause}`,
+    `cdc.outbox.reconnect.attempts{reason}`,
+    `cdc.outbox.messages.discarded{reason}`. Timer:
+    `cdc.outbox.publish.duration{sink}`.
+  * **Spring Boot Actuator** via
+    [`CdcOutboxHealthAutoConfiguration`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxHealthAutoConfiguration.kt).
+    Branch legado:
+    [`CdcOutboxHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxHealthIndicator.kt)
+    (`DOWN` em pending-failure / not-running, `OUT_OF_SERVICE` em
+    idle além de `cdc.outbox.health.maxIdle`, `UP` caso contrário,
+    detalhes `slot`, `running`, `lifecycleRunning`, `pendingFailureLsn`,
+    `idleFor`, `maxIdle`). Branch hex:
+    [`CdcProcessorHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcProcessorHealthIndicator.kt)
+    (apenas processor-running × lifecycle-running por ora; pending +
+    idle entram na Onda 5.1).
+  * **Ferramentas upstream:** replication slot do Postgres
+    (`pg_stat_replication`, `pg_replication_slots`, `confirmed_flush_lsn`,
+    `pg_wal_lsn_diff`) e binlog do MySQL (`SHOW BINARY LOGS`,
+    `mysql.gtid_executed`). O lag não é exposto como gauge no
+    producer ainda — fica para a Onda 5.1/6.
+
+### Superfície de configuração (`cdc.outbox.*`)
+
+Estrutura completa em
+[`CdcOutboxProperties.kt`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxProperties.kt)
+e catálogo detalhado em
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#catálogo-de-propriedades-cdcoutbox).
+Os blocos principais:
+
+  * `cdc.outbox.enabled` — master switch.
+  * `cdc.outbox.processor.kind` — `HEXAGONAL` (default) ou `LEGACY`.
+  * `cdc.outbox.postgres.*` — host, port, database, username, password,
+    sslMode, paths para cert/key/rootCert.
+  * `cdc.outbox.replication.*` — slotName, outputPlugin,
+    statusInterval, updateIdleSlotInterval, existingProcess retry
+    knobs, includeXids, includeLsn, formatVersion.
+  * `cdc.outbox.pool.*` — HikariCP (maximumPoolSize, minimumIdle,
+    connectionTimeout, idleTimeout, maxLifetime, leakDetectionThreshold).
+  * `cdc.outbox.retry.*` — initial / max / multiplier / jitter para
+    reconnect; `maxPublishAttempts`, `publishBackoffInitial`,
+    `publishBackoffMax` para publish.
+  * `cdc.outbox.health.maxIdle` — limiar do indicator legado.
+  * `cdc.outbox.dead-letter.queueName` — DLQ SQS opcional.
+  * `cdc.outbox.mappings` — lista declarativa de `TableMapping` (item 7
+    da brief), consumida por
+    [`CdcOutboxMappingAutoConfiguration`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxMappingAutoConfiguration.kt).
 
 ## Quick start
 
-### Producer side — emit the outbox message
+### Producer side — emitir mensagem (Postgres)
 
-Raw SQL (works from any client):
+Raw SQL (qualquer cliente):
 
 ```sql
 SELECT pg_logical_emit_message(
-    true,                   -- transactional
-    'SNS|orders-events',    -- prefix (= destination route)
+    true,                       -- transactional
+    'sns://orders.events',      -- routing URI (preferido)
     '{"eventType":"OrderPlaced","domainId":"01HX...","payload":{...}}'
 );
 ```
 
-From Spring Data JPA (recommended on the producer side):
+Spring Data JPA:
 
 ```kotlin
 @Repository
@@ -115,194 +508,131 @@ interface OutboxRepository : JpaRepository<Order, Long> {
 }
 ```
 
-### Consumer side — run the streamer
+### Producer side — emitir mensagem (MySQL outbox table)
+
+```sql
+INSERT INTO outbox_events(prefix, payload, headers)
+VALUES ('sns://orders.events', '{"eventType":"OrderPlaced", ...}', NULL);
+```
+
+Schema da tabela documentado no KDoc de
+[`MySqlOutboxTableCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt).
+
+### Producer side — MySQL binlog + mapping
+
+Sem código no producer (a aplicação só faz `INSERT/UPDATE/DELETE`
+normais). Mapeamento em `application.yml`:
+
+```yaml
+cdc:
+  outbox:
+    processor:
+      kind: hexagonal             # default desde Onda 5
+    mappings:
+      - table: app.orders
+        capture: [INSERT, UPDATE, DELETE]
+        key:
+          columns: [col0]         # binlog ainda usa col0/col1/... — Onda 5.1 troca pra nome real
+          format: "order:{col0}"
+        payload:
+          include: [col0, col1, col2]
+          rename:
+            col0: id
+            col1: status
+            col2: totalCents
+        eventType:
+          template: "orders.{op}"
+        routing:
+          sink: kafka://orders
+          attributes:
+            tenant: "{col3}"
+```
+
+### Consumer side — Spring Boot
+
+Adicionar o jar e os templates dos brokers que vai usar (SCA 3 SNS/SQS,
+Spring Kafka, Spring AMQP). As auto-configs registram o pipeline
+hexagonal automaticamente. Exemplo mínimo `application.yml`:
+
+```yaml
+cdc:
+  outbox:
+    postgres:
+      host: pg.example
+      database: appdb
+      username: replica
+      password: ${REPLICA_PASSWORD}
+    replication:
+      slotName: orders_outbox_slot
+    dead-letter:
+      queue-name: cdc-outbox-dlq
+```
+
+### Consumer side — sem Spring
 
 ```kotlin
-SlotReaderMessageProducer(
-    PostgresConfiguration(
-        host = "localhost", port = "5432", database = "appdb",
-        username = "replica", password = "***",
-    ),
-    ReplicationConfiguration(slotName = "outbox_slot"),
-    snsProducer = SNSTransactionalProducer(notificationMessagingTemplate),
-    sqsProducer = SQSTransactionalProducer(queueMessagingTemplate),
-).startStreaming()
+val processor = CdcProcessor(
+    source = PgLogicalReplicationCdcSource(pgConfig, replConfig, connectionProvider, objectMapper),
+    sinkRegistry = DefaultEventSinkRegistry(mapOf("sns" to SnsEventSink(snsTemplate))),
+    metrics = CdcOutboxMetrics(meterRegistry),
+    deadLetterPort = null,
+    maxPublishAttempts = 5,
+)
+processor.start()   // bloqueia a thread; rode em executor próprio
 ```
 
-> Run this on **exactly one** instance per slot. The slot is single-consumer
-> by design; multiple readers will fight for it. See
-> [`PostgresConnector.handleCurrentlyRunningProcessOnSlotException`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/replication/connector/PostgresConnector.kt:136)
-> for the back-off behavior.
+> Rode **uma única instância** por slot/source. O Postgres rejeita
+> dois readers no mesmo slot (SQLSTATE 55006); o MySQL poller depende
+> de `FOR UPDATE SKIP LOCKED` para evitar duplicação dentro do mesmo
+> grupo de pollers.
 
-### Postgres prerequisites
+## Convenção de routing
 
-```
-wal_level = logical
-max_replication_slots >= 1 per producer
-max_wal_senders     >= 1 per producer
-```
+O destino é codificado no `Routing`:
 
-…and a role with `REPLICATION` and `LOGIN`. The `wal2json` plugin must be
-installed (the `debezium/postgres` image used in `docker-compose.yml` ships
-with it).
+| Forma                  | Como vira `Routing`                                       |
+|------------------------|-----------------------------------------------------------|
+| `sns://orders.events`  | `Routing(scheme="sns", target="orders.events")`           |
+| `sqs://orders-queue`   | `Routing(scheme="sqs", target="orders-queue")`            |
+| `kafka://orders`       | `Routing(scheme="kafka", target="orders")`                |
+| `amqp://orders/created`| `Routing(scheme="amqp", target="orders/created")` (exchange/routingKey) |
+| `SNS\|orders.events` (legacy) | `Routing(scheme="sns", target="orders.events")`    |
+| `orders.events` (legacy, sem scheme) | `Routing(scheme="sns", target="orders.events")` |
 
----
+Parsing em
+[`Routing.parsePrefix`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/Routing.kt).
+As formas legadas existem para preservar compatibilidade com bases que
+ainda usam o protocolo antigo do projeto-origem.
 
-## Prefix routing convention
+## Referência de configuração
 
-The destination is encoded in the WAL message prefix:
+Vide [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#catálogo-de-propriedades-cdcoutbox)
+para a tabela completa de cada bloco. Fonte canônica:
+[`CdcOutboxProperties.kt`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxProperties.kt).
 
-| Prefix                  | Routes to        | Notes                                |
-|-------------------------|------------------|--------------------------------------|
-| `topic-name`            | SNS topic        | Bare prefix defaults to SNS          |
-| `SNS\|topic-name`       | SNS topic        | Explicit form                        |
-| `SQS\|queue-name`       | SQS queue        | Pipe `\|` separates type and name    |
+## Alternativas no ecossistema
 
-Parsed at [`SlotReaderMessageProducer.parsePrefix`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt:154).
-The hard-coded enum (`DestinationType.SNS|SQS`) and pipe separator are the
-first thing the [hexagonal refactor](#target-architecture-hexagonal) replaces.
+| Projeto                                          | O que é                                                                                       | Por que não é drop-in                                                                                                                                |
+|--------------------------------------------------|-----------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Debezium Engine** (`io.debezium:debezium-embedded`) | Lib Java que roda um connector Debezium no processo, entrega `ChangeEvent` para um `Consumer`. | Mais próximo do equivalente off-the-shelf. Pesado (~30 MB transitivo), opinativo sobre offset storage, focado em CDC row-level. Cabe como `CdcSource` adicional. |
+| **Debezium Server**                              | Runtime stand-alone com sinks para Kinesis, Pulsar, RabbitMQ, Pub/Sub, NATS, Redis, etc.       | Sidecar, não biblioteca. Pegada operacional maior, configuração separada.                                                                            |
+| **Eventuate Tram**                               | Framework Spring de outbox + CDC (poller JDBC + Kafka/RabbitMQ/Redis).                         | Maduro mas framework-pesado, amarra a aplicação ao envelope Eventuate e ao modelo de sagas.                                                          |
+| **Spring Modulith Events**                       | Publicação transacional de eventos com outbox table + republisher; broker plugável via `Externalized`. | Só útil dentro de Modulith. Não é lib CDC genérica.                                                                                                  |
+| **`mysql-binlog-connector-java`**                | Reader binlog cru.                                                                            | Building block. Já é a base do nosso adapter MySQL binlog.                                                                                           |
+| **`pgjdbc` logical replication API**             | Building block que o producer usa hoje.                                                       | Camada mais baixa. Permanece como base do adapter Postgres.                                                                                          |
+| **Striim / Maxwell / DBLog**                     | Runtimes comerciais / stand-alone.                                                            | Fora do escopo (não é lib embedável).                                                                                                                |
 
----
-
-## Configuration reference
-
-### `PostgresConfiguration`
-
-| Field             | Default     | Purpose                                  |
-|-------------------|-------------|------------------------------------------|
-| `host` / `port`   | — / `5432`  |                                          |
-| `database`        | —           |                                          |
-| `username`        | —           | Must have `REPLICATION` privilege        |
-| `password`        | —           |                                          |
-| `sslMode`         | `disable`   | `disable\|require\|verify-ca\|verify-full` |
-| `pathToRootCert`  | `null`      | Server CA bundle for `verify-*`          |
-| `pathToSslCert`   | `null`      | Client certificate (mTLS)                |
-| `pathToSslKey`    | `null`      | Client key                               |
-| `sslPassword`     | `null`      | Key passphrase                           |
-
-### `ReplicationConfiguration`
-
-| Field                              | Default                  | Purpose                                          |
-|------------------------------------|--------------------------|--------------------------------------------------|
-| `slotName`                         | —                        | Replication slot name (unique per producer)      |
-| `outputPlugin`                     | `wal2json`               | Postgres output plugin                           |
-| `statusIntervalValue`/`Unit`       | `20`, `SECONDS`          | Keep-alive cadence to Postgres                   |
-| `updateIdleSlotInterval`           | `300 s`                  | Force-flush LSN on idle to free WAL              |
-| `existingProcessRetryLimit`        | `30`                     | Max retries when another reader holds the slot   |
-| `existingProcessRetrySleepSeconds` | `30 s`                   | Fixed sleep between retries (overrides backoff)  |
-| `includeXids`                      | `true`                   | wal2json: include transaction ids                |
-| `formatVersion`                    | `V2`                     | wal2json format-version: `V1` or `V2`            |
-
----
-
-## Honest assessment of the current code
-
-Findings from a top-down read of [`src/main/kotlin/...`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher):
-
-1. **Connection management is bare.**
-   `DefaultConnectionProvider` calls `DriverManager.getConnection` directly
-   ([DefaultConnectionProvider.kt:7](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/replication/connector/DefaultConnectionProvider.kt:7)).
-   No pooling for the query connection, no TCP keep-alive, no socket
-   timeout, no `connectTimeout`. A network blip during connect blocks
-   indefinitely.
-
-2. **Reconnect is "throw it all away and start over".**
-   Any `SQLException` in the streaming loop unwinds the entire
-   `use { }` block and reconstructs the connector
-   ([SlotReaderMessageProducer.kt:52](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt:52)).
-   Only the `57P03` (recovery mode) state has a tailored sleep — every
-   other failure spins immediately. There is **no exponential back-off** on
-   the reconnect path, only on the "slot already in use" path.
-
-3. **Delivery guarantee has a latent bug.**
-   The intent is at-least-once: the LSN advances only after `setStreamLsn`
-   inside `onSNSSuccess`/`onSQSSuccess`. But if message **N** fails and
-   message **N+1** succeeds, `onSuccess` will call
-   `setAppliedLSN(lastReceivedLsn)` — which is the LSN of N+1. **Message N
-   is silently dropped** ([SlotReaderCallback.kt:43](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderCallback.kt:43)).
-   Correct behavior is to halt advancement on failure, retry with
-   back-off, and only resume the LSN advance after the failing message
-   succeeds or is dead-lettered.
-
-4. **Single-threaded throughput ceiling.**
-   One loop, one publish per iteration, no batching, no parallel sinks.
-   Throughput is bounded by `max(broker_publish_latency)`.
-
-5. **`running` is not `@Volatile`.**
-   `stopStreaming()` may take a while to be observed.
-   ([SlotReaderMessageProducer.kt:30](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt:30))
-
-6. **Spring Cloud AWS Messaging 2.4.4 is end-of-life.**
-   `io.awspring.cloud:spring-cloud-aws-messaging:2.4.4` was deprecated
-   in favor of Spring Cloud AWS **3.x** (`spring-cloud-aws-starter-sns`,
-   `spring-cloud-aws-starter-sqs`). The 2.x line uses AWS SDK v1, also EOL.
-
-7. **No metrics, no health indicator, no tracing.**
-   Operability is `grep`-on-logs only. We need at minimum:
-   - `cdc.outbox.read{slot}` counter
-   - `cdc.outbox.published{sink,topic}` counter
-   - `cdc.outbox.publish.duration{sink}` timer
-   - `cdc.outbox.lag.bytes` gauge (`pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)`)
-   - `HealthIndicator` that turns DOWN when the slot is inactive longer
-     than a threshold or when the publisher is failing.
-
-8. **Prefix routing is a stringly-typed pipe-split.**
-   Adding Kafka/RabbitMQ means changing the `DestinationType` enum *and*
-   the `processMessage` switch *and* the constructor of
-   `SlotReaderMessageProducer` — three coupled edits per new sink.
-
-9. **Hard Spring annotations on the leaf classes.**
-   `@Component` on `SNSTransactionalProducer`, `SQSTransactionalProducer`,
-   `ByteToClassParserStrategy`, `SlotReaderCallback` — but
-   `SlotReaderMessageProducer` itself is **not** annotated. The wiring is
-   inconsistent: half-Spring, half-DIY. Either go all-in (auto-config) or
-   keep the core framework-free and ship a separate Spring starter.
-
-10. **Toolchain is dated.**
-    - Kotlin 1.7.20 → current is 2.x
-    - JVM 17 is fine, but Spring Boot 3.5 already needs Java 21 in some
-      paths
-    - `aws-java-sdk-sts:1.12.x` (v1 SDK) + `software.amazon.awssdk:sts:2.21.1`
-      (v2 SDK) **both** included — pick one (v2)
-    - `gradle-versions-plugin` is configured but no policy enforces it.
-
-11. **Outbox semantics conflate two patterns.**
-    The README example (`SaveOutboxMessagePort.emitLogicalMessage`) is
-    table-less; the name "outbox" usually means a real table with a
-    poller. Documentation needs to clearly state: *this is the WAL-message
-    variant, not the polled-table variant*.
-
----
-
-## Alternatives in the ecosystem
-
-A quick survey before reinventing anything (item 1 of the brief):
-
-| Project | What it is | Why it isn't a drop-in replacement |
-|---|---|---|
-| **Debezium Engine** (`io.debezium:debezium-embedded`) | Java library that runs a Debezium connector in-process and delivers `ChangeEvent`s to a `Consumer`. Pluggable sinks. | Closest off-the-shelf. Heavy (~30 MB transitive), opinionated about offset storage, and oriented at **row-level** CDC — to do the "logical message" trick you still need extra plumbing. Worth wrapping as one of our `CdcSource` adapters. |
-| **Debezium Server** | Standalone runtime that emits to Kinesis, Pulsar, RabbitMQ, Pub/Sub, NATS, Redis, etc. | Sidecar process, not a library. Heavier ops footprint, separate config surface. |
-| **Eventuate Tram** | Spring-based outbox + CDC framework (JDBC poller + Kafka/RabbitMQ/Redis publishers). | Mature but framework-y, ties you to Eventuate's message envelope and saga model. |
-| **Spring Modulith Events** (since 1.0, 2023) | Built-in transactional event publication with an outbox table + republisher; pluggable broker via `Externalized`. | Only useful inside a Spring Modulith app; not a generic CDC library. |
-| **`mysql-binlog-connector-java`** | Low-level binlog reader for MySQL. | Library, not framework — needs the same wrapping we are designing here. Will become our MySQL adapter. |
-| **`pgjdbc` logical replication API** | What the current code uses. | Lowest-level building block. We keep this as the Postgres adapter. |
-| **Striim / Maxwell / DBLog** | Commercial / standalone runtimes. | Out of scope for an embeddable library. |
-
-**Conclusion.** There is **no** existing Kotlin/Spring library that does
-exactly what this module does (WAL-message outbox → SNS/SQS/Kafka/RabbitMQ)
-with a clean hexagonal split. Debezium Engine is the closest, but solves
-a slightly different problem (row-level CDC). It makes sense to keep this
-project and add a `DebeziumEngineCdcSource` adapter for the row-level case.
-
----
+**Conclusão.** Não há uma lib Kotlin/Spring que cubra exatamente o
+nicho deste módulo (outbox via WAL message → SNS/SQS/Kafka/RabbitMQ
+com split hexagonal). Debezium Engine resolve um problema parecido
+(CDC row-level), e por isso é candidato natural a virar mais um
+`CdcSource` no futuro.
 
 ## Roadmap
 
-Mapped to the items in the brief plus follow-ups raised in review:
-
 | # | Theme | Deliverable | Wave |
 |---|---|---|---|
-| 1 | Survey existing libs | [§ Alternatives](#alternatives-in-the-ecosystem) | done in this README |
+| 1 | Survey existing libs | [§ Alternativas no ecossistema](#alternativas-no-ecossistema) | done in this README |
 | 2 | Code quality: pool, reconnect, delivery, observability | HikariCP for the query connection (wired as default); back-off + jitter on every reconnect with a configurable attempt cap; `@Volatile` running flag + cooperative interrupt-aware shutdown; Micrometer counters/timers (no-op when no registry); LSN skip-on-failure bug fixed at the callback API level; idle-flush no longer fast-forwards past pending failures. | Wave 1 — done |
 | 2a | Quality follow-ups originally deferred from Wave 1 | True per-message LSN extracted from the wal2json `lsn` field (`include-lsn=true` is the default in `ReplicationConfiguration`), closing the residual race against `lastReceiveLSN()`; `pendingFailureLsn` made `@Volatile` so the Wave 2 health indicator can safely read it; unused AWS SDK v1 `aws-java-sdk-sts` dependency removed. | Wave 1.5 — done |
 | 2b | Quality follow-ups originally deferred from Wave 1 (final batch) | Head-of-line publish retry with bounded attempts and an injectable [BackOff]; configurable SQS-backed dead-letter sink (`cdc.outbox.dead-letter.queue-name`) consumed by exhausted retries; Spring Cloud AWS Messaging 2.4 → 3.2 migration (`NotificationMessagingTemplate`/`QueueMessagingTemplate` replaced by `SnsTemplate`/`SqsTemplate` on AWS SDK v2); Testcontainers integration regression `AtLeastOnceDeliveryIT` that emits three transactional WAL messages against a real Postgres + LocalStack pair and asserts all three arrive at the subscribed SQS queue even when the first publish attempt throws. | Wave 2b — done |
@@ -314,296 +644,81 @@ Mapped to the items in the brief plus follow-ups raised in review:
 | 8 | **MySQL binlog source + flip `processor.kind` default to `hexagonal`** | `adapter/source/mysql/MySqlBinlogRowChangeSource` streams `WRITE_ROWS`/`UPDATE_ROWS`/`DELETE_ROWS` via `mysql-binlog-connector-java`; checkpoint `<file>:<nextPosition>`. Combined with the Wave 3.5 mapping infra the hex chain now ingests row-level MySQL CDC and routes via `EventSinkRegistry`. Default orchestrator is now `HEXAGONAL` — legacy chain remains opt-in via `cdc.outbox.processor.kind=legacy`. Actuator health indicator now dual-branched: `CdcOutboxHealthIndicator` for legacy, `CdcProcessorHealthIndicator` for hex. Known limitations tracked for Wave 5.1: column names exposed as `col0`/`col1`/… (INFORMATION_SCHEMA lookup pending); `lastAckedCheckpoint` in memory only (no persisted resume yet); no Testcontainers MySQL IT yet. | Wave 5 — done |
 | 9 | **Multi-module Gradle split + Postgres I/U/D row source + Wave 5 polish** | Split the single module into `core/`, `adapter-source-*/`, `adapter-sink-*/`, `spring-boot-starter/` to make the hexagonal boundaries enforceable at the build level. Add a Postgres I/U/D row source (wal2json `I/U/D` records → `RowChange`) so the Wave 3.5 mapping surface also applies to Postgres. Land binlog column-name resolution (`INFORMATION_SCHEMA`), persisted binlog checkpoint, hex health indicator's pending-failure + idle reporting, Testcontainers MySQL IT. | Wave 5.1 / 6 |
 
-Wave boundaries are deliberate so each wave merges to `main` independently
-and the library stays usable in between.
+Wave boundaries are deliberate so each wave merges to `main`
+independently and the library stays usable in between.
 
-### Item 7 — flexibility of table / field mapping
-
-Concretely, the library will expose a typed configuration block of the form:
-
-```yaml
-cdc:
-  outbox:
-    mappings:
-      - table: public.orders                  # FQ table name (schema.table)
-        capture: [I, U, D]                    # which ops to forward (default: I,U,D)
-        key:                                  # how to derive the partition / domain key
-          columns: [id]
-          format: "{id}"                      # template; defaults to first column
-        payload:                              # which columns become the event payload
-          include: [id, status, total_cents, updated_at]
-          exclude: []                         # mutually exclusive with include
-          rename:                             # column → JSON field
-            total_cents: totalCents
-            updated_at: updatedAt
-        eventType:                            # how to build the event type string
-          template: "orders.{op}"             # {op}=created|updated|deleted
-        routing:
-          sink: sns://orders-events           # explicit; otherwise falls back to a default
-          attributes:                         # passed through as SNS MessageAttributes / Kafka headers
-            tenant: "{tenant_id}"
-      - table: public.invoices
-        ...                                   # one block per captured table
-```
-
-The same `TableMapping` model is used by:
-
-- The Postgres logical-replication source — when the configured output
-  plugin emits row-level changes (`I/U/D`), the mapping decides what
-  becomes an `OutboxEvent`.
-- The MySQL binlog source.
-- The outbox-table poller variant — the mapping describes the
-  `outbox_events` table schema.
-
-Behaviour parity is enforced by the same test suite running against
-each source adapter.
-
----
-
-## Target architecture (hexagonal)
-
-```
-cdc-outbox-event-producer/
-├── core/                                    pure Kotlin, no Spring, no I/O
-│   ├── domain/
-│   │   ├── OutboxEvent.kt                   (id, prefix, headers, payload, occurredAt, source LSN/GTID)
-│   │   ├── Routing.kt                       (target, partitionKey, attributes)
-│   │   └── Ack.kt                           (opaque token to commit progress)
-│   ├── port/
-│   │   ├── in/
-│   │   │   └── CdcSource.kt                 open(), poll(timeout): Batch, ack(batch), close()
-│   │   ├── out/
-│   │   │   ├── EventSink.kt                 publish(routing, event): PublishResult
-│   │   │   └── EventSinkRegistry.kt         resolve(scheme): EventSink
-│   │   └── support/
-│   │       ├── EventCodec.kt                bytes ↔ OutboxEvent
-│   │       └── BackOff.kt                   pluggable retry policy
-│   └── application/
-│       └── CdcProcessor.kt                  orchestrates source → codec → sink → ack
-│
-├── adapter-source-postgres/                 wraps current PostgresConnector, modernized
-│   ├── PgLogicalReplicationCdcSource.kt     wal2json + pgoutput
-│   └── PgConnectionFactory.kt               HikariCP for query connection
-│
-├── adapter-source-mysql/
-│   ├── MySqlBinlogCdcSource.kt              mysql-binlog-connector-java
-│   └── MySqlOutboxTableCdcSource.kt         SKIP LOCKED poller (MySQL 8+)
-│
-├── adapter-source-sqlserver/                stub: Change Tracking / CT
-├── adapter-source-oracle/                   stub: LogMiner / XStream
-│
-├── adapter-sink-sns/                        AWS SDK v2
-├── adapter-sink-sqs/                        AWS SDK v2
-├── adapter-sink-kafka/                      kafka-clients
-├── adapter-sink-rabbitmq/                   amqp-client
-├── adapter-sink-composite/                  fan-out
-├── adapter-sink-router/                     prefix scheme → sink resolution (sns://, kafka://…)
-│
-├── observability/                           Micrometer meters, HealthIndicator
-│
-└── spring-boot-starter/                     auto-configuration, properties, conditionals
-```
-
-**Key invariants of the port design:**
-
-- The **`OutboxEvent`** is the *only* type that crosses the hexagon
-  boundary. Adapters translate to/from native shapes.
-- **`CdcSource`** delivers events in a `Batch` with an opaque `Ack`
-  token. The processor only acks after **every** event in the batch is
-  published — this fixes the latent skip-on-failure bug from item 3 of
-  the assessment.
-- **`EventSinkRegistry`** replaces the pipe-split prefix parser. Routing
-  becomes a URL-like scheme: `sns://topic`, `sqs://queue`,
-  `kafka://cluster-a/topic`, `amqp://exchange/routingKey`. Adding a new
-  broker = drop a jar on the classpath + register one bean.
-- **`CompositeSink`** lets a single event fan out to N sinks (dual-write
-  during a migration); **`RouterSink`** picks one sink based on the
-  scheme. Both are pure composition — no inheritance.
-
-### Spring Boot starter outline
-
-```yaml
-cdc:
-  outbox:
-    enabled: true
-    source:
-      type: postgres            # postgres | mysql-binlog | mysql-outbox | debezium
-      postgres:
-        host: localhost
-        slot-name: outbox_slot
-        output-plugin: wal2json
-        format-version: V2
-        connection-pool:
-          maximum-pool-size: 4
-          connect-timeout: 5s
-    sinks:
-      sns:
-        region: sa-east-1
-      kafka:
-        bootstrap-servers: kafka:9092
-        acks: all
-        enable-idempotence: true
-      rabbitmq:
-        host: rabbit
-        confirm-callback: true
-    retry:
-      max-attempts: 8
-      initial-backoff: 200ms
-      max-backoff: 30s
-      jitter: 0.3
-    dead-letter:
-      sink: sqs://outbox-dlq
-```
-
-The starter wires a `CdcProcessor` bean per configured source, plus the
-`EventSinkRegistry` from whichever `adapter-sink-*` jars are on the
-classpath.
-
-### Multi-DB notes
-
-- **PostgreSQL.** Move the floor to **PG 14+** (current default) but
-  document tested versions through PG 17. Offer `pgoutput` as an
-  alternative to `wal2json` — it ships in core and removes the plugin
-  install requirement. Keep `wal2json` for the rich JSON format.
-- **MySQL.** Two adapters:
-  1. **Binlog reader.** Captures row events from `mysqlbinlog` style
-     streams via `mysql-binlog-connector-java`. Requires `ROW` binlog
-     format, `binlog_row_metadata=FULL`, `GTID_MODE=ON`. Outbox is then
-     an INSERT into an `outbox_events` table whose row events we filter.
-  2. **Outbox table poller.** Classic `SELECT ... FOR UPDATE SKIP LOCKED`
-     (MySQL 8+). Lower setup cost, slightly higher latency.
-  Default: poller. Binlog reader for high-throughput workloads.
-- **SQL Server / Oracle.** Designed-in but not implemented in Wave 3:
-  - SQL Server: Change Tracking (cheap) or CDC (richer).
-  - Oracle: LogMiner (deprecated path) or OpenLogReplicator
-    (open-source, modern), or GoldenGate for the enterprise tier.
-
-The adapters all expose **the same `CdcSource` port** — the processor
-does not know what database it is reading from.
-
----
-
-## Testing strategy
-
-Item 6 of the brief. Three layers:
-
-1. **Unit tests.**
-   - `ByteToClassParserImplV1` / `V2`: golden-file tests on real
-     wal2json output (insert/update/delete/message, transactional and
-     not, with/without `include-xids`).
-   - `RouterSink`: scheme parsing + fallback behavior.
-   - `BackOff` policies: deterministic sequences, jitter bounds.
-   - Each `EventSink` adapter against a mocked SDK client (MockK), one
-     happy path and one transient failure per adapter.
-
-2. **Integration tests** via Testcontainers (already in
-   [`build.gradle.kts:46`](build.gradle.kts:46)). Matrix:
-
-   | Source            | Sink                  |
-   |-------------------|-----------------------|
-   | Postgres 14 / 17  | LocalStack SNS / SQS  |
-   | Postgres 17       | Kafka (Confluent CP)  |
-   | Postgres 17       | RabbitMQ              |
-   | MySQL 8 (binlog)  | LocalStack SNS / SQS  |
-   | MySQL 8 (poller)  | Kafka                 |
-
-   Scenarios per cell: emit N messages, verify ordered delivery, verify
-   LSN/GTID checkpoint advanced.
-
-3. **Fault-injection tests** (also Testcontainers, slower lane):
-   - Restart the broker container mid-stream; expect retries and zero
-     loss.
-   - Restart Postgres mid-stream; expect slot recovery and zero
-     duplicates beyond the at-least-once contract.
-   - Kill the publisher mid-batch; expect resume from the last acked
-     LSN.
-   - Corrupt payload in the slot; expect dead-letter and continued
-     progress.
-
-JaCoCo coverage gate stays in [`config/jacoco.gradle`](config/jacoco.gradle).
-Target: 80% line coverage, **100%** on the `application/CdcProcessor`
-class.
-
----
-
-## Build & local dev
+## Testes e build local
 
 ```sh
-# spin up postgres + localstack
+# sobe postgres + localstack
 ./gradlew startDockerCompose
 
-# build + test
+# build + testes
 ./gradlew build
 
-# stop everything
+# encerra
 ./gradlew stopDockerCompose
 ```
 
-`docker-compose.yml` boots `debezium/postgres:14-alpine` and
-`localstack/localstack:latest`. LocalStack bootstrap scripts under
-[`shell-scripts/localstack/`](shell-scripts/localstack/) create the test
-SNS topic and SQS queue.
+O `docker-compose.yml` sobe `debezium/postgres:14-alpine` + LocalStack.
+Scripts em [`shell-scripts/localstack/`](shell-scripts/localstack/) criam
+o tópico SNS e a queue SQS usados nos testes.
 
-### Running the Testcontainers regression suite
-
-`AtLeastOnceDeliveryIT` does not use `docker-compose` — it provisions its
-own Postgres + LocalStack containers via Testcontainers. To run it:
+### Suíte Testcontainers `AtLeastOnceDeliveryIT`
 
 ```sh
 export RUN_TESTCONTAINERS=1
-# OrbStack / Colima: the Testcontainers-bundled docker-java negotiates
-# API 1.32, which OrbStack rejects (it requires ≥ 1.40). Force a higher
-# floor so version negotiation succeeds.
+# OrbStack / Colima: o docker-java embarcado negocia API 1.32, que
+# OrbStack rejeita. Forçar um piso maior:
 export DOCKER_API_VERSION=1.43
-export DOCKER_HOST=unix:///var/run/docker.sock   # or the orbstack socket directly
+export DOCKER_HOST=unix:///var/run/docker.sock
 
 ./gradlew test --tests '*AtLeastOnceDeliveryIT'
 ```
 
-Without `RUN_TESTCONTAINERS=1` the test is skipped via
-`@EnabledIfEnvironmentVariable`, so it does not slow down the default
-`./gradlew test` slice.
+Sem `RUN_TESTCONTAINERS=1` o teste é skipado via
+`@EnabledIfEnvironmentVariable`. Não atrapalha o `./gradlew test`
+default.
 
-### Toolchain (post Wave 2b)
+### Toolchain
 
-| Tool                      | Version |
-|---------------------------|---------|
-| Kotlin                    | 1.9.25  |
-| JVM target                | 17 (compiled with JDK 21) |
-| Gradle wrapper            | 8.10.2  |
-| Spring (msg)              | 6.0.13 (transitive) |
-| Spring Boot (compileOnly) | 3.3.5   |
-| Spring Cloud AWS          | 3.2.1 (SnsTemplate / SqsTemplate, AWS SDK v2 backed) |
-| AWS SDK v2                | 2.27.21 |
-| pgjdbc                    | 42.6.0  |
-| HikariCP                  | 5.1.0   |
-| Micrometer                | 1.12.13 |
-| Detekt                    | 1.23.7  |
-| ktlint plugin             | 12.1.1  |
-| Testcontainers            | 1.20.4  |
-| Awaitility (test)         | 4.2.2   |
+| Tool                      | Version                                                |
+|---------------------------|--------------------------------------------------------|
+| Kotlin                    | 1.9.25                                                 |
+| JVM target                | 17 (compilado com JDK 21)                              |
+| Gradle wrapper            | 8.10.2                                                 |
+| Spring Boot (compileOnly) | 3.3.5                                                  |
+| Spring Cloud AWS          | 3.2.1 (`SnsTemplate`/`SqsTemplate`, AWS SDK v2)        |
+| AWS SDK v2                | 2.27.21                                                |
+| pgjdbc                    | 42.6.0                                                 |
+| HikariCP                  | 5.1.0                                                  |
+| Micrometer                | 1.12.13                                                |
+| mysql-binlog-connector    | 0.29.2 (Zendesk fork; package `com.github.shyiko.*`)   |
+| Detekt                    | 1.23.7                                                 |
+| ktlint plugin             | 12.1.1                                                 |
+| Testcontainers            | 1.20.4                                                 |
+| Awaitility (test)         | 4.2.2                                                  |
 
----
+## Trabalhando com Claude / agentes de IA neste repositório
 
-## Working with Claude / AI agents on this repo
+O repositório carrega um [`CLAUDE.md`](CLAUDE.md) com as regras de
+engenharia que toda mudança assistida por IA deve seguir, e uma
+persona Tech Lead em
+[`.claude/agents/tech-lead.md`](.claude/agents/tech-lead.md) que é
+**invocada antes de todo commit não trivial** para auditar o diff
+contra a última instrução do usuário. A Tech Lead aplica um checklist
+fixo (deliverables, conformidade hexagonal, garantias de entrega,
+testes, operabilidade) e devolve veredito PASS / FAIL. Commits com
+findings BLOCKER ou MAJOR não devem ir para `main`.
 
-The repo carries a [`CLAUDE.md`](CLAUDE.md) with the engineering rules
-that every AI-assisted change must follow, and a Tech Lead persona at
-[`.claude/agents/tech-lead.md`](.claude/agents/tech-lead.md) that is
-**invoked before every non-trivial commit** to audit the diff against
-the user's last instruction. The Tech Lead applies a fixed checklist
-(deliverables, hexagonal compliance, delivery guarantees, tests,
-operability) and returns a PASS / FAIL verdict. Commits with
-BLOCKER- or MAJOR-severity findings must not land on `main`.
+## Licença e créditos
 
----
+### Licença
 
-## License
+TBD. O repositório original não trazia um arquivo `LICENSE`; um será
+adicionado quando o projeto for aberto. Até lá o código é privado.
 
-TBD. The original repository did not ship a `LICENSE` file; one will be
-added when the project is open-sourced. Until then this code is private.
-
-## Acknowledgements
+### Acknowledgements
 
 Forked from
 [`inventa-shop/kotlin-postgres-cdc-to-sns-module`](https://github.com/inventa-shop/kotlin-postgres-cdc-to-sns-module)
