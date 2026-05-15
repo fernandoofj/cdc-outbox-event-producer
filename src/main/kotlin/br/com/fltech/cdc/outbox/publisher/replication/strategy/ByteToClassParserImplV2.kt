@@ -10,6 +10,20 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import java.nio.ByteBuffer
 import org.springframework.stereotype.Component
 
+/**
+ * Decodes a wal2json `format-version=2` record. One record per
+ * call. The resulting [Change] subtypes carry per-record data:
+ *
+ *  - [MessageChange] — `prefix`, `content`, `lsn` (the legacy
+ *    `pg_logical_emit_message` path used by
+ *    [br.com.fltech.cdc.outbox.publisher.adapter.source.postgres.PgLogicalReplicationCdcSource]).
+ *  - [InsertChange] / [UpdateChange] / [DeleteChange] — `schema`,
+ *    `table`, `columns` (post-image), `identity` (pre-image
+ *    projection on the replica identity). These are the data points
+ *    [br.com.fltech.cdc.outbox.publisher.adapter.source.postgres.PgWalRowChangeSource]
+ *    needs to emit fully-populated
+ *    [br.com.fltech.cdc.outbox.publisher.core.domain.RowChange]s.
+ */
 @Component
 class ByteToClassParserImplV2(
     private val defaultMapper: ObjectMapper
@@ -20,25 +34,45 @@ class ByteToClassParserImplV2(
         val jsonString = String(byteArray, Charsets.UTF_8)
         val slotMessageV2 = defaultMapper.readValue(jsonString, SlotMessageV2::class.java)
 
-        val messageChange = slotMessageV2.takeIf { it.action == MESSAGE_TYPE_V2 }
-            ?.let {
-                MessageChange(
-                    kindInput = MESSAGE_TYPE_V1,
-                    transactional = IS_TRANSACTIONAL,
-                    prefix = slotMessageV2.prefix!!,
-                    content = slotMessageV2.content!!,
-                    lsn = slotMessageV2.lsn,
-                )
-            } ?: buildOtherChange(slotMessageV2.action)
+        val change: Change = when {
+            slotMessageV2.action == MESSAGE_TYPE_V2 -> MessageChange(
+                kindInput = MESSAGE_TYPE_V1,
+                transactional = IS_TRANSACTIONAL,
+                prefix = slotMessageV2.prefix!!,
+                content = slotMessageV2.content!!,
+                lsn = slotMessageV2.lsn,
+            )
 
-        return listOf(messageChange)
+            else -> buildOtherChange(slotMessageV2)
+        }
+
+        return listOf(change)
     }
 
-    private fun buildOtherChange(action: String): Change {
-        return when (action.uppercase()) {
-            "I" -> InsertChange(kindInput = INSERT_TYPE_V1)
-            "U" -> UpdateChange(kindInput = UPDATE_TYPE_V1)
-            "D" -> DeleteChange(kindInput = DELETE_TYPE_V1)
+    private fun buildOtherChange(message: SlotMessageV2): Change {
+        return when (message.action.uppercase()) {
+            "I" -> InsertChange(
+                kindInput = INSERT_TYPE_V1,
+                schema = message.schema,
+                table = message.table,
+                lsn = message.lsn,
+                columns = message.columns,
+            )
+            "U" -> UpdateChange(
+                kindInput = UPDATE_TYPE_V1,
+                schema = message.schema,
+                table = message.table,
+                lsn = message.lsn,
+                columns = message.columns,
+                identity = message.identity,
+            )
+            "D" -> DeleteChange(
+                kindInput = DELETE_TYPE_V1,
+                schema = message.schema,
+                table = message.table,
+                lsn = message.lsn,
+                identity = message.identity,
+            )
             else -> Change(OTHER_TYPE_V1)
         }
     }

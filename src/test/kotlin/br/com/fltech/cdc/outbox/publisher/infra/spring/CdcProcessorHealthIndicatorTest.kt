@@ -117,4 +117,26 @@ class CdcProcessorHealthIndicatorTest {
         assertEquals(Status.UP, health.status)
         assertEquals("never", health.details["idleFor"])
     }
+
+    @Test
+    fun `DOWN when a pending publish failure is reported — takes precedence over everything`() {
+        // Even if everything else looks healthy, a pending-failure
+        // checkpoint means the source has NOT been acked past the
+        // troubled event. That's an operator signal, not an idle
+        // condition. Matches the legacy indicator's
+        // pendingFailureLsn precedence.
+        every { processor.snapshotState() } returns CdcProcessor.ProcessorState(
+            slot = "orders_outbox_slot",
+            running = true,
+            msSinceLastActivity = 100L,
+            pendingFailureCheckpoint = "mysql-bin.000001:240",
+        )
+        every { lifecycle.isRunning } returns true
+
+        val health = indicator.health()
+
+        assertEquals(Status.DOWN, health.status)
+        assertEquals("mysql-bin.000001:240", health.details["pendingFailureCheckpoint"])
+        assertTrue((health.details["reason"] as String).contains("pending publish failure"))
+    }
 }

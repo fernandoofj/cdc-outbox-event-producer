@@ -1,11 +1,16 @@
 package br.com.fltech.cdc.outbox.publisher.infra.spring
 
+import br.com.fltech.cdc.outbox.publisher.adapter.checkpoint.FileCheckpointStore
 import br.com.fltech.cdc.outbox.publisher.adapter.deadletter.LegacyDeadLetterPortAdapter
 import br.com.fltech.cdc.outbox.publisher.adapter.source.postgres.PgLogicalReplicationCdcSource
 import br.com.fltech.cdc.outbox.publisher.core.application.CdcProcessor
+import br.com.fltech.cdc.outbox.publisher.core.application.MappingCdcSource
 import br.com.fltech.cdc.outbox.publisher.core.port.CdcSource
+import br.com.fltech.cdc.outbox.publisher.core.port.CheckpointStore
 import br.com.fltech.cdc.outbox.publisher.core.port.DeadLetterPort
 import br.com.fltech.cdc.outbox.publisher.core.port.EventSinkRegistry
+import br.com.fltech.cdc.outbox.publisher.core.port.MappingRules
+import br.com.fltech.cdc.outbox.publisher.core.port.RowChangeSource
 import br.com.fltech.cdc.outbox.publisher.deadletter.DeadLetterSink
 import br.com.fltech.cdc.outbox.publisher.jackson.ObjectMapperSingleton.defaultMapper
 import br.com.fltech.cdc.outbox.publisher.observability.CdcOutboxMetrics
@@ -13,6 +18,7 @@ import br.com.fltech.cdc.outbox.publisher.replication.config.PostgresConfigurati
 import br.com.fltech.cdc.outbox.publisher.replication.config.ReplicationConfiguration
 import br.com.fltech.cdc.outbox.publisher.replication.connector.ConnectionProvider
 import br.com.fltech.cdc.outbox.publisher.retry.BackOff
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigureAfter
@@ -20,12 +26,21 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Bean
+import java.nio.file.Paths
 
 /**
  * Wires the hexagonal orchestrator path:
- *  - `cdcOutboxSource`: a [PgLogicalReplicationCdcSource] (default).
- *    Consumers can override by providing their own `CdcSource` bean
- *    (MySQL, SQL Server, Oracle …).
+ *  - `cdcOutboxSource`: a [CdcSource] bean. Resolution order:
+ *      1. consumer-provided [CdcSource] bean — wins outright.
+ *      2. consumer-provided [RowChangeSource] bean — gets wrapped in
+ *         a [MappingCdcSource] together with the
+ *         [MappingRules] from [CdcOutboxMappingAutoConfiguration].
+ *         This is the path for the new Wave 5.2
+ *         [br.com.fltech.cdc.outbox.publisher.adapter.source.postgres.PgWalRowChangeSource]
+ *         and for the Wave 5 MySQL binlog adapter.
+ *      3. default — a [PgLogicalReplicationCdcSource] streaming
+ *         `pg_logical_emit_message` records out of the configured
+ *         slot.
  *  - `cdcOutboxProcessor`: a [CdcProcessor] driven by the source + the
  *    [EventSinkRegistry] from [CdcOutboxSinkAutoConfiguration].
  *  - `cdcOutboxProcessorLifecycle`: a [CdcProcessorLifecycle] running
@@ -38,7 +53,11 @@ import org.springframework.context.annotation.Bean
  * its `@ConditionalOnProperty`).
  */
 @AutoConfiguration
-@AutoConfigureAfter(CdcOutboxAutoConfiguration::class, CdcOutboxSinkAutoConfiguration::class)
+@AutoConfigureAfter(
+    CdcOutboxAutoConfiguration::class,
+    CdcOutboxSinkAutoConfiguration::class,
+    CdcOutboxMappingAutoConfiguration::class,
+)
 @ConditionalOnProperty(
     prefix = "cdc.outbox.processor",
     name = ["kind"],
@@ -50,18 +69,63 @@ import org.springframework.context.annotation.Bean
 )
 open class CdcOutboxHexagonalAutoConfiguration {
 
+    /**
+     * Default [CheckpointStore] backed by [FileCheckpointStore], wired
+     * only when `cdc.outbox.checkpoint.enabled=true`. Adapters that
+     * accept a checkpoint store (MySQL binlog, Postgres WAL row
+     * source) pick it up via [ObjectProvider] in the bean definitions
+     * below. Consumers can replace the wiring by supplying their own
+     * [CheckpointStore] bean — the standard
+     * `@ConditionalOnMissingBean` rule applies.
+     */
+    @Bean
+    @ConditionalOnMissingBean(CheckpointStore::class)
+    @ConditionalOnProperty(
+        prefix = "cdc.outbox.checkpoint",
+        name = ["enabled"],
+        havingValue = "true",
+    )
+    open fun cdcOutboxCheckpointStore(properties: CdcOutboxProperties): CheckpointStore =
+        FileCheckpointStore(Paths.get(properties.checkpoint.directory))
+
+    /**
+     * Picks the right [CdcSource] given the consumer's wiring:
+     *  - a [RowChangeSource] bean → wrap in [MappingCdcSource].
+     *    Consumers opt in by registering a `RowChangeSource` (e.g.
+     *    the MySQL binlog or the new Postgres WAL row source) instead
+     *    of overriding the bare `CdcSource` directly.
+     *  - nothing provided → fall through to the Postgres
+     *    message-flow default.
+     *
+     * The `@ConditionalOnMissingBean(CdcSource::class)` keeps the
+     * consumer-supplied path always winning over either branch.
+     */
     @Bean("cdcOutboxSource")
     @ConditionalOnMissingBean(CdcSource::class)
     open fun cdcOutboxSource(
         postgresConfiguration: PostgresConfiguration,
         replicationConfiguration: ReplicationConfiguration,
         connectionProvider: ConnectionProvider,
-    ): CdcSource = PgLogicalReplicationCdcSource(
-        postgresConfiguration = postgresConfiguration,
-        replicationConfiguration = replicationConfiguration,
-        connectionProvider = connectionProvider,
-        objectMapper = defaultMapper,
-    )
+        rowSourceProvider: ObjectProvider<RowChangeSource>,
+        mappingRulesProvider: ObjectProvider<MappingRules>,
+    ): CdcSource {
+        val rowSource = rowSourceProvider.ifAvailable
+        if (rowSource != null) {
+            // ObjectProvider keeps the dependency on MappingRules
+            // *soft*: when the consumer wires a row source but no
+            // rules, fall back to MappingRules.EMPTY so the
+            // orchestrator stays consistent with
+            // `CdcOutboxMappingAutoConfiguration`'s own default.
+            val rules = mappingRulesProvider.getIfAvailable { MappingRules.EMPTY }
+            return MappingCdcSource(rowSource, rules)
+        }
+        return PgLogicalReplicationCdcSource(
+            postgresConfiguration = postgresConfiguration,
+            replicationConfiguration = replicationConfiguration,
+            connectionProvider = connectionProvider,
+            objectMapper = defaultMapper,
+        )
+    }
 
     /**
      * Adapts a legacy [DeadLetterSink] bean to the hexagonal

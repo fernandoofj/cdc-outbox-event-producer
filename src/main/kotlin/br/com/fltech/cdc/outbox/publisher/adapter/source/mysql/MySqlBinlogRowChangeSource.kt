@@ -1,6 +1,7 @@
 package br.com.fltech.cdc.outbox.publisher.adapter.source.mysql
 
 import br.com.fltech.cdc.outbox.publisher.core.domain.RowChange
+import br.com.fltech.cdc.outbox.publisher.core.port.CheckpointStore
 import br.com.fltech.cdc.outbox.publisher.core.port.RowChangeSource
 import br.com.fltech.cdc.outbox.publisher.observability.CdcOutboxMetrics
 import com.github.shyiko.mysql.binlog.BinaryLogClient
@@ -47,12 +48,39 @@ import javax.sql.DataSource
  * `cdc.outbox.source.binlog.column_resolution.fallbacks` counter so
  * the operator sees the degradation.
  *
- * Checkpoint format: `<binlog filename>:<position>`. **The
- * `lastAckedCheckpoint` is held in memory only — it is NOT persisted
- * across restarts.** On restart the binlog client reconnects from the
- * server's current position (or wherever its own state machine
- * decides), which means at-least-once is currently best-effort for
- * this adapter. Persisted resume lands in Wave 5.2.
+ * Checkpoint format: `<binlog filename>:<position>`. When a
+ * [CheckpointStore] is wired (constructor arg `checkpointStore`) the
+ * adapter:
+ *  - on `open()`, calls `checkpointStore.load("binlog:<serverId>")`
+ *    and (if a value is present) drives the underlying
+ *    `BinaryLogClient` to resume from that file/position BEFORE
+ *    `connect()` — this is what restores at-least-once across
+ *    restarts.
+ *  - on `ack(rowChange)`, persists the new checkpoint via
+ *    `checkpointStore.save(...)`. The save runs on the orchestrator
+ *    thread per the single-threaded contract. The default
+ *    file-backed store performs an atomic `fsync + rename` per call,
+ *    which is cheap enough that we don't debounce — operators value
+ *    zero-loss over a marginal throughput win and per-message
+ *    persistence sidesteps the "what if we crash between two saves"
+ *    cliff.
+ *  - keeps the in-memory `lastAckedCheckpoint` as a read-side cache
+ *    so `close()` can log the high-water mark without touching disk.
+ *
+ * When the store is null the adapter degrades to the pre-Wave-5.2
+ * behaviour: checkpoint lives in memory only and restart re-reads
+ * from wherever the binlog client decides.
+ *
+ * Column-cache invalidation on schema change: when a `TABLE_MAP`
+ * arrives for an already-known `tableId` with a different
+ * `columnCount` than the cached resolution, the cached name list is
+ * dropped and re-resolved via INFORMATION_SCHEMA on the next lookup.
+ * Invalidation itself does NOT bump the
+ * `column_resolution.fallbacks` counter — that one fires only when
+ * the resolution actually FAILS (DataSource null, lookup throws, or
+ * INFORMATION_SCHEMA returns nothing). Restating: invalidation =
+ * "best-effort refresh"; fallback metric = "operator should know we
+ * lost named columns".
  *
  * Single-threaded contract on `poll`/`ack`/`close` per [RowChangeSource]
  * KDoc still applies — the binlog-client's internal thread is not the
@@ -86,6 +114,15 @@ class MySqlBinlogRowChangeSource(
     private val columnLookup: (DataSource, String, String) -> List<String>? = ::defaultColumnLookup,
     /** Metrics facade. Defaults to a no-op so non-Spring consumers stay quiet. */
     private val metrics: CdcOutboxMetrics = CdcOutboxMetrics.noop(),
+    /**
+     * Optional persistent checkpoint store. When wired the adapter
+     * resumes from the previously-acked position on `open()` and
+     * persists the new position on every `ack()`. When `null` the
+     * adapter falls back to the legacy in-memory-only behaviour —
+     * useful for tests and for consumers who accept rewind on
+     * restart.
+     */
+    private val checkpointStore: CheckpointStore? = null,
 ) : RowChangeSource {
 
     private val opened = AtomicBoolean(false)
@@ -101,6 +138,17 @@ class MySqlBinlogRowChangeSource(
      * "lookup not yet attempted".
      */
     private val columnNamesByTableId = ConcurrentHashMap<Long, List<String>>()
+
+    /**
+     * Column count last seen for each `tableId` via `TABLE_MAP`. Used
+     * to detect `ALTER TABLE`-style schema changes — when the
+     * incoming count differs from the cached one we drop the
+     * resolved name list so the next access re-queries
+     * INFORMATION_SCHEMA. Without this, an `ALTER TABLE … ADD
+     * COLUMN` between restarts would leave the adapter projecting
+     * post-DDL row arrays onto pre-DDL column names.
+     */
+    private val columnCountByTableId = ConcurrentHashMap<Long, Int>()
 
     /** Active binlog filename — needed to build per-event checkpoints. */
     @Volatile
@@ -128,6 +176,7 @@ class MySqlBinlogRowChangeSource(
         }
         val c = clientFactory(host, port, username, password)
         c.serverId = serverId
+        resumeFromCheckpoint(c)
         c.registerEventListener { event ->
             handleEvent(event)
         }
@@ -148,6 +197,69 @@ class MySqlBinlogRowChangeSource(
 
     override fun ack(rowChange: RowChange) {
         lastAckedCheckpoint = rowChange.sourceCheckpoint
+        // Persist on every ack — at-least-once trumps throughput here.
+        // The orchestrator is single-threaded over ack/poll so this
+        // serialises naturally with the next read.
+        checkpointStore?.let { store ->
+            try {
+                store.save(checkpointKey(), rowChange.sourceCheckpoint)
+            } catch (e: Exception) {
+                // A failed persist still leaves the in-memory checkpoint
+                // valid for the current process lifetime — degrade
+                // loudly but don't take the loop down.
+                logger.warn(
+                    "CheckpointStore.save failed for key={} value={} ({}); restart will rewind.",
+                    checkpointKey(), rowChange.sourceCheckpoint, e.javaClass.simpleName, e,
+                )
+            }
+        }
+    }
+
+    /**
+     * Reads the previously-persisted checkpoint (if any) and seeds the
+     * underlying [BinaryLogClient] so it resumes from that file/position
+     * rather than the server's current head. No-op when no store is
+     * wired, when the store is empty, or when the persisted value
+     * cannot be parsed back into `<filename>:<position>`.
+     */
+    private fun resumeFromCheckpoint(c: BinaryLogClient) {
+        val store = checkpointStore ?: return
+        val persisted = try {
+            store.load(checkpointKey())
+        } catch (e: Exception) {
+            logger.warn(
+                "CheckpointStore.load failed for key={} ({}); falling back to binlog head.",
+                checkpointKey(), e.javaClass.simpleName, e,
+            )
+            return
+        } ?: return
+        val parsed = parseCheckpoint(persisted)
+        if (parsed == null) {
+            logger.warn(
+                "Persisted checkpoint '{}' for key={} did not parse as <filename>:<position>; ignoring.",
+                persisted, checkpointKey(),
+            )
+            return
+        }
+        val (file, position) = parsed
+        c.binlogFilename = file
+        c.binlogPosition = position
+        currentBinlogFile = file
+        lastAckedCheckpoint = persisted
+        logger.info(
+            "MySqlBinlogRowChangeSource resuming from persisted checkpoint key={} file={} position={}",
+            checkpointKey(), file, position,
+        )
+    }
+
+    private fun checkpointKey(): String = "binlog:$serverId"
+
+    private fun parseCheckpoint(raw: String): Pair<String, Long>? {
+        val idx = raw.lastIndexOf(':')
+        if (idx <= 0 || idx == raw.length - 1) return null
+        val file = raw.substring(0, idx)
+        val position = raw.substring(idx + 1).toLongOrNull() ?: return null
+        return file to position
     }
 
     override fun close() {
@@ -156,6 +268,7 @@ class MySqlBinlogRowChangeSource(
         buffer.clear()
         tableCache.clear()
         columnNamesByTableId.clear()
+        columnCountByTableId.clear()
         logger.info("MySqlBinlogRowChangeSource closed (last acked checkpoint: {})", lastAckedCheckpoint)
     }
 
@@ -184,6 +297,7 @@ class MySqlBinlogRowChangeSource(
                 EventType.TABLE_MAP -> {
                     val data = event.getData<TableMapEventData>()
                     tableCache[data.tableId] = "${data.database}.${data.table}"
+                    invalidateOnColumnCountChange(data.tableId, data.columnTypes.size, data.database, data.table)
                     resolveColumnNames(data.tableId, data.database, data.table)
                 }
                 EventType.EXT_WRITE_ROWS, EventType.WRITE_ROWS -> {
@@ -240,6 +354,30 @@ class MySqlBinlogRowChangeSource(
         } catch (t: Throwable) {
             logger.warn("MySqlBinlogRowChangeSource failed to handle event {} ({})", event, t.javaClass.simpleName)
             metrics.recordBinlogParseError(t.javaClass.simpleName)
+        }
+    }
+
+    /**
+     * Drops the cached column-name list for [tableId] when the new
+     * `TABLE_MAP` reports a different column count than the previous
+     * one — the typical signal of an `ALTER TABLE … ADD/DROP COLUMN`
+     * mid-stream. The next [resolveColumnNames] call will then refresh
+     * the cache from INFORMATION_SCHEMA so subsequent row events
+     * project onto the post-DDL schema.
+     *
+     * No metric is bumped here: invalidation is a best-effort refresh
+     * path, not a failure. The fallback counter remains reserved for
+     * genuine resolution failures.
+     */
+    private fun invalidateOnColumnCountChange(tableId: Long, newCount: Int, schema: String, table: String) {
+        val previous = columnCountByTableId.put(tableId, newCount)
+        if (previous != null && previous != newCount) {
+            columnNamesByTableId.remove(tableId)
+            logger.info(
+                "MySqlBinlogRowChangeSource: column count for {}.{} (tableId={}) changed {} -> {}; " +
+                    "invalidating cached column names.",
+                schema, table, tableId, previous, newCount,
+            )
         }
     }
 

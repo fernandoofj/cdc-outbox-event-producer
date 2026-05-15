@@ -68,6 +68,19 @@ class CdcProcessor(
     @Volatile
     private var lastActivityMs: Long = 0L
 
+    /**
+     * Checkpoint of the event currently stuck in retry. Set when a
+     * publish raises and we're about to back off, cleared when the
+     * event eventually succeeds OR gets dead-lettered (the source IS
+     * acked on dead-letter, so the slot moves on — `null` is the
+     * correct steady state). The health indicator surfaces this as
+     * the hex equivalent of the legacy `pendingFailureLsn`.
+     * `@Volatile` because the indicator reads from a different
+     * thread.
+     */
+    @Volatile
+    private var pendingFailureCheckpoint: String? = null
+
     fun start() {
         if (running) {
             logger.debug("CdcProcessor already running; ignoring duplicate start()")
@@ -99,6 +112,7 @@ class CdcProcessor(
         slot = slotLabel,
         running = running,
         msSinceLastActivity = msSinceLastActivity(),
+        pendingFailureCheckpoint = pendingFailureCheckpoint,
     )
 
     private fun msSinceLastActivity(): Long {
@@ -111,12 +125,16 @@ class CdcProcessor(
      * uses [Long.MAX_VALUE] as the "never iterated" sentinel — same
      * convention as `SlotReaderMessageProducer.ProducerState` so the
      * two health indicators behave identically when the loop has not
-     * yet started.
+     * yet started. `pendingFailureCheckpoint` mirrors the legacy
+     * indicator's `pendingFailureLsn`: non-null means the loop is
+     * stuck on a single event whose publish keeps failing and the
+     * source has not been acked yet.
      */
     data class ProcessorState(
         val slot: String,
         val running: Boolean,
         val msSinceLastActivity: Long,
+        val pendingFailureCheckpoint: String? = null,
     )
 
     private fun runLoop() {
@@ -154,6 +172,9 @@ class CdcProcessor(
                 sinkRegistry.publish(event.routing, event)
                 metrics.recordPublished(sink = event.routing.scheme, topic = event.routing.target)
                 source.ack(event)
+                // Successful publish drains any pending-failure marker —
+                // the slot moved past this event.
+                pendingFailureCheckpoint = null
                 return
             } catch (e: NoSinkForSchemeException) {
                 // Configuration error — retries are pointless.
@@ -170,6 +191,13 @@ class CdcProcessor(
                 return
             } catch (e: Exception) {
                 lastException = e
+                // Surface the in-flight checkpoint to the health
+                // indicator the moment the first attempt fails; we
+                // clear it on success or dead-letter, so a transient
+                // blip that resolves on retry briefly toggles
+                // /actuator/health DOWN — same precedence the legacy
+                // indicator already exposes.
+                pendingFailureCheckpoint = event.sourceCheckpoint
                 metrics.recordFailure(
                     sink = event.routing.scheme,
                     topic = event.routing.target,
@@ -195,6 +223,10 @@ class CdcProcessor(
             // Shutdown raced with a publish failure — do NOT dead-letter; leave
             // the source unacked so the next start replays the message. At-least-
             // once is preserved without prematurely persisting a "failed" record.
+            // Leave `pendingFailureCheckpoint` set so the indicator reports
+            // DOWN until the next start replays and either succeeds or
+            // dead-letters; otherwise the operator would see UP on a stuck
+            // slot.
             logger.info(
                 "Shutdown requested mid-retry for event id={} routing={}; source will not be acked.",
                 event.id, event.routing.asUri(),
@@ -223,6 +255,9 @@ class CdcProcessor(
                 cause = cause.javaClass.simpleName,
             )
             source.ack(event)
+            // The slot advanced via dead-letter — pending-failure marker
+            // is no longer accurate.
+            pendingFailureCheckpoint = null
             logger.warn(
                 "Dead-lettered event id={} routing={} after {} attempts ({})",
                 event.id, event.routing.asUri(), maxPublishAttempts, cause.javaClass.simpleName,

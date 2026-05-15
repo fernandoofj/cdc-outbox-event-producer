@@ -4,7 +4,9 @@ import br.com.fltech.cdc.outbox.publisher.aws.sns.SNSProducer
 import br.com.fltech.cdc.outbox.publisher.aws.sns.dto.SNSMessage
 import br.com.fltech.cdc.outbox.publisher.aws.sqs.SQSProducer
 import br.com.fltech.cdc.outbox.publisher.core.application.CdcProcessor
+import br.com.fltech.cdc.outbox.publisher.core.application.MappingCdcSource
 import br.com.fltech.cdc.outbox.publisher.core.port.CdcSource
+import br.com.fltech.cdc.outbox.publisher.core.port.RowChangeSource
 import br.com.fltech.cdc.outbox.publisher.workflow.SlotReaderMessageProducer
 import io.mockk.mockk
 import org.junit.jupiter.api.Test
@@ -83,6 +85,38 @@ class ProcessorKindToggleTest {
     }
 
     @Test
+    fun `a consumer-supplied RowChangeSource is wrapped in MappingCdcSource by the hex auto-config`() {
+        // Opt-in path added in Wave 5.2: a consumer registers a
+        // RowChangeSource bean (MySQL binlog, Postgres WAL row source,
+        // their own custom adapter) and the auto-config wires the
+        // CdcSource via MappingCdcSource — picking up MappingRules
+        // from CdcOutboxMappingAutoConfiguration on the way. The
+        // legacy PgLogicalReplicationCdcSource default does NOT apply.
+        ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(
+                    CdcOutboxAutoConfiguration::class.java,
+                    CdcOutboxHexagonalAutoConfiguration::class.java,
+                    CdcOutboxSinkAutoConfiguration::class.java,
+                    CdcOutboxHealthAutoConfiguration::class.java,
+                    CdcOutboxMappingAutoConfiguration::class.java,
+                ),
+            )
+            .withUserConfiguration(
+                StubSinks::class.java,
+                NoOpHexLifecycleWithRowSource::class.java,
+            )
+            .withPropertyValues(*baseProps)
+            .run { ctx ->
+                val source = ctx.getBean("cdcOutboxSource", CdcSource::class.java)
+                assertTrue(
+                    source is MappingCdcSource,
+                    "expected MappingCdcSource, got ${source.javaClass.simpleName}",
+                )
+            }
+    }
+
+    @Test
     fun `processor-kind=legacy wires the legacy lifecycle, the legacy indicator, and no hex beans`() {
         ApplicationContextRunner()
             .withConfiguration(autoConfigs)
@@ -132,6 +166,22 @@ class ProcessorKindToggleTest {
     open class NoOpHexLifecycle {
         @Bean
         open fun cdcOutboxSource(): CdcSource = mockk(relaxed = true)
+
+        @Bean
+        open fun cdcOutboxProcessorLifecycle(): CdcProcessorLifecycle =
+            CdcProcessorLifecycle(mockk(relaxed = true))
+    }
+
+    /**
+     * Hex + row-source scenario: stub a [RowChangeSource] bean so the
+     * auto-config takes the Wave 5.2 `MappingCdcSource` branch
+     * instead of falling through to the default
+     * `PgLogicalReplicationCdcSource`.
+     */
+    @Configuration
+    open class NoOpHexLifecycleWithRowSource {
+        @Bean
+        open fun cdcOutboxRowSource(): RowChangeSource = mockk(relaxed = true)
 
         @Bean
         open fun cdcOutboxProcessorLifecycle(): CdcProcessorLifecycle =

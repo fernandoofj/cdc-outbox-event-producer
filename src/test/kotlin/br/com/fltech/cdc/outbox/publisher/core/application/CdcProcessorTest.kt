@@ -189,6 +189,58 @@ class CdcProcessorTest {
     }
 
     @Test
+    fun `pendingFailureCheckpoint is set on a publish failure and cleared on success`() {
+        val source = mockk<CdcSource>(relaxed = true)
+        val ev = event("ck-pending")
+        every { source.poll() } returns ev andThen null
+
+        val sink = mockk<EventSinkRegistry>(relaxed = true)
+        // First attempt throws, second succeeds — the marker MUST flip to
+        // the event's checkpoint while we retry, then back to null when
+        // the publish completes.
+        every { sink.publish(any(), any()) } throws IllegalStateException("blip") andThen Unit
+
+        val processor = buildProcessor(sink, source, maxAttempts = 3)
+        runUntilProcessed(processor, source, expectedEvents = 2)
+
+        // Success drained the marker — final snapshot is null.
+        assertEquals(null, processor.snapshotState().pendingFailureCheckpoint)
+    }
+
+    @Test
+    fun `pendingFailureCheckpoint stays set when retries exhaust without a DLQ`() {
+        val source = mockk<CdcSource>(relaxed = true)
+        val ev = event("ck-stuck")
+        every { source.poll() } returns ev andThen null
+        val sink = mockk<EventSinkRegistry>(relaxed = true)
+        every { sink.publish(any(), any()) } throws IllegalStateException("permafail")
+
+        val processor = buildProcessor(sink, source, dlq = null, maxAttempts = 2)
+        runUntilProcessed(processor, source, expectedEvents = 2)
+
+        // No DLQ, no ack, loop exited — the marker is the operator's
+        // only signal that the slot is stuck on this checkpoint.
+        assertEquals("ck-stuck", processor.snapshotState().pendingFailureCheckpoint)
+    }
+
+    @Test
+    fun `pendingFailureCheckpoint is cleared after a successful dead-letter`() {
+        val source = mockk<CdcSource>(relaxed = true)
+        val ev = event("ck-dlq")
+        every { source.poll() } returns ev andThen null
+        val sink = mockk<EventSinkRegistry>(relaxed = true)
+        every { sink.publish(any(), any()) } throws IllegalStateException("permafail")
+        val dlq = mockk<DeadLetterPort>(); every { dlq.send(any(), any()) } just Runs
+
+        val processor = buildProcessor(sink, source, dlq = dlq, maxAttempts = 2)
+        runUntilProcessed(processor, source, expectedEvents = 2)
+
+        // Dead-letter advanced the source — the marker is no longer
+        // truthful, so it MUST be cleared.
+        assertEquals(null, processor.snapshotState().pendingFailureCheckpoint)
+    }
+
+    @Test
     fun `source poll exception does not crash the loop`() {
         val source = mockk<CdcSource>(relaxed = true)
         // First poll throws, second returns null so we can stop cleanly.

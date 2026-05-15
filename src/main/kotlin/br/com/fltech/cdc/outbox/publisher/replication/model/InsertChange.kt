@@ -28,8 +28,23 @@ import com.fasterxml.jackson.annotation.JsonCreator
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 
+/**
+ * wal2json `INSERT` row record. `columns` is the post-image of the
+ * inserted row; `schema`/`table` identify the source table. The
+ * fields are nullable + default to keep backward compatibility with
+ * the legacy V1 list-of-changes deserialisation, which doesn't
+ * surface them.
+ */
 @JsonIgnoreProperties(ignoreUnknown = true)
 open class InsertChange @JsonCreator constructor(
     @JsonProperty(value = "kind", required = true)
     private val kindInput: String,
+    @param:JsonProperty(value = "schema", required = false)
+    val schema: String? = null,
+    @param:JsonProperty(value = "table", required = false)
+    val table: String? = null,
+    @param:JsonProperty(value = "lsn", required = false)
+    val lsn: String? = null,
+    @param:JsonProperty(value = "columns", required = false)
+    val columns: List<Wal2JsonColumn>? = null,
 ) : Change(kindInput)

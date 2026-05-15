@@ -14,6 +14,12 @@ import java.time.Duration
  * `/actuator/health` signal.
  *
  * Decision matrix (highest precedence first):
+ *  - `pendingFailureCheckpoint` is set → `DOWN`. A publish has
+ *    failed and the source has not been acked yet; the orchestrator
+ *    is either still retrying the same event or stuck after
+ *    exhausting retries without a DLQ. Either way an operator must
+ *    look. Same precedence as the legacy indicator's
+ *    `pendingFailureLsn` branch.
  *  - lifecycle has not started → `DOWN`. The Spring context didn't
  *    flip the lifecycle on; the orchestrator was never asked to run.
  *  - lifecycle is running but the orchestrator's `running` flag is
@@ -25,14 +31,6 @@ import java.time.Duration
  *    upstream (source not producing, JDBC connection wedged, …) — a
  *    finite signal that operators should investigate.
  *  - otherwise → `UP`.
- *
- * The legacy indicator also reports `DOWN` on a pending-failure LSN.
- * The hex orchestrator does not surface that concept yet: the
- * pre-Wave-5 LSN-pinning mechanism lives on the Postgres-specific
- * `SlotReaderMessageProducer` and has no equivalent on `CdcProcessor`
- * (which delegates re-delivery decisions to the [CdcProcessor]'s own
- * retry/DLQ machinery). Wave 5.2 will introduce a generic
- * pending-failure surface on `CdcSource`.
  */
 class CdcProcessorHealthIndicator(
     private val processor: CdcProcessor,
@@ -49,10 +47,20 @@ class CdcProcessorHealthIndicator(
             .withDetail("slot", state.slot)
             .withDetail("processorRunning", state.running)
             .withDetail("lifecycleRunning", lifecycleRunning)
+            .withDetail("pendingFailureCheckpoint", state.pendingFailureCheckpoint ?: "none")
             .withDetail("idleFor", idleDisplay)
             .withDetail("maxIdle", "${maxIdle.toMillis()}ms")
 
         return when {
+            state.pendingFailureCheckpoint != null ->
+                builder
+                    .status(Status.DOWN)
+                    .withDetail(
+                        "reason",
+                        "pending publish failure; source will not be acked until redelivery or dead-letter",
+                    )
+                    .build()
+
             !lifecycleRunning ->
                 builder
                     .status(Status.DOWN)
