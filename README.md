@@ -120,7 +120,7 @@ não sabe qual sabor está rodando.
 
 | Sintoma                                      | O que aconteceu                                         | Onde olhar primeiro                                        |
 |----------------------------------------------|---------------------------------------------------------|------------------------------------------------------------|
-| `/actuator/health` → `DOWN`                  | Loop não está iterando, ou publish falhou e está preso. | `details.pendingFailureLsn`, `details.reason`, logs ERROR. |
+| `/actuator/health` → `DOWN`                  | Loop não está iterando, ou publish falhou e está preso. | `details.pendingFailureLsn` (legado) ou `details.pendingFailureCheckpoint` (hex), `details.reason`, logs ERROR. |
 | Slot do Postgres crescendo (lag bytes)       | Producer parado, ou broker fora há muito tempo.         | Métrica `cdc.outbox.messages.failed` por cause.            |
 | `cdc.outbox.dead_letter.failures` > 0        | A DLQ também falhou — operador deve atuar.              | Logs ERROR; configuração da queue SQS.                     |
 | Eventos publicados duas vezes                | Producer reiniciou no meio de um publish.               | Esperado em at-least-once; consumer precisa dedup.         |
@@ -137,12 +137,14 @@ Layout hexagonal:
 core/                                  ← Kotlin puro, sem Spring, sem drivers
 ├── domain/   OutboxEvent, Routing, RowChange, TableMapping
 ├── port/     CdcSource, RowChangeSource (driving)
-│             EventSink, EventSinkRegistry, DeadLetterPort, MappingRules (driven)
+│             EventSink, EventSinkRegistry, DeadLetterPort, MappingRules,
+│             CheckpointStore (driven)
 └── application/  CdcProcessor, MappingCdcSource, DefaultMappingRules
 
 adapter/                               ← anel adaptador
-├── source/{postgres,mysql,sqlserver,oracle}
+├── source/{postgres,mysql,sqlserver,oracle}    # inclui PgWalRowChangeSource (Onda 5.2)
 ├── sink/{sns,sqs,kafka,rabbitmq,composite,router,registry}
+├── checkpoint/FileCheckpointStore              # adapter file-backed (Onda 5.2)
 └── deadletter/LegacyDeadLetterPortAdapter
 
 infra/spring/                          ← auto-configs (anotações Spring vivem só aqui)
@@ -165,8 +167,10 @@ replication/, aws/, deadletter/, retry/, observability/   ← peças usadas pelo
     [`EventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/EventSink.kt),
     [`EventSinkRegistry`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/EventSinkRegistry.kt),
     [`DeadLetterPort`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/DeadLetterPort.kt),
-    [`MappingRules`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/MappingRules.kt).
-    Interfaces puras sem dependência de framework ou driver.
+    [`MappingRules`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/MappingRules.kt),
+    [`CheckpointStore`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/CheckpointStore.kt)
+    (persistência de checkpoint por origem, Onda 5.2). Interfaces
+    puras sem dependência de framework ou driver.
   * **Aplicação:**
     [`CdcProcessor`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/CdcProcessor.kt)
     (loop hexagonal),
@@ -176,9 +180,11 @@ replication/, aws/, deadletter/, retry/, observability/   ← peças usadas pelo
     (motor de `TableMapping`).
   * **Adaptadores de origem:**
     [`PgLogicalReplicationCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt),
+    [`PgWalRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgWalRowChangeSource.kt)
+    (row-level wal2json `I/U/D`, Onda 5.2),
     [`MySqlOutboxTableCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt),
     [`MySqlBinlogRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt),
-    e stubs SQL Server / Oracle (Onda 5.2+).
+    e stubs SQL Server / Oracle.
   * **Adaptadores de destino:**
     [`SnsEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sns/SnsEventSink.kt),
     [`SqsEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sqs/SqsEventSink.kt),
@@ -217,14 +223,21 @@ flowchart LR
 
   subgraph Adapters_In[Adaptadores de origem]
     PgSrc[PgLogicalReplicationCdcSource]
+    PgWal["PgWalRowChangeSource<br/>(I/U/D, Onda 5.2)"]
     MyBinlog[MySqlBinlogRowChangeSource]
     MyTable[MySqlOutboxTableCdcSource]
+  end
+
+  subgraph Checkpoint["Checkpoint (Onda 5.2)"]
+    CkpStore[CheckpointStore]
+    FileCkp[FileCheckpointStore]
+    CkpStore --- FileCkp
   end
 
   subgraph Core["core/ — domínio + portas + aplicação"]
     direction TB
     Domain["domain<br/>OutboxEvent, Routing<br/>RowChange, TableMapping"]
-    Ports["ports<br/>CdcSource, RowChangeSource<br/>EventSink, EventSinkRegistry<br/>DeadLetterPort, MappingRules"]
+    Ports["ports<br/>CdcSource, RowChangeSource<br/>EventSink, EventSinkRegistry<br/>DeadLetterPort, MappingRules<br/>CheckpointStore"]
     App["application<br/>CdcProcessor<br/>MappingCdcSource<br/>DefaultMappingRules"]
     Domain --- Ports --- App
   end
@@ -257,8 +270,12 @@ flowchart LR
   end
 
   PG --> PgSrc --> Core
+  PG --> PgWal --> Core
   MY --> MyBinlog --> Core
   MY --> MyTable --> Core
+
+  PgWal -. load/save .-> CkpStore
+  MyBinlog -. load/save .-> CkpStore
 
   Core --> Reg
   Reg --> Sns --> SNS
@@ -321,8 +338,9 @@ sequência MySQL binlog → Kafka) estão em
    `routing = Routing.parsePrefix(prefix)`, `payload = content.bytes`.
 7. **Mapping (opcional).** Sabor message-only não precisa de
    `TableMapping` — a aplicação já entrega o evento pronto. O sabor
-   row-level Postgres (Onda 5.2 / item 10 da roadmap) passará por
-   `MappingCdcSource` com `PgWalRowChangeSource`.
+   row-level Postgres (`PgWalRowChangeSource`, Onda 5.2) passa por
+   `MappingCdcSource` com `DefaultMappingRules` e consome `I/U/D` do
+   wal2json em pé de igualdade com o binlog MySQL.
 8. **Publish.** `CdcProcessor` chama `EventSinkRegistry.publish` que
    resolve o `EventSink` pelo `scheme` e delega.
 9. **Retry head-of-line** com `ExponentialBackOff` até
@@ -375,9 +393,11 @@ sequência MySQL binlog → Kafka) estão em
 7. **`ack(event)`** consulta o buffer interno do decorator, recupera
    o `RowChange` original, faz `rowSource.ack(rowChange)` que
    atualiza `lastAckedCheckpoint = "<binlog file>:<nextPosition>"`.
-   *Limitação atual:* o checkpoint só vive em memória — restart
-   reinicia do início do binlog disponível. Persistência entra na
-   Onda 5.2 (item 10 da roadmap).
+   A partir da Onda 5.2, quando um `CheckpointStore` está wired (opt-in
+   via `cdc.outbox.checkpoint.enabled=true`), o adapter também persiste
+   o checkpoint sob a chave `"binlog:<serverId>"` — restart retoma
+   exatamente da posição confirmada. Sem `CheckpointStore` o
+   comportamento histórico permanece (in-memory).
 
 ## Players integrados
 
@@ -386,11 +406,11 @@ sequência MySQL binlog → Kafka) estão em
 | Player                                           | Adapter                                                                                                                                                          | Estado                                                                          |
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
 | PostgreSQL via `wal2json` + `pg_logical_emit_message` | [`PgLogicalReplicationCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt)                    | Pronto. Default wal2json v2, include-lsn=true.                                  |
-| PostgreSQL row-level (`I/U/D` via wal2json)      | —                                                                                                                                                                | **Open** — Onda 5.2 (item 10 da roadmap), `PgWalRowChangeSource`.               |
+| PostgreSQL row-level (`I/U/D` via wal2json)      | [`PgWalRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgWalRowChangeSource.kt)                                      | Pronto desde a Onda 5.2. Consome `I/U/D` do wal2json (format-version=2), surface `before`/`after` em `RowChange`. Coexiste com `PgLogicalReplicationCdcSource` (slots distintos); auto-config escolhe um ou outro pelo bean wiring. |
 | MySQL via tabela `outbox_events` + `SKIP LOCKED` | [`MySqlOutboxTableCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt)                               | Pronto. MySQL 8+; identifier hard-validated contra SQLi.                        |
-| MySQL via binlog (`mysql-binlog-connector-java`) | [`MySqlBinlogRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt)                             | Pronto. Resolve nomes de coluna via `INFORMATION_SCHEMA` (fallback para `col0`/`col1`/… reporta counter `binlog.column_resolution.fallbacks`). `lastAckedCheckpoint` ainda em memória — persistência entra na Onda 5.2. IT MySQL coberto por `MysqlRabbitMqE2EIT` (gated por `RUN_TESTCONTAINERS=1`). |
-| SQL Server                                       | [`SqlServerCdcSourceStub`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/sqlserver/SqlServerCdcSourceStub.kt)                                 | Stub. Lança `UnsupportedOperationException`. Implementação real Onda 5.2+.      |
-| Oracle                                           | [`OracleCdcSourceStub`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/oracle/OracleCdcSourceStub.kt)                                          | Stub. Implementação real Onda 5.2+ (LogMiner / OpenLogReplicator / GoldenGate). |
+| MySQL via binlog (`mysql-binlog-connector-java`) | [`MySqlBinlogRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt)                             | Pronto. Resolve nomes de coluna via `INFORMATION_SCHEMA` (fallback para `col0`/`col1`/… reporta counter `binlog.column_resolution.fallbacks`); invalida o cache quando o `columnCount` muda mid-stream (ALTER TABLE). Checkpoint persiste via `CheckpointStore` quando `cdc.outbox.checkpoint.enabled=true` (Onda 5.2) — restart retoma da posição confirmada; sem essa property o comportamento histórico in-memory permanece. IT MySQL coberto por `MysqlRabbitMqE2EIT` (gated por `RUN_TESTCONTAINERS=1`). |
+| SQL Server                                       | [`SqlServerCdcSourceStub`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/sqlserver/SqlServerCdcSourceStub.kt)                                 | Stub. Lança `UnsupportedOperationException`. Implementação real fica para uma onda futura. |
+| Oracle                                           | [`OracleCdcSourceStub`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/oracle/OracleCdcSourceStub.kt)                                          | Stub. Implementação real fica para uma onda futura (LogMiner / OpenLogReplicator / GoldenGate). |
 
 Pré-requisitos de operação:
 
@@ -442,11 +462,13 @@ presente no contexto (gated por `@ConditionalOnClass` +
     detalhes `slot`, `running`, `lifecycleRunning`, `pendingFailureLsn`,
     `idleFor`, `maxIdle`). Branch hex:
     [`CdcProcessorHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcProcessorHealthIndicator.kt)
-    reporta `processorRunning`, `lifecycleRunning`, `idleFor` +
-    `maxIdle` e devolve `OUT_OF_SERVICE` quando o loop fica ocioso
-    além do limiar (paridade com o legado nesse eixo desde a
-    Onda 5.1). A paridade de `pendingFailureLsn` no hex entra na
-    Onda 5.2 (item 10 da roadmap).
+    reporta `processorRunning`, `lifecycleRunning`, `pendingFailureCheckpoint`,
+    `idleFor` + `maxIdle`. Precedência: `pendingFailureCheckpoint != null`
+    (`DOWN`, sinaliza que o source não foi acked) > lifecycle não iniciada
+    (`DOWN`) > loop parado (`DOWN`) > ocioso além de
+    `cdc.outbox.health.max-idle` (`OUT_OF_SERVICE`) > `UP`. A paridade
+    funcional com `pendingFailureLsn` do indicador legado fechou
+    na Onda 5.2 via `CdcProcessor.ProcessorState.pendingFailureCheckpoint`.
   * **Ferramentas upstream:** replication slot do Postgres
     (`pg_stat_replication`, `pg_replication_slots`, `confirmed_flush_lsn`,
     `pg_wal_lsn_diff`) e binlog do MySQL (`SHOW BINARY LOGS`,
@@ -473,7 +495,11 @@ Os blocos principais:
   * `cdc.outbox.retry.*` — initial / max / multiplier / jitter para
     reconnect; `maxPublishAttempts`, `publishBackoffInitial`,
     `publishBackoffMax` para publish.
-  * `cdc.outbox.health.max-idle` — limiar do indicator legado.
+  * `cdc.outbox.health.max-idle` — limiar de ociosidade do health
+    indicator (legado e hex).
+  * `cdc.outbox.checkpoint.*` — `enabled` (default `false`) + `directory`.
+    Wave 5.2. Liga o `FileCheckpointStore` default; adapters row-level
+    (MySQL binlog, `PgWalRowChangeSource`) consomem em `open()` / `ack()`.
   * `cdc.outbox.dead-letter.queueName` — DLQ SQS opcional.
   * `cdc.outbox.mappings` — lista declarativa de `TableMapping` (item 7
     da brief), consumida por
@@ -532,6 +558,9 @@ cdc:
   outbox:
     processor:
       kind: hexagonal             # default desde Onda 5
+    checkpoint:
+      enabled: true               # Onda 5.2: persiste binlog file:pos
+      directory: /var/lib/cdc-outbox/checkpoints   # volume durável
     mappings:
       - table: app.orders                 # FQ schema.table
         capture: [INSERT, UPDATE, DELETE]
@@ -549,6 +578,15 @@ cdc:
           attributes:
             tenant: "{tenant_id}"
 ```
+
+`cdc.outbox.checkpoint.enabled=true` instala um
+[`FileCheckpointStore`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/checkpoint/FileCheckpointStore.kt)
+sob `cdc.outbox.checkpoint.directory` (default `.cdc-outbox-checkpoints`).
+`MySqlBinlogRowChangeSource` consulta o store em `open()` e persiste em
+cada `ack()` — restart retoma do `<binlog>:<nextPosition>` confirmado em
+vez de reiniciar do head do binlog. Consumidores que já injetam seu
+próprio bean `CheckpointStore` (Redis, JDBC, etc.) vencem o default via
+`@ConditionalOnMissingBean`.
 
 ### Consumer side — Spring Boot
 
@@ -645,8 +683,9 @@ com split hexagonal). Debezium Engine resolve um problema parecido
 | 7 | **Configurable table / field mapping** | Declarative `TableMapping` selects which tables / columns flow through the producer, how raw row changes (`I/U/D`) are translated into outbound `OutboxEvent`s (eventType derivation, payload projection, key extraction, header attributes), and which sink/topic each table targets. Lands as `core/domain/{RowChange,TableMapping}`, `core/port/{MappingRules,RowChangeSource}`, `core/application/{DefaultMappingRules,MappingCdcSource}`, plus `CdcOutboxProperties.mappings` + `CdcOutboxMappingAutoConfiguration` (uses the application's Jackson `ObjectMapper` as the payload serializer when available, falls back to `k=v` text). | Wave 3.5 — done |
 | 8 | **MySQL binlog source + flip `processor.kind` default to `hexagonal`** | `adapter/source/mysql/MySqlBinlogRowChangeSource` streams `WRITE_ROWS`/`UPDATE_ROWS`/`DELETE_ROWS` via `mysql-binlog-connector-java`; checkpoint `<file>:<nextPosition>`. Combined with the Wave 3.5 mapping infra the hex chain now ingests row-level MySQL CDC and routes via `EventSinkRegistry`. Default orchestrator is now `HEXAGONAL` — legacy chain remains opt-in via `cdc.outbox.processor.kind=legacy`. Actuator health indicator now dual-branched: `CdcOutboxHealthIndicator` for legacy, `CdcProcessorHealthIndicator` for hex. Known limitations tracked for Wave 5.1: column names exposed as `col0`/`col1`/… (INFORMATION_SCHEMA lookup pending); `lastAckedCheckpoint` in memory only (no persisted resume yet); no Testcontainers MySQL IT yet. | Wave 5 — done |
 | 9 | **Wave 5.1 — binlog usability + idle health + E2E coverage** | `MySqlBinlogRowChangeSource` resolves column names from `INFORMATION_SCHEMA` (fallback to `col0/col1/…` with a `binlog.column_resolution.fallbacks{table}` Micrometer counter + WARN log). New `cdc.outbox.source.binlog.parse_errors{cause}` counter from the binlog listener thread. `CdcProcessor.snapshotState()` exposes `msSinceLastActivity`; `CdcProcessorHealthIndicator` now reports `OUT_OF_SERVICE` past `cdc.outbox.health.max-idle`. Two new end-to-end ITs gated by `RUN_TESTCONTAINERS=1`: `PostgresSnsE2EIT` (hex chain → LocalStack SNS+SQS) and `MysqlRabbitMqE2EIT` (hex chain via binlog → RabbitMQ). README + `docs/ARCHITECTURE.md` rewritten with Mermaid diagrams (functional + technical architecture, retry/DLQ state machine, sequence flows). | Wave 5.1 — done |
-| 10 | **Wave 5.2 — persisted binlog checkpoint, Postgres I/U/D row source, hex health pending-failure detail** | Replace `MySqlBinlogRowChangeSource.lastAckedCheckpoint` (in-memory) with a persisted store so restarts resume at the right binlog position. Add `PostgresWalRowChangeSource` so the Wave 3.5 mapping infra applies to wal2json `I/U/D` records, not only `pg_logical_emit_message`. Extend `CdcProcessor.ProcessorState` with a pending-failure marker the hex health indicator can surface (legacy reports it via `pendingFailureLsn`; the hex equivalent needs a generic `CdcSource`-level concept first). | open |
+| 10 | **Wave 5.2 — persisted binlog checkpoint, Postgres I/U/D row source, hex health pending-failure detail** | New port `core/port/CheckpointStore` + file-backed adapter `adapter/checkpoint/FileCheckpointStore` (atomic save: write `.tmp` → `fsync` → `ATOMIC_MOVE`). `MySqlBinlogRowChangeSource` accepts an optional `CheckpointStore` and persists `binlog:<serverId> → "<file>:<nextPosition>"` per ack — restart resumes exactly. Also drops the cached column-name list when a `TABLE_MAP` reports a different `columnCount` (mid-stream `ALTER TABLE`). New `adapter/source/postgres/PgWalRowChangeSource` consumes wal2json `I/U/D` (`schema`/`table`/`columns`/`identity`) via the extended `ByteToClassParserImplV2` + `SlotMessageV2`/`Wal2JsonColumn`, emitting `RowChange` with `before`/`after` column maps; coexists with `PgLogicalReplicationCdcSource`. `CdcProcessor.ProcessorState.pendingFailureCheckpoint` exposes the in-flight failure to `CdcProcessorHealthIndicator` (precedence: pending > not-running > not-iterating > idle > UP) — paridade funcional com o `pendingFailureLsn` do indicador legado. Auto-config: `cdcOutboxSource` resolve `MappingCdcSource(RowChangeSource, MappingRules)` quando há bean `RowChangeSource` (binlog ou Postgres WAL), fallback para `PgLogicalReplicationCdcSource`. Novas propriedades `cdc.outbox.checkpoint.{enabled,directory}` (default disabled). | Wave 5.2 — done |
 | 11 | **Wave 6 — Multi-module Gradle split** | Split the single module into `core/`, `adapter-source-*/`, `adapter-sink-*/`, `spring-boot-starter/` so the hexagonal boundaries are enforced at the build graph, not just by package convention. | open |
+| 12 | **Follow-ups deferred from Wave 5.2** | (a) Expose Postgres slot lag / MySQL binlog lag as a Micrometer gauge — apenas counters per-source existem hoje (já notado em §Observabilidade). (b) `FileCheckpointStore` orphan-`.tmp` sweep on `open()`: um crash mid-save deixa um `<key>.json.tmp` órfão; hoje nada poda — fica para uma onda futura. | open |
 
 Wave boundaries are deliberate so each wave merges to `main`
 independently and the library stays usable in between.

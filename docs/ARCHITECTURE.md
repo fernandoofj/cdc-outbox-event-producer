@@ -41,7 +41,9 @@
 
 A separação hexagonal é um princípio: domínio e portas em `core/`,
 adaptadores em `adapter/`, infraestrutura Spring em `infra/spring/`. A
-divisão por módulos Gradle entra na Onda 5.1 / 6.
+divisão por módulos Gradle (`core/`, `adapter-source-*/`,
+`adapter-sink-*/`, `spring-boot-starter/`) entra na Onda 6 (item 11
+da roadmap).
 
 ## Mapa do código (hexagonal)
 
@@ -59,7 +61,8 @@ src/main/kotlin/br/com/fltech/cdc/outbox/publisher/
 │   │   ├── EventSink.kt              (driven — destino broker)
 │   │   ├── EventSinkRegistry.kt      (driven — resolução por scheme)
 │   │   ├── DeadLetterPort.kt         (driven — DLQ hexagonal)
-│   │   └── MappingRules.kt           (driven — projeção RowChange→OutboxEvent)
+│   │   ├── MappingRules.kt           (driven — projeção RowChange→OutboxEvent)
+│   │   └── CheckpointStore.kt        (driven — persistência de checkpoint; Onda 5.2)
 │   └── application/                           ← orquestração
 │       ├── CdcProcessor.kt           (loop hexagonal + retry + DLQ)
 │       ├── MappingCdcSource.kt       (decorator RowChangeSource → CdcSource)
@@ -68,10 +71,11 @@ src/main/kotlin/br/com/fltech/cdc/outbox/publisher/
 ├── adapter/                                   ← anel adaptador
 │   ├── source/
 │   │   ├── postgres/PgLogicalReplicationCdcSource.kt
+│   │   ├── postgres/PgWalRowChangeSource.kt           (Onda 5.2)
 │   │   ├── mysql/MySqlOutboxTableCdcSource.kt
 │   │   ├── mysql/MySqlBinlogRowChangeSource.kt
-│   │   ├── sqlserver/SqlServerCdcSourceStub.kt        (Onda 5.2+)
-│   │   └── oracle/OracleCdcSourceStub.kt              (Onda 5.2+)
+│   │   ├── sqlserver/SqlServerCdcSourceStub.kt        (placeholder)
+│   │   └── oracle/OracleCdcSourceStub.kt              (placeholder)
 │   ├── sink/
 │   │   ├── sns/SnsEventSink.kt
 │   │   ├── sqs/SqsEventSink.kt
@@ -80,6 +84,7 @@ src/main/kotlin/br/com/fltech/cdc/outbox/publisher/
 │   │   ├── composite/CompositeEventSink.kt
 │   │   ├── router/SchemeRouterEventSink.kt
 │   │   └── registry/DefaultEventSinkRegistry.kt
+│   ├── checkpoint/FileCheckpointStore.kt              (Onda 5.2)
 │   └── deadletter/LegacyDeadLetterPortAdapter.kt
 │
 ├── infra/spring/                              ← auto-configurações Spring Boot
@@ -250,6 +255,18 @@ Retorna `null` quando não há mapeamento para a tabela ou quando a op
 está fora do `capture` — `MappingCdcSource` então faz `ack` na origem
 e drop silencioso no orquestrador.
 
+### Driven — `CheckpointStore`
+
+[CheckpointStore.kt](../src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/CheckpointStore.kt)
+(Onda 5.2). `interface CheckpointStore : AutoCloseable { fun load(key: String): String?; fun save(key: String, value: String) }`.
+Persiste marcadores opacos por origem (`"binlog:<serverId>"`,
+`"pg-wal:<slotName>"`). Invariantes contratuais: `save` é atômico
+(crash mid-save nunca deixa valor corrompido); `load` tolera
+corrupção devolvendo `null` + WARN, deixando o source cair na
+posição natural. Chamado na thread única do orquestrador. Opcional —
+sources aceitam `CheckpointStore?` e mantêm o comportamento
+in-memory quando `null`.
+
 ## Núcleo de aplicação (`core/application`)
 
 ### `CdcProcessor`
@@ -337,8 +354,8 @@ Embrulha `PostgresConnector` (legado) com a interface `CdcSource`.
 
   * `poll()`: lê próximo `ByteBuffer` do slot lógico, faz parse via
     `ByteToClassParserImplV1/V2`, mantém só `MessageChange` (M
-    records) — I/U/D são silenciosamente ignorados nesse adapter (o
-    source row-level do Postgres entra na Onda 5.1/6).
+    records) — I/U/D ficam para o `PgWalRowChangeSource` (Onda 5.2)
+    quando o consumidor opta pelo fluxo row-level.
   * LSN resolvido a partir do campo embedded `lsn` quando
     `include-lsn=true`; fallback para `lastReceivedLsn` se o campo for
     inválido.
@@ -369,11 +386,41 @@ a porta com o `MappingRules` configurado.
     (cache `tableId → schema.table`), `WRITE_ROWS` / `UPDATE_ROWS` /
     `DELETE_ROWS` (emite `RowChange`).
   * Checkpoint `<binlog filename>:<EventHeaderV4.nextPosition>`.
-  * Limitações conhecidas (rastreadas pela Onda 5.1):
-      - colunas expostas como `col0`/`col1`/… até o lookup em
-        `INFORMATION_SCHEMA` entrar;
-      - `lastAckedCheckpoint` só em memória — sem resume persistido;
-      - IT MySQL com Testcontainers ainda não escrito.
+  * **Wave 5.2:** `CheckpointStore?` opcional. Em `open()` carrega
+    `"binlog:<serverId>"` e — se válido `<file>:<pos>` — programa o
+    cliente via `setBinlogFilename`/`setBinlogPosition`. Em cada
+    `ack` persiste o novo `<file>:<nextPosition>` (erro de `save` é
+    WARN; o checkpoint in-memory continua). Sem store: comportamento
+    histórico (resume do head). Também invalida o cache de nomes de
+    coluna quando um `TABLE_MAP` reporta `columnCount` diferente do
+    já visto para o `tableId` — sinal de `ALTER TABLE`; o próximo
+    lookup re-consulta INFORMATION_SCHEMA.
+
+### `PgWalRowChangeSource`
+
+[PgWalRowChangeSource.kt](../src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgWalRowChangeSource.kt)
+(Onda 5.2). Origem row-level Postgres — irmã do binlog MySQL no
+hexágono. Implementa `RowChangeSource`, reaproveita
+`PostgresConnector` + `wal2json` do `PgLogicalReplicationCdcSource`,
+mas consome `I`/`U`/`D` em vez de `M`. Coexiste com o adapter
+message-only (slots distintos; auto-config garante exclusividade).
+
+  * `I` → `RowChange(op=INSERT, after=columns)`. `U` →
+    `RowChange(op=UPDATE, before=identity, after=columns)` (identity
+    = replica-identity, geralmente PK; columns = post-image). `D` →
+    `RowChange(op=DELETE, before=identity)`. `M` records são
+    silenciosamente ignorados.
+  * Checkpoint: LSN textual (`LogSequenceNumber.asString()`). `ack`
+    chama `setStreamLsn(lsn)` no slot e — se um `CheckpointStore`
+    foi injetado — persiste sob `"pg-wal:<slotName>"`. Postgres já
+    persiste `confirmed_flush_lsn` server-side, então o store é
+    informativo (diagnóstico + paridade com o fluxo MySQL).
+  * Buffer `ArrayDeque<RowChange>` interno acomoda chunks wal2json V1
+    em lote sem perder records.
+  * Os parsers (`ByteToClassParserImplV2` default, V1 fallback) foram
+    estendidos para surfacer `schema`/`table`/`columns`/`identity`
+    em `SlotMessageV2` + `Wal2JsonColumn`; o fluxo message-only não
+    muda graças a `@JsonIgnoreProperties(ignoreUnknown=true)`.
 
 ### `SqlServerCdcSourceStub` / `OracleCdcSourceStub`
 
@@ -381,7 +428,7 @@ a porta com o `MappingRules` configurado.
 e [OracleCdcSourceStub.kt](../src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/oracle/OracleCdcSourceStub.kt).
 Placeholders. `open`/`poll`/`ack` lançam `UnsupportedOperationException`
 deliberadamente — instalação errada falha alto e cedo, em vez de não
-emitir nada. Implementação real vai na Onda 5.2+.
+emitir nada. Implementação real fica para uma onda futura.
 
 ## Adaptadores de destino
 
@@ -441,6 +488,23 @@ gere o envelope SQS já documentado. Esse adaptador é exatamente o tipo
 de "tradutor" que justifica a separação domínio/adapter — ele conhece
 `LogSequenceNumber` e `MessageChange` porque vive no anel adaptador.
 
+## Adaptador de checkpoint file-backed
+
+[FileCheckpointStore.kt](../src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/checkpoint/FileCheckpointStore.kt)
+(Onda 5.2). Implementação default de `CheckpointStore`: um arquivo
+JSON (`{"key":"…","value":"…"}`, hand-written para não puxar Jackson
+num leaf adapter) por `key` em `<directory>/<sanitised-key>.json`.
+
+`save` é atômico em três passos: (1) escreve `<key>.json.tmp`; (2)
+`FileChannel.force(true)` (fsync) antes do rename; (3)
+`Files.move(tmp, canonical, ATOMIC_MOVE | REPLACE_EXISTING)`.
+Filesystems sem atomic-move (mounts de rede) caem para
+`REPLACE_EXISTING` puro com WARN. `load` tolera corrupção devolvendo
+`null` + WARN, deixando o arquivo em disco para inspeção. Wiring:
+registrado quando `cdc.outbox.checkpoint.enabled=true` e nenhum
+`CheckpointStore` concorrente existe. `cdc.outbox.checkpoint.directory`
+deve apontar para um volume durável.
+
 ## Máquina de estado de retry + DLQ
 
 ```mermaid
@@ -483,6 +547,7 @@ sequenceDiagram
     participant Proc as CdcProcessor
     participant Kfk as KafkaEventSink
     participant K as Kafka
+    participant Ckp as CheckpointStore
 
     App->>MY: BEGIN; INSERT orders; COMMIT
     MY-->>Cli: WRITE_ROWS event
@@ -502,7 +567,12 @@ sequenceDiagram
     Proc->>Map: ack(event)
     Map->>Row: ack(rowChange)
     Row->>Row: lastAckedCheckpoint = file:pos
+    Row->>Ckp: save(binlog:serverId, file:pos)
 ```
+
+> Legenda: `Ckp` representa o `CheckpointStore` opcional (Onda 5.2).
+> Quando ausente, o ramo final é elidido — comportamento histórico
+> in-memory.
 
 ## Catálogo de propriedades (`cdc.outbox.*`)
 
@@ -577,6 +647,13 @@ puro — Postgres exige conexão crua para `replication=database`).
 |--------------|---------|-------------------------------------------------------------|
 | `max-idle`   | `10m`   | Indicador legado vira `OUT_OF_SERVICE` após esse tempo.     |
 
+### `cdc.outbox.checkpoint.*`
+
+| Propriedade  | Default                    | Significado                                                                   |
+|--------------|----------------------------|-------------------------------------------------------------------------------|
+| `enabled`    | `false`                    | Liga o `FileCheckpointStore` default. Onda 5.2.                               |
+| `directory`  | `.cdc-outbox-checkpoints`  | Diretório onde o store escreve `<sanitised-key>.json`. Operadores devem apontar para volume durável. |
+
 ### `cdc.outbox.dead-letter.*`
 
 | Propriedade   | Default | Significado                                                          |
@@ -597,7 +674,7 @@ O JAR registra cinco auto-configs no
 | Auto-config                          | Responsabilidade                                                                            |
 |--------------------------------------|---------------------------------------------------------------------------------------------|
 | `CdcOutboxAutoConfiguration`         | Beans base (`PostgresConfiguration`, `ReplicationConfiguration`, `ConnectionProvider`, `CdcOutboxMetrics`, `BackOff` reconnect/publish, DLQ legada) + `SlotReaderMessageProducer` + lifecycle legado (apenas com `processor.kind=legacy`). |
-| `CdcOutboxHexagonalAutoConfiguration`| `CdcSource` (PG default), `CdcProcessor`, `CdcProcessorLifecycle`, `DeadLetterPort` (adapter do legado quando há `DeadLetterSink`). Ativa com `processor.kind=hexagonal` (default desde Onda 5, `matchIfMissing=true`). |
+| `CdcOutboxHexagonalAutoConfiguration`| `CdcSource` (resolve `MappingCdcSource(RowChangeSource, MappingRules)` quando há bean `RowChangeSource` — binlog MySQL ou `PgWalRowChangeSource`; fallback para `PgLogicalReplicationCdcSource`), `CdcProcessor`, `CdcProcessorLifecycle`, `DeadLetterPort` (adapter do legado quando há `DeadLetterSink`), `CheckpointStore` default (`FileCheckpointStore`) quando `cdc.outbox.checkpoint.enabled=true` e nenhum bean concorrente foi declarado. Ativa com `processor.kind=hexagonal` (default desde Onda 5, `matchIfMissing=true`). |
 | `CdcOutboxSinkAutoConfiguration`     | Um `EventSink` por broker (`sns`/`sqs`/`kafka`/`amqp`), cada um gated por `@ConditionalOnClass` + `@ConditionalOnBean` do template. Monta `DefaultEventSinkRegistry` com o que estiver presente. |
 | `CdcOutboxMappingAutoConfiguration`  | Traduz `cdc.outbox.mappings` em `DefaultMappingRules` (Jackson opcional via `ObjectProvider<ObjectMapper>`). |
 | `CdcOutboxHealthAutoConfiguration`   | Indicador Actuator (dois branches mutuamente exclusivos: legado `CdcOutboxHealthIndicator` × hex `CdcProcessorHealthIndicator`). |
@@ -625,15 +702,19 @@ aplicação, todos os métodos viram no-ops).
 | `cdc.outbox.source.binlog.parse_errors` | counter | `cause`                       | A cada evento binlog que levantou na thread do listener (Onda 5.1). |
 | `cdc.outbox.source.binlog.column_resolution.fallbacks` | counter | `table`            | Toda vez que o `MySqlBinlogRowChangeSource` caiu para `col0/col1/…` em vez do nome real (DataSource ausente, INFORMATION_SCHEMA vazio ou lookup raised) (Onda 5.1). |
 
-Health: `/actuator/health` mostra `cdcOutboxHealthIndicator`. No path
-legado o `CdcOutboxHealthIndicator` reporta `slot`, `running`,
-`lifecycleRunning`, `pendingFailureLsn`, `idleFor`. **A partir da
-Onda 5.1** o `CdcProcessorHealthIndicator` (path hex) também reporta
-`idleFor` + `maxIdle` e devolve `OUT_OF_SERVICE` quando o loop fica
-ocioso além de `cdc.outbox.health.max-idle` — paridade com o legado
-nesse eixo. O equivalente hex para `pendingFailureLsn` (sinal de
-publish em retry-stuck) entra na Onda 5.2 junto com a abstração
-genérica de checkpoint por `CdcSource`.
+Health: `/actuator/health` mostra `cdcOutboxHealthIndicator`. Path
+legado (`CdcOutboxHealthIndicator`): `slot`, `running`,
+`lifecycleRunning`, `pendingFailureLsn`, `idleFor`. Path hex
+(`CdcProcessorHealthIndicator`): `slot`, `processorRunning`,
+`lifecycleRunning`, `pendingFailureCheckpoint` (Onda 5.2; `"none"`
+quando ausente), `idleFor`, `maxIdle`. Precedência das transições no
+hex: `pendingFailureCheckpoint != null` (`DOWN`) > lifecycle parada
+(`DOWN`) > loop não iterando (`DOWN`) > idle além de
+`cdc.outbox.health.max-idle` (`OUT_OF_SERVICE`) > `UP`. Paridade
+funcional com o indicador legado entregue na Onda 5.2.
+
+Lag upstream (slot Postgres, binlog MySQL) ainda **não** é exposto
+como gauge no producer — fica para uma onda futura.
 
 ## Contratos de threading
 
@@ -644,6 +725,7 @@ genérica de checkpoint por `CdcSource`.
 | `MySqlBinlogRowChangeSource` cliente | thread interna `cdc-outbox-mysql-binlog` (daemon) — só popula a fila |
 | `EventSink.publish`              | thread do loop (síncrono)                    |
 | `DeadLetterPort.send`            | thread do loop (síncrono)                    |
+| `CheckpointStore.load/save`      | thread do loop (síncrono, single-thread)     |
 
 `@Volatile` aparece em `running` (loop), `inflightConn`/`inflightId`
 (MySQL poller — para `close` em thread diferente), `currentBinlogFile`
@@ -673,25 +755,13 @@ devem dedup por `event.id`.
 
 O `SlotReaderMessageProducer`
 ([workflow/SlotReaderMessageProducer.kt](../src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt))
-não foi removido. Ele continua sendo o pipeline ativado por
-`cdc.outbox.processor.kind=legacy`. Por quê:
-
-  * Consumidores que dependiam dele entre as Ondas 2b e 3 podem
-    continuar rodando sem mudar nada além de uma property.
-  * A máquina de estado de retry + DLQ legada foi a primeira a estar
-    coberta pelo `AtLeastOnceDeliveryIT`. O `CdcProcessor` herda o
-    mesmo desenho mas o IT row-level só sobe quando a Onda 5.1
-    fechar a MySQL Testcontainers IT.
-  * Não há risco de duas streaming-threads concorrentes: o
-    `cdcOutboxLifecycle` (legado) só registra com
-    `processor.kind=legacy`; o `cdcOutboxProcessorLifecycle` (hex) só
-    com `processor.kind=hexagonal` (ou ausência da property).
-
-O caminho de obsolescência é remover a chain legada quando a Onda 5.2
-entregar a paridade de `pendingFailureLsn` no
-`CdcProcessorHealthIndicator` (a Onda 5.1 já fechou o IT MySQL e o
-reporting de idle do hex indicator).
+continua sendo o pipeline ativado por `cdc.outbox.processor.kind=legacy`.
+Os dois ciclos são mutuamente exclusivos via `@ConditionalOnProperty`,
+então não há risco de streaming-threads concorrentes. A Onda 5.2 fecha
+a paridade funcional do hex com o legado (checkpoint persistido +
+`pendingFailureCheckpoint`); a remoção da chain legada fica para uma
+onda posterior, enquanto existirem deployments antigos.
 
 ---
 
-Última atualização: 2026-05 (após Onda 5.1 — merge `bab916c`).
+Última atualização: 2026-05 (após Onda 5.2 — merge `a159fa7`).
