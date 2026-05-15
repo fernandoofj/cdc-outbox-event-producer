@@ -1,8 +1,12 @@
+// SonarCloud configuration is parked until the project is re-enrolled
+// under a personal/organization SonarCloud account.
+// Replace `<owner>` and `<key>` and set SONAR_TOKEN in repository secrets
+// before re-enabling the CI workflow step.
 sonarqube {
     properties {
-        property "sonar.projectName", "kotlin-postgres-cdc-to-sns-module"
-        property "sonar.projectKey", "inventa-shop_kotlin-postgres-cdc-to-sns-module"
-        property "sonar.organization", "inventa-shop"
+        property "sonar.projectName", "cdc-outbox-event-producer"
+        property "sonar.projectKey", "<owner>_cdc-outbox-event-producer"
+        property "sonar.organization", "<owner>"
         property "sonar.host.url", "https://sonarcloud.io"
         property "sonar.kotlin.detekt.reportPaths", "build/reports/detekt/detekt.xml"
     }

@@ -1,15 +1,18 @@
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: kotlin-postgres-cdc-to-sns-module
-  description: This service is responsible to handle the CDC events from Postgres and publish them to SNS
+  name: cdc-outbox-event-producer
+  description: Kotlin/JVM library that streams Postgres logical-replication outbox messages to AWS SNS/SQS (and, in the roadmap, Kafka/RabbitMQ/MySQL)
   annotations:
-    github.com/project-slug: inventa-shop/kotlin-postgres-cdc-to-sns-module
+    github.com/project-slug: fernandoofj/cdc-outbox-event-producer
   labels:
-    tier: T0
+    tier: T1
   tags:
     - kotlin
+    - cdc
+    - outbox
+    - postgres
 spec:
-  type: service
-  owner: supplier-team
-  lifecycle: production
+  type: library
+  owner: fernandoofj
+  lifecycle: experimental

@@ -18,7 +18,7 @@ plugins {
 
 apply(plugin = "docker-compose")
 
-group = "shop.inventa"
+group = "io.cdcoutbox"
 version = "0.0.10"
 
 repositories {
@@ -103,7 +103,7 @@ tasks.withType<Test> {
 }
 
 tasks.withType<Jar> {
-    archiveFileName.set("kotlin-postgres-cdc-to-sns-module.jar")
+    archiveFileName.set("cdc-outbox-event-producer.jar")
     destinationDirectory.set(file("build/libs"))
 }
 
@@ -111,7 +111,7 @@ publishing {
     repositories {
         maven {
             name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/inventa-shop/kotlin-postgres-cdc-to-sns-module")
+            url = uri("https://maven.pkg.github.com/fernandoofj/cdc-outbox-event-producer")
             credentials {
                 username = System.getenv("GITHUB_ACTOR")
                 password = System.getenv("GITHUB_TOKEN")

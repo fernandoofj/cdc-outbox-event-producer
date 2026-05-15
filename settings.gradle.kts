@@ -1,1 +1,1 @@
-rootProject.name = "kotlin-postgres-cdc-to-sns-module"
+rootProject.name = "cdc-outbox-event-producer"
