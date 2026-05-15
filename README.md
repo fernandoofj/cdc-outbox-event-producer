@@ -303,7 +303,8 @@ Mapped to the items in the brief plus follow-ups raised in review:
 | # | Theme | Deliverable | Wave |
 |---|---|---|---|
 | 1 | Survey existing libs | [§ Alternatives](#alternatives-in-the-ecosystem) | done in this README |
-| 2 | Code quality: pool, reconnect, delivery, observability | HikariCP for the query connection; back-off + jitter on every reconnect; head-of-line blocking retry with DLQ; `@Volatile` + cooperative shutdown; Micrometer; HealthIndicator | Wave 1 |
+| 2 | Code quality: pool, reconnect, delivery, observability | HikariCP for the query connection (wired as default); back-off + jitter on every reconnect with a configurable attempt cap; `@Volatile` running flag + cooperative interrupt-aware shutdown; Micrometer counters/timers (no-op when no registry); LSN skip-on-failure bug fixed at the callback API level; idle-flush no longer fast-forwards past pending failures. | Wave 1 — done |
+| 2a | Quality follow-ups not closed in Wave 1 | True per-message LSN extraction from `nextlsn` (wal2json) / pgoutput protocol header — closes the residual race between `readPending()` and `lastReceiveLSN()`; head-of-line retry with DLQ (depends on the `EventSink` port from Wave 4); Spring Boot `HealthIndicator` (belongs in Wave 2's starter); Testcontainers integration regression for at-least-once. | Wave 1.5 |
 | 3 | Spring Boot integration | `cdc-outbox-spring-boot-starter` (Boot 3.5 / AWS Spring Cloud 3.x), `@ConfigurationProperties`, `SmartLifecycle`, conditional auto-config per sink | Wave 2 |
 | 4 | Multi-DB via hexagonal | `core` module exposing `CdcSource` port; `adapter-postgres` (modernized, pgoutput option, PG16+), `adapter-mysql` (binlog + outbox table fallback). Stubs for `adapter-sqlserver` (CT/CDC) and `adapter-oracle` (LogMiner / OpenLogReplicator) | Wave 3 |
 | 5 | Multi-broker via hexagonal | `EventSink` port; adapters: `adapter-sink-sns`, `adapter-sink-sqs`, `adapter-sink-kafka`, `adapter-sink-rabbitmq`. Composite + Router sinks for fan-out and migration scenarios | Wave 4 |
@@ -540,18 +541,21 @@ class.
 [`shell-scripts/localstack/`](shell-scripts/localstack/) create the test
 SNS topic and SQS queue.
 
-### Toolchain (current — will be bumped in Wave 1)
+### Toolchain (post Wave 1)
 
 | Tool          | Version |
 |---------------|---------|
-| Kotlin        | 1.7.20  |
-| JVM target    | 17      |
-| Gradle        | wrapper |
+| Kotlin        | 1.9.25  |
+| JVM target    | 17 (compiled with JDK 21) |
+| Gradle wrapper| 8.10.2  |
 | Spring (msg)  | 6.0.13 (transitive) |
 | AWS SDK v2    | 2.21.1  |
+| AWS SDK v1    | 1.12.566 *(legacy, to remove in Wave 2)* |
 | pgjdbc        | 42.6.0  |
-| Detekt        | 1.20.0  |
-| ktlint        | 11.0.0  |
+| HikariCP      | 5.1.0   |
+| Micrometer    | 1.12.13 |
+| Detekt        | 1.23.7  |
+| ktlint plugin | 12.1.1  |
 | Testcontainers| 1.19.1  |
 
 ---

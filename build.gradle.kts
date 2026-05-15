@@ -2,17 +2,17 @@ import io.gitlab.arturbosch.detekt.Detekt
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "1.7.20"
+    kotlin("jvm") version "1.9.25"
     `java-library`
     `maven-publish`
 
-    id("io.gitlab.arturbosch.detekt") version "1.20.0"
-    id("org.jlleitschuh.gradle.ktlint") version "11.0.0"
-    id("org.jetbrains.kotlin.kapt") version "1.7.20"
-    id("org.sonarqube") version "4.2.1.3168"
-    id("com.github.ben-manes.versions") version "0.42.0"
-    id("com.gorylenko.gradle-git-properties") version "2.4.1"
-    id("com.avast.gradle.docker-compose") version "0.17.5"
+    id("io.gitlab.arturbosch.detekt") version "1.23.7"
+    id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
+    id("org.jetbrains.kotlin.kapt") version "1.9.25"
+    id("org.sonarqube") version "5.1.0.4882"
+    id("com.github.ben-manes.versions") version "0.51.0"
+    id("com.gorylenko.gradle-git-properties") version "2.4.2"
+    id("com.avast.gradle.docker-compose") version "0.17.12"
     jacoco
 }
 
@@ -41,12 +41,22 @@ dependencies {
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.3")
     implementation("org.json:json:20240205")
 
+    // Wave 1 — pool, observability, retry
+    implementation("com.zaxxer:HikariCP:5.1.0")
+    implementation("io.micrometer:micrometer-core:1.12.13")
+
     testImplementation(kotlin("test"))
     testImplementation("io.mockk:mockk:1.12.8")
+    testImplementation("io.micrometer:micrometer-test:1.12.13")
     testImplementation("org.testcontainers:testcontainers:1.19.1")
     testImplementation("org.testcontainers:junit-jupiter:1.19.1")
     testImplementation("org.testcontainers:postgresql:1.19.1")
     testImplementation("org.testcontainers:localstack:1.19.1")
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
 tasks.withType<KotlinCompile> {
