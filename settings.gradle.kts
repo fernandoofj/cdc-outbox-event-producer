@@ -20,6 +20,7 @@ include(
     ":lag-probes",
     ":legacy",
     ":dlq-replay",
+    ":replay-source",
     ":spring-boot-starter",
     ":test-support",
 )

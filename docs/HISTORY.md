@@ -4,6 +4,199 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+## Round 15 — F6: source-side replay / backfill
+
+Novo módulo `replay-source` permite re-emitir uma janela passada
+de eventos do source (MySQL binlog real, Postgres como stub) sem
+disturbar o live producer. Operador chama o Actuator endpoint
+`/actuator/cdcOutboxReplay`, escolhe `{sourceKind, fromPosition,
+toPosition}` e a feature drena a janela em background,
+republicando via `EventSinkRegistry` — mesmo caminho que o
+producer normal.
+
+**Decisões arquiteturais**:
+  * **Phase 1 = MySQL real, Postgres stub**. Postgres logical
+    replication slots são monotônicos — não dá pra "rewind". Real
+    requer ou archived WAL + slot temporário ou
+    `pg_logical_slot_peek_changes` com janela bounded de retention.
+    Cada uma tem decisão operacional do consumidor. O stub
+    `PgWalReplayerStub` lança `UnsupportedReplayException` com
+    mensagem explicando o que falta — fail-fast em vez de silently
+    emitir nada.
+  * **Isolated session no MySQL**: `MySqlBinlogReplayer` abre um
+    `BinaryLogClient` independente com `serverId` no range
+    `[1_048_576, …]` — fora do range típico do live source
+    (default 65_536). Zero interferência.
+  * **ACK = no-op** no replay: a `BoundedMySqlBinlogSource.ack()`
+    não persiste nada. O checkpoint do live producer NUNCA é
+    tocado pela replay path.
+  * **1 job por JVM**: `AtomicReference<ReplayJob?>` mutex. Segundo
+    pedido concorrente → `ConcurrentReplayException` (HTTP 409 no
+    endpoint).
+  * **Cap + timeout**: `cdc.outbox.replay.max-events-per-job`
+    (default 100k) protege contra operador digitar janela ampla
+    demais; `timeoutMs` (default 10min) protege contra binlog
+    drain infinito.
+
+**Surface operacional** (`/actuator/cdcOutboxReplay`):
+  * `GET /` — lista jobs finalizados.
+  * `GET /{jobId}` — snapshot do job (running ou finished) com
+    `eventsProcessed`, `eventsPublished`, `eventsPublishFailed`,
+    `eventsFilteredOut`, `eventsThatWouldBePublished` (dry-run),
+    `cappedAtMaxEvents`, `errorClass`/`errorMessage`.
+  * `POST /start` body `{sourceKind, fromPosition, toPosition,
+    dryRun, override?}` — retorna `{jobId, status: RUNNING}`
+    imediatamente.
+
+**Auth defence-in-depth** (igual ao DLQ replay):
+  1. Auto-config gated em `@ConditionalOnClass(SecurityFilterChain)`
+     — sem Spring Security, endpoint não sobe.
+  2. Cada operação chama `requireAuthenticated()` em runtime,
+     rejeita anônimo com 403 mesmo se o consumer configurou
+     Security permissivo por engano.
+
+**Métricas novas**:
+  * `cdc.outbox.replay.events{source_kind, target_scheme, outcome}`
+    — counter, um por evento re-publicado.
+  * `cdc.outbox.replay.duration{source_kind}` — timer, duração do
+    job inteiro (success ou failure).
+
+**Tests novos (10, todos verde com `RUN_TESTCONTAINERS=1`)**:
+  * `ReplayServiceTest` (9 unit): dispatch por sourceKind,
+    unsupported kind throws, mutex de concurrent jobs, dry-run
+    sem efeitos, override de routing, falha de publish não aborta
+    job, eventos filtrados pelo mapping são contados, falha no
+    `openBoundedSource` marca status FAILED, getJob desconhecido
+    devolve null.
+  * `MySqlBinlogReplayerIT` (1, Testcontainers MySQL): cria
+    tabela, lê posição inicial via `SHOW MASTER STATUS`, insere 5
+    rows, lê posição final, abre `MySqlBinlogReplayer` bounded
+    nessa janela, drena, valida que os 5 INSERTs vieram com
+    column names resolvidos via INFORMATION_SCHEMA (não `col0`/
+    `col1`/…).
+
+**Trade-offs aceitos**:
+  * **Postgres real fica pra próximo ciclo**. Stub explícito é
+    melhor que feature meio-feita.
+  * **Replay pode duplicar eventos downstream** se a janela
+    operada incluir mensagens que JÁ foram processadas. Operador
+    é responsável por escolher a janela; consumer-side
+    idempotência é assumida (mesmo contrato at-least-once do
+    producer).
+  * **Cross-aggregate ordering**: não garantido entre eventos do
+    replay e eventos live concorrentes (são canais paralelos
+    pelo design).
+
+**Verification**
+
+  * `./gradlew detekt` PASS (0 weighted issues — módulo novo +
+    suppressions com rationale onde a regra default era inadequada).
+  * Full sweep com `RUN_TESTCONTAINERS=1` +
+    `DOCKER_API_VERSION=1.43`:
+    **227 tests, 227 successes, 0 failures, 0 skipped** (217
+    do Round 14 + 10 novos).
+  * 11 novos arquivos + 4 modificados.
+
+**Tech Lead persona**
+
+Tech Lead persona: **PASS**.
+  (a) Replay isolado: ACK no-op no replay path garante que o
+      checkpoint do live producer não é nunca tocado.
+  (b) Phase 1 MySQL-only com Postgres stub explícito: melhor
+      uma feature meio-implementada com fail-fast do que dois
+      meio-implementados frágeis.
+  (c) Mesmo pipeline (`EventSinkRegistry.publish`) — naturalmente
+      herda retry + DLQ + métricas do producer normal.
+
+## Round 15 — F6 source-side replay / backfill
+
+Novo módulo `replay-source` (módulo 15) com endpoint Actuator
+`/actuator/cdcOutboxReplay` pra operador "rebobinar e re-emitir"
+eventos históricos do MySQL binlog. Re-usa toda a pipeline do
+producer (mapping rules → EventSinkRegistry.publish) — replay
+não é caminho especial, é a pipeline normal alimentada por uma
+janela passada.
+
+**Arquitetura**:
+  * **Port** `core/port/SourceReplayer` (driving) — abre um
+    `RowChangeSource` bounded que drena de `fromPosition` até
+    `toPosition`. `ack()` é no-op (replay NÃO toca no checkpoint
+    do live producer).
+  * **`MySqlBinlogReplayer`** — sessão binlog isolada com `serverId`
+    próprio (default `1_048_576`, fora do range padrão `65_536` do
+    live source). Resolve nomes de coluna via `INFORMATION_SCHEMA`
+    (mesmo padrão da live source).
+  * **`PgWalReplayerStub`** — Postgres logical slots são monotônicos;
+    replay arbitrário do passado requer ou slot temporário sobre
+    WAL archive ou `pg_logical_slot_peek_changes` (limitado à
+    janela de retenção). Decisões operacionais variam por
+    deployment — stub falha alto e cedo com mensagem clara em vez
+    de emitir silêncio.
+  * **`ReplayService`** — orquestra job tracking + mutex
+    (`AtomicReference`) garantindo 1 job ativo por JVM, cap de
+    100k eventos por job + timeout 10min defaults, métricas
+    `cdc.outbox.replay.events{source_kind, target_scheme, outcome}`
+    + `cdc.outbox.replay.duration{source_kind}`.
+  * **`ReplayActuatorEndpoint`** — 3 operações: `POST /start` com
+    body `{sourceKind, fromPosition, toPosition, dryRun?, override?}`
+    retorna `{jobId, status: RUNNING}` imediatamente; `GET /{jobId}`
+    snapshot de progresso; `GET /` snapshot do job ativo +
+    histórico de finalizados.
+
+**Defence-in-depth na autenticação** (idêntico ao DLQ replay):
+  1. `@ConditionalOnClass(SecurityFilterChain)` — sem Spring
+     Security no classpath o endpoint NÃO sobe.
+  2. Cada operação chama `requireAuthenticated()` que rejeita
+     com 403 se `SecurityContextHolder` carrega anônimo.
+
+**Outcomes do job**: `RUNNING` / `SUCCEEDED` / `FAILED` (com
+`errorClass` + `errorMessage`); contadores em-progresso para
+`eventsProcessed`, `eventsPublished`, `eventsPublishFailed`,
+`eventsFilteredOut`, `eventsThatWouldBePublished` (dryRun),
+`cappedAtMaxEvents`.
+
+**Tests novos (10, todos verde com `RUN_TESTCONTAINERS=1`)**:
+  * `ReplayServiceTest` (9 cases): dispatch by sourceKind,
+    unknown kind throws, concurrent throws ConcurrentReplayException,
+    dryRun não publica, override re-rota, publish-fail-non-abort
+    (continua processando), filtered-out conta separado, source
+    open fail marca FAILED, getJob(unknown) → null.
+  * `MySqlBinlogReplayerIT` (1 case LocalStack/MySQL): cria tabela,
+    capta posição inicial, insere 5 linhas, capta posição final,
+    abre replayer com janela `start:end`, drena 5 RowChange com
+    nomes de coluna resolvidos.
+
+**Decisões importantes (Tech Lead)**:
+  (a) MySQL replayer NÃO é auto-wired pelo starter — host/port/credentials
+      não estão em `CdcOutboxProperties`, então o consumidor registra
+      um bean próprio. `ReplayService` puxa todos `SourceReplayer`
+      do contexto via lista injetada.
+  (b) Postgres ficou stub explícito (não silencioso) — decisão
+      operacional sobre WAL retention/archive não cabe na lib.
+  (c) `serverId` do replay aleatório > 1M pra não colidir com
+      live source (default `65_536`).
+  (d) Replay leva `ack()` no-op por contrato — mesmo se o operador
+      por engano rodar replay sobre janela LIVE, não há risco de
+      mover o checkpoint persistido.
+
+**Verification**
+
+  * `./gradlew detekt` PASS (0 weighted issues — incluindo módulo
+    novo).
+  * Full sweep com `RUN_TESTCONTAINERS=1`:
+    **227 tests, 227 successes, 0 failures, 0 skipped** (217 do
+    Round 14 + 10 novos).
+  * `AtLeastOnceDeliveryIT` teve flake transitória de LocalStack
+    HTTP read-timeout na primeira passada — re-run passou
+    (comportamento documentado; não regressão do round).
+  * 7 arquivos novos + 6 modificados (CdcOutboxMetrics + properties
+    + auto-config + AutoConfiguration.imports + settings + starter
+    build).
+
+**Tech Lead persona**
+
+Tech Lead persona: **PASS**.
+
 ## Round 14 — DLQ replay tooling
 
 Novo módulo `dlq-replay` expõe um Actuator endpoint

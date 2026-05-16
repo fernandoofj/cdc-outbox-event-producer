@@ -216,6 +216,45 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         }
     }
 
+    /**
+     * Records a single event re-emitted by an operator-driven
+     * source replay job. `sourceKind` distinguishes
+     * `mysql-binlog` from `postgres-wal`; `targetScheme` is the
+     * sink the replay routed to (which may differ from the
+     * original via override); `outcome` is `success` or
+     * `publish_failed`.
+     */
+    fun recordReplayEvent(sourceKind: String, targetScheme: String, outcome: String) {
+        registry?.let {
+            Counter.builder(REPLAY_EVENTS)
+                .description("Events re-emitted by an operator-driven source-side replay job")
+                .tags(
+                    Tags.of(
+                        TAG_SOURCE_KIND, sourceKind,
+                        TAG_TARGET_SCHEME, targetScheme,
+                        TAG_OUTCOME, outcome,
+                    ),
+                )
+                .register(it)
+                .increment()
+        }
+    }
+
+    /**
+     * Records wall-clock duration of a replay job (success or
+     * failure). Tagged by `sourceKind` so operators can compare
+     * MySQL replay throughput against a future Postgres replay.
+     */
+    fun recordReplayDuration(sourceKind: String, duration: Duration) {
+        registry?.let {
+            Timer.builder(REPLAY_DURATION)
+                .description("Wall-clock duration of an operator-driven source replay job")
+                .tags(Tags.of(TAG_SOURCE_KIND, sourceKind))
+                .register(it)
+                .record(duration)
+        }
+    }
+
     companion object {
         const val MESSAGES_READ = "cdc.outbox.messages.read"
         const val MESSAGES_PUBLISHED = "cdc.outbox.messages.published"
@@ -232,6 +271,8 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         const val CHECKPOINT_ORPHANS_SWEPT = "cdc.outbox.checkpoint.orphans_swept"
         const val SOURCE_LAG_BYTES = "cdc.outbox.source.lag_bytes"
         const val DLQ_REPLAYS = "cdc.outbox.dlq.replays"
+        const val REPLAY_EVENTS = "cdc.outbox.replay.events"
+        const val REPLAY_DURATION = "cdc.outbox.replay.duration"
 
         const val TAG_SLOT = "slot"
         const val TAG_SINK = "sink"
@@ -244,6 +285,7 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         const val TAG_SOURCE = "source"
         const val TAG_SOURCE_CAUSE = "source_cause"
         const val TAG_TARGET_SCHEME = "target_scheme"
+        const val TAG_SOURCE_KIND = "source_kind"
 
         /** Returns a no-op instance that records nothing. */
         fun noop(): CdcOutboxMetrics = CdcOutboxMetrics(null)
