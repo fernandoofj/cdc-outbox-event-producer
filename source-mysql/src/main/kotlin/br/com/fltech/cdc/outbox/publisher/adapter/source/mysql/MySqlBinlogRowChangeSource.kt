@@ -164,6 +164,19 @@ class MySqlBinlogRowChangeSource(
      */
     private val columnCountByTableId = ConcurrentHashMap<Long, Int>()
 
+    /**
+     * Cached MySQL column-type codes (`int[]` from `TableMapEventData.columnTypes`)
+     * keyed by `tableId`. Compared on each TABLE_MAP — when a type
+     * code changes mid-stream without the count changing, that's an
+     * `ALTER TABLE … MODIFY COLUMN <name> <type>` (e.g.,
+     * `INT → BIGINT`, `VARCHAR(50) → VARCHAR(100)`) the column-count
+     * guard misses. We emit a WARN log + bump
+     * `cdc.outbox.source.binlog.schema_drift{table}` so operators
+     * can investigate before downstream sees corrupted/truncated
+     * payloads.
+     */
+    private val columnTypesByTableId = ConcurrentHashMap<Long, ByteArray>()
+
     /** Active binlog filename — needed to build per-event checkpoints. */
     @Volatile
     private var currentBinlogFile: String = ""
@@ -295,6 +308,7 @@ class MySqlBinlogRowChangeSource(
         tableCache.clear()
         columnNamesByTableId.clear()
         columnCountByTableId.clear()
+        columnTypesByTableId.clear()
         logger.info("MySqlBinlogRowChangeSource closed (last acked checkpoint: {})", lastAckedCheckpoint)
     }
 
@@ -334,6 +348,7 @@ class MySqlBinlogRowChangeSource(
     private fun handleTableMap(data: TableMapEventData) {
         tableCache[data.tableId] = "${data.database}.${data.table}"
         invalidateOnColumnCountChange(data.tableId, data.columnTypes.size, data.database, data.table)
+        detectTypeDrift(data.tableId, data.columnTypes, data.database, data.table)
         resolveColumnNames(data.tableId, data.database, data.table)
     }
 
@@ -417,6 +432,41 @@ class MySqlBinlogRowChangeSource(
                 schema, table, tableId, previous, newCount,
             )
         }
+    }
+
+    /**
+     * Detects mid-stream column-type changes for the same column
+     * count — `ALTER TABLE … MODIFY COLUMN <name> <newtype>`. The
+     * column-count guard ([invalidateOnColumnCountChange]) misses
+     * these because the array length stays the same; downstream
+     * consumers would then receive values cast/truncated to the
+     * old type's range (e.g., `INT → BIGINT` overflowing 32-bit
+     * payloads, `VARCHAR(50) → VARCHAR(100)` silently truncating).
+     *
+     * Emits a WARN log AND bumps `cdc.outbox.source.binlog.schema_drift`
+     * with the qualified table name as a tag so operators can
+     * alert on it. Also invalidates the column-name cache
+     * defensively — the resolved names usually do not change, but
+     * the underlying schema did, and a refresh from
+     * `INFORMATION_SCHEMA` is cheap.
+     *
+     * The first TABLE_MAP for a `tableId` establishes the baseline
+     * — drift is only reported on the second-or-later TABLE_MAP
+     * with a differing type vector.
+     */
+    private fun detectTypeDrift(tableId: Long, newTypes: ByteArray, schema: String, table: String) {
+        val previous = columnTypesByTableId.put(tableId, newTypes.copyOf())
+        if (previous == null) return
+        if (previous.contentEquals(newTypes)) return
+        val qualified = "$schema.$table"
+        logger.warn(
+            "MySqlBinlogRowChangeSource: column-type vector for {} (tableId={}) changed " +
+                "from {} to {}; downstream consumers may see truncated/cast values until the " +
+                "next deploy that picks up the schema-evolved row shape.",
+            qualified, tableId, previous.toList(), newTypes.toList(),
+        )
+        columnNamesByTableId.remove(tableId)
+        metrics.recordBinlogSchemaDrift(qualified)
     }
 
     /**

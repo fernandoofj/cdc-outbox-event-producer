@@ -108,6 +108,76 @@ Tech Lead persona: **PASS**.
   (c) Mesmo pipeline (`EventSinkRegistry.publish`) — naturalmente
       herda retry + DLQ + métricas do producer normal.
 
+## Round 16 — F8 schema-evolution guards (column-type drift)
+
+Estende a guarda de schema-change do `MySqlBinlogRowChangeSource`
+pra cobrir mudanças de TIPO de coluna, não só de CONTAGEM.
+
+**Gap antes**: `invalidateOnColumnCountChange` pegava `ALTER TABLE
+… ADD/DROP COLUMN` comparando `data.columnTypes.size` entre
+TABLE_MAPs sucessivos. Mas `ALTER TABLE … MODIFY COLUMN id BIGINT`
+(era `INT`) ou `VARCHAR(50) → VARCHAR(100)` NÃO mudam a contagem
+— a contagem fica igual, só o tipo de uma coluna específica
+muda. Downstream consumidores podiam receber valor truncado
+(VARCHAR mais estreito) ou cast errado (INT→BIGINT estourando
+32 bits silenciosamente) até o producer reiniciar.
+
+**Fix**: novo cache `columnTypesByTableId: ConcurrentHashMap<Long, ByteArray>`
+que armazena o vetor `data.columnTypes` (byte array de códigos
+de tipo MySQL — `3`=INT, `8`=LONGLONG/BIGINT, `15`=VARCHAR, etc).
+Novo método `detectTypeDrift(tableId, newTypes, schema, table)`:
+
+  1. Coloca o vetor novo no cache, retorna o anterior.
+  2. Se anterior é `null` (primeira TABLE_MAP do tableId) →
+     baseline silenciosa, sem WARN, sem métrica.
+  3. Se `previous.contentEquals(newTypes)` → no-op (binlog
+     rotation re-emite TABLE_MAP idênticos, normal).
+  4. Diff detectada → WARN log com os dois vetores (antes/depois)
+     + bump `cdc.outbox.source.binlog.schema_drift{table}` +
+     invalida `columnNamesByTableId` defensivamente (refresh do
+     `INFORMATION_SCHEMA` é barato; melhor pegar nome novo se
+     o tipo mudou).
+
+**Métrica nova**: `cdc.outbox.source.binlog.schema_drift{table}`.
+Operadores alertam nessa pra investigar antes do downstream
+ver dados corrompidos. Tag carrega o nome qualificado
+(`schema.table`).
+
+**Tests novos (3, todos verde)**:
+  * `column type change with same count bumps schema_drift counter
+    and invalidates the name cache`: dois TABLE_MAPs com count=3
+    mas types `[3,15,4]` → `[8,15,4]` (id virou BIGINT). Asserta
+    counter==1 + lookup INFORMATION_SCHEMA rodou 2x.
+  * `repeated TABLE_MAP with same type vector does NOT bump
+    schema_drift`: 3 TABLE_MAPs idênticos. Counter fica em 0,
+    lookup roda 1x.
+  * `first TABLE_MAP establishes baseline and does NOT report
+    drift`: 1 TABLE_MAP isolado. Counter fica em 0.
+
+**Verification**
+
+  * `./gradlew detekt` PASS (0 weighted issues).
+  * Full sweep com `RUN_TESTCONTAINERS=1`:
+    **230 tests, 230 successes, 0 failures, 0 skipped** (227 do
+    Round 15 + 3 novos).
+  * 3 arquivos modificados: `MySqlBinlogRowChangeSource.kt`
+    (novo cache + `detectTypeDrift` + hook em `handleTableMap` +
+    cleanup em `close`), `CdcOutboxMetrics.kt` (novo
+    `recordBinlogSchemaDrift` + constante `BINLOG_SCHEMA_DRIFT`),
+    `MySqlBinlogRowChangeSourceTest.kt` (3 cases + helper
+    `tableMapEventWithTypes`).
+
+**Tech Lead persona**
+
+Tech Lead persona: **PASS**.
+  (a) Simétrico com o guard existente — mesma lógica de
+      invalidação, novo cache paralelo.
+  (b) Métrica NOVA em vez de reutilizar `binlog.parse_errors` —
+      drift NÃO é erro de parse, é sinal operacional distinto.
+      Operadores podem alertar separadamente.
+  (c) Baseline silenciosa na primeira TABLE_MAP — evita falso
+      positivo em todo restart do producer.
+
 ## Round 15 — F6 source-side replay / backfill
 
 Novo módulo `replay-source` (módulo 15) com endpoint Actuator

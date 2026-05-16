@@ -149,6 +149,23 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
     }
 
     /**
+     * Records a mid-stream MySQL schema-evolution event detected
+     * by the binlog adapter — same column count, different column
+     * type vector. Operators alert on this because downstream
+     * consumers may receive cast/truncated values until the
+     * adapter is restarted with the new schema in mind.
+     */
+    fun recordBinlogSchemaDrift(table: String) {
+        registry?.let {
+            Counter.builder(BINLOG_SCHEMA_DRIFT)
+                .description("MySQL binlog TABLE_MAP reported a column-type change for the same column count")
+                .tags(Tags.of(TAG_TABLE, table))
+                .register(it)
+                .increment()
+        }
+    }
+
+    /**
      * Records that the file-backed checkpoint store touched an orphan
      * `<key>.json.tmp` left behind by a crash between `fsync` and the
      * final `ATOMIC_MOVE` of a prior `save`. The single-tag
@@ -268,6 +285,7 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         const val BINLOG_PARSE_ERRORS = "cdc.outbox.source.binlog.parse_errors"
         const val BINLOG_COLUMN_RESOLUTION_FALLBACKS =
             "cdc.outbox.source.binlog.column_resolution.fallbacks"
+        const val BINLOG_SCHEMA_DRIFT = "cdc.outbox.source.binlog.schema_drift"
         const val CHECKPOINT_ORPHANS_SWEPT = "cdc.outbox.checkpoint.orphans_swept"
         const val SOURCE_LAG_BYTES = "cdc.outbox.source.lag_bytes"
         const val DLQ_REPLAYS = "cdc.outbox.dlq.replays"
