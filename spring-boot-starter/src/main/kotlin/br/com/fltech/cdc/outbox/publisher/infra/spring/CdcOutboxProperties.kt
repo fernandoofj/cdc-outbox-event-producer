@@ -61,6 +61,9 @@ data class CdcOutboxProperties(
     @NestedConfigurationProperty
     val dlq: Dlq = Dlq(),
 
+    @NestedConfigurationProperty
+    val replay: Replay = Replay(),
+
     /**
      * Declarative table-mapping list (Wave 3.5 / item 7 of the brief).
      * Each entry binds one source-table FQ name to its outbound shape
@@ -320,6 +323,44 @@ data class CdcOutboxProperties(
             companion object {
                 const val DEFAULT_PEEK_VISIBILITY_SECONDS: Int = 5
             }
+        }
+    }
+
+    /**
+     * Source-side replay (Round 15). Controls the optional
+     * Actuator endpoint `/actuator/cdcOutboxReplay` that re-emits
+     * historic events from MySQL binlog (Postgres WAL is a stub
+     * pending operational design — see `PgWalReplayerStub`). The
+     * replay runs in a background thread, isolated from the live
+     * processor so the production checkpoint state is never
+     * touched.
+     */
+    data class Replay(
+        /** Master switch. `false` by default — endpoint dormant. */
+        val enabled: Boolean = false,
+        /**
+         * Upper bound on events a single replay job will publish
+         * before stopping. Guard against an operator typing a too-
+         * wide window and replaying the whole binlog by accident.
+         */
+        val maxEventsPerJob: Int = DEFAULT_MAX_EVENTS_PER_JOB,
+        /**
+         * Wall-clock cap on a single replay job. Replay aborts
+         * with status=FAILED if the window has not drained inside
+         * this window.
+         */
+        val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+        /**
+         * `serverId` the MySQL binlog client connects with for
+         * replay. Default sits in the `[1_000_000, …]` range to
+         * stay clear of the live source's default (`65_536`).
+         */
+        val mysqlServerId: Long = DEFAULT_MYSQL_SERVER_ID,
+    ) {
+        companion object {
+            const val DEFAULT_MAX_EVENTS_PER_JOB: Int = 100_000
+            const val DEFAULT_TIMEOUT_MS: Long = 10 * 60 * 1000L
+            const val DEFAULT_MYSQL_SERVER_ID: Long = 1_048_576L
         }
     }
 }

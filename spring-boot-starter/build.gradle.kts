@@ -21,6 +21,7 @@ dependencies {
     compileOnly(project(":lag-probes"))
     compileOnly(project(":legacy"))
     compileOnly(project(":dlq-replay"))
+    compileOnly(project(":replay-source"))
 
     compileOnly("org.springframework.boot:spring-boot-autoconfigure:3.3.5")
     compileOnly("org.springframework.boot:spring-boot-actuator:3.3.5")
@@ -46,6 +47,7 @@ dependencies {
     testImplementation(project(":lag-probes"))
     testImplementation(project(":legacy"))
     testImplementation(project(":dlq-replay"))
+    testImplementation(project(":replay-source"))
     testImplementation(project(":test-support"))
 
     testImplementation("org.springframework.boot:spring-boot-autoconfigure:3.3.5")
