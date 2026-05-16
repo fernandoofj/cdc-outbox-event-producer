@@ -285,11 +285,146 @@ class MySqlBinlogRowChangeSourceTest {
         src.close()
     }
 
+    @Test
+    fun `column type change with same count bumps schema_drift counter and invalidates the name cache`() {
+        // Same column COUNT (3) on both TABLE_MAPs, but the type
+        // vector flips — that's the ALTER TABLE MODIFY COLUMN signal
+        // the existing column-count guard misses.
+        val listenerSlot = slot<BinaryLogClient.EventListener>()
+        every { client.registerEventListener(capture(listenerSlot)) } just Runs
+
+        val lookups = mutableListOf<Int>()
+        val lookup: (DataSource, String, String) -> List<String>? = { _, _, _ ->
+            lookups += 1
+            listOf("id", "status", "amount")
+        }
+        val registry = SimpleMeterRegistry()
+        val metrics = CdcOutboxMetrics(registry)
+        val src = newSource(dataSource = mockk(), columnLookup = lookup, metrics = metrics)
+        src.open()
+
+        val listener = listenerSlot.captured
+        // Type codes: 3=INT, 15=VARCHAR, 4=FLOAT
+        listener.onEvent(
+            tableMapEventWithTypes(
+                tableId = 1L,
+                schema = "shop",
+                table = "orders",
+                types = byteArrayOf(3, 15, 4),
+            ),
+        )
+        // ALTER TABLE orders MODIFY id BIGINT — type code shifts 3→8 (LONGLONG)
+        listener.onEvent(
+            tableMapEventWithTypes(
+                tableId = 1L,
+                schema = "shop",
+                table = "orders",
+                types = byteArrayOf(8, 15, 4),
+            ),
+        )
+
+        assertEquals(
+            1.0,
+            registry.counter(
+                CdcOutboxMetrics.BINLOG_SCHEMA_DRIFT,
+                CdcOutboxMetrics.TAG_TABLE, "shop.orders",
+            ).count(),
+        )
+        // Cache was invalidated → second lookup ran.
+        assertEquals(2, lookups.size)
+        src.close()
+    }
+
+    @Test
+    fun `repeated TABLE_MAP with same type vector does NOT bump schema_drift`() {
+        // Binlog rotation re-emits TABLE_MAPs with the same shape;
+        // drift counter must stay flat.
+        val listenerSlot = slot<BinaryLogClient.EventListener>()
+        every { client.registerEventListener(capture(listenerSlot)) } just Runs
+
+        val lookups = mutableListOf<Int>()
+        val lookup: (DataSource, String, String) -> List<String>? = { _, _, _ ->
+            lookups += 1
+            listOf("id", "status", "amount")
+        }
+        val registry = SimpleMeterRegistry()
+        val metrics = CdcOutboxMetrics(registry)
+        val src = newSource(dataSource = mockk(), columnLookup = lookup, metrics = metrics)
+        src.open()
+
+        val listener = listenerSlot.captured
+        repeat(3) {
+            listener.onEvent(
+                tableMapEventWithTypes(
+                    tableId = 1L,
+                    schema = "shop",
+                    table = "orders",
+                    types = byteArrayOf(3, 15, 4),
+                ),
+            )
+        }
+
+        // No drift, no re-lookup.
+        assertEquals(
+            0.0,
+            registry.counter(
+                CdcOutboxMetrics.BINLOG_SCHEMA_DRIFT,
+                CdcOutboxMetrics.TAG_TABLE, "shop.orders",
+            ).count(),
+        )
+        assertEquals(1, lookups.size)
+        src.close()
+    }
+
+    @Test
+    fun `first TABLE_MAP establishes baseline and does NOT report drift`() {
+        // Drift is only meaningful on the second-or-later TABLE_MAP
+        // for the same tableId. First sighting establishes the
+        // baseline silently.
+        val listenerSlot = slot<BinaryLogClient.EventListener>()
+        every { client.registerEventListener(capture(listenerSlot)) } just Runs
+
+        val registry = SimpleMeterRegistry()
+        val metrics = CdcOutboxMetrics(registry)
+        val src = newSource(metrics = metrics)
+        src.open()
+
+        listenerSlot.captured.onEvent(
+            tableMapEventWithTypes(
+                tableId = 1L,
+                schema = "shop",
+                table = "orders",
+                types = byteArrayOf(3, 15, 4),
+            ),
+        )
+
+        assertEquals(
+            0.0,
+            registry.counter(
+                CdcOutboxMetrics.BINLOG_SCHEMA_DRIFT,
+                CdcOutboxMetrics.TAG_TABLE, "shop.orders",
+            ).count(),
+        )
+        src.close()
+    }
+
     private fun tableMapEvent(
         tableId: Long,
         schema: String,
         table: String,
         columnCount: Int,
+    ): Event = tableMapEventWithTypes(
+        tableId = tableId,
+        schema = schema,
+        table = table,
+        types = ByteArray(columnCount),
+    )
+
+    private fun tableMapEventWithTypes(
+        tableId: Long,
+        schema: String,
+        table: String,
+        types: ByteArray,
     ): Event {
         val header = EventHeaderV4().apply {
             eventType = EventType.TABLE_MAP
@@ -300,9 +435,7 @@ class MySqlBinlogRowChangeSourceTest {
             this.tableId = tableId
             this.database = schema
             this.table = table
-            // The adapter reads `columnTypes.size` to learn the column
-            // count; a byte array of the right length is enough.
-            this.columnTypes = ByteArray(columnCount)
+            this.columnTypes = types
         }
         return Event(header, data)
     }
