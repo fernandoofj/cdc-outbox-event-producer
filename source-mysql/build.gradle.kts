@@ -4,7 +4,7 @@
 // for both transitively; tests pull them in directly.
 dependencies {
     api(project(":core"))
-    implementation("com.zaxxer:HikariCP:5.1.0")
+    implementation("com.zaxxer:HikariCP:7.0.2")
     compileOnly("com.mysql:mysql-connector-j:8.4.0")
     compileOnly("com.zendesk:mysql-binlog-connector-java:0.29.2")
 
