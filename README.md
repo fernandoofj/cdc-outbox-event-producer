@@ -838,29 +838,3 @@ default.
 | ktlint plugin             | 12.1.1                                                 |
 | Testcontainers            | 1.20.4                                                 |
 | Awaitility (test)         | 4.2.2                                                  |
-
-## Trabalhando com Claude / agentes de IA neste repositório
-
-O repositório carrega um [`CLAUDE.md`](CLAUDE.md) com as regras de
-engenharia que toda mudança assistida por IA deve seguir, e uma
-persona Tech Lead em
-[`.claude/agents/tech-lead.md`](.claude/agents/tech-lead.md) que é
-**invocada antes de todo commit não trivial** para auditar o diff
-contra a última instrução do usuário. A Tech Lead aplica um checklist
-fixo (deliverables, conformidade hexagonal, garantias de entrega,
-testes, operabilidade) e devolve veredito PASS / FAIL. Commits com
-findings BLOCKER ou MAJOR não devem ir para `main`.
-
-## Licença e créditos
-
-### Licença
-
-TBD. O repositório original não trazia um arquivo `LICENSE`; um será
-adicionado quando o projeto for aberto. Até lá o código é privado.
-
-### Acknowledgements
-
-Forked from
-[`inventa-shop/kotlin-postgres-cdc-to-sns-module`](https://github.com/inventa-shop/kotlin-postgres-cdc-to-sns-module)
-(authors: Inventa engineering team, 2023-2024). The roadmap above is the
-direction this fork takes.
