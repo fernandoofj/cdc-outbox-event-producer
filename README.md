@@ -131,25 +131,44 @@ não sabe qual sabor está rodando.
 > Documento completo, port-by-port, em
 > [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Esta seção é o resumo.
 
-Layout hexagonal:
+Layout hexagonal, hoje materializado como **15 módulos Gradle** + 1 BOM
+(Wave 6 + Wave 7). Cada módulo publica uma coordenada Maven própria
+(`cdc-outbox-<módulo>`); o BOM (`cdc-outbox-bom`) pina versões.
+Detalhe na seção [Instalação (Wave 7 — multi-artifact)](#instalação-wave-7--multi-artifact).
 
 ```
-core/                                  ← Kotlin puro, sem Spring, sem drivers
+core/                          ← Kotlin puro, sem Spring, sem drivers
 ├── domain/   OutboxEvent, Routing, RowChange, TableMapping
 ├── port/     CdcSource, RowChangeSource (driving)
 │             EventSink, EventSinkRegistry, DeadLetterPort, MappingRules,
-│             CheckpointStore (driven)
+│             CheckpointStore, LagProbe, SourceReplayer (driven)
 └── application/  CdcProcessor, MappingCdcSource, DefaultMappingRules
 
-adapter/                               ← anel adaptador
-├── source/{postgres,mysql,sqlserver,oracle}    # inclui PgWalRowChangeSource (Onda 5.2)
-├── sink/{sns,sqs,kafka,rabbitmq,composite,router,registry}
-├── checkpoint/FileCheckpointStore              # adapter file-backed (Onda 5.2)
-└── deadletter/LegacyDeadLetterPortAdapter
+source-postgres/               ← PgLogicalReplicationCdcSource + PgWalRowChangeSource
+                                 + replication/ infra (slot, parser wal2json v1/v2, pool)
+source-mysql/                  ← MySqlOutboxTableCdcSource + MySqlBinlogRowChangeSource
+source-stubs/                  ← Oracle + SqlServer stubs (fail-fast)
 
-infra/spring/                          ← auto-configs (anotações Spring vivem só aqui)
-workflow/                              ← orquestrador legado (pré-Onda 3, opt-in)
-replication/, aws/, deadletter/, retry/, observability/   ← peças usadas pelo legado
+sink-aws/                      ← SnsEventSink + SqsEventSink (SCA 3.2, AWS SDK v2)
+sink-kafka/                    ← KafkaEventSink (spring-kafka KafkaTemplate)
+sink-rabbitmq/                 ← RabbitMqEventSink (spring-amqp RabbitTemplate)
+sink-composition/              ← DefaultEventSinkRegistry + CompositeEventSink
+                                 + SchemeRouterEventSink
+
+checkpoint-file/               ← FileCheckpointStore (Onda 5.2; default opt-in)
+lag-probes/                    ← Postgres/MySQL LagProbe + LagProbeScheduler
+
+dlq-replay/                    ← /actuator/cdcOutboxDlq (Round 14)
+replay-source/                 ← /actuator/cdcOutboxReplay (Round 15)
+
+legacy/                        ← chain pré-Onda 5 (SlotReaderMessageProducer + DLQ legado)
+                                 opt-in via cdc.outbox.processor.kind=LEGACY
+
+spring-boot-starter/           ← auto-configs + properties + lifecycle
+                                 único módulo que conhece a superfície inteira
+
+bom/                           ← POM-only, pina versões para o consumidor
+test-support/                  ← fixtures de teste compartilhadas (só testImplementation)
 ```
 
   * **Domínio:**
@@ -214,58 +233,100 @@ para hex), também mutuamente exclusivas.
 
 ## Diagrama hexagonal
 
+Cada caixa do anel é hoje um **módulo Gradle / coordenada Maven Wave 7
+independente** — o agrupamento abaixo reflete essa fronteira. O `core`
+não conhece adapters; adapters só dependem de `core` (mais sua lib de
+driver/template). Quem amarra tudo no Spring é o
+`spring-boot-starter`.
+
 ```mermaid
 flowchart LR
   subgraph DB[Banco de dados]
-    PG[(PostgreSQL<br/>WAL + slot)]
-    MY[(MySQL<br/>binlog ou outbox_events)]
+    PG[("PostgreSQL<br/>WAL + slot")]
+    MY[("MySQL<br/>binlog ou outbox_events")]
   end
 
-  subgraph Adapters_In[Adaptadores de origem]
+  subgraph SourcePg["source-postgres (módulo)"]
     PgSrc[PgLogicalReplicationCdcSource]
-    PgWal["PgWalRowChangeSource<br/>(I/U/D, Onda 5.2)"]
+    PgWal["PgWalRowChangeSource<br/>(I/U/D row-level)"]
+  end
+
+  subgraph SourceMy["source-mysql (módulo)"]
     MyBinlog[MySqlBinlogRowChangeSource]
     MyTable[MySqlOutboxTableCdcSource]
   end
 
-  subgraph Checkpoint["Checkpoint (Onda 5.2)"]
-    CkpStore[CheckpointStore]
-    FileCkp[FileCheckpointStore]
-    CkpStore --- FileCkp
+  subgraph SourceStubs["source-stubs (módulo)"]
+    SqlSrv[SqlServerCdcSourceStub]
+    Ora[OracleCdcSourceStub]
   end
 
-  subgraph Core["core/ — domínio + portas + aplicação"]
+  subgraph Ckp["checkpoint-file (módulo)"]
+    FileCkp[FileCheckpointStore]
+  end
+
+  subgraph Core["core (módulo — zero framework deps)"]
     direction TB
     Domain["domain<br/>OutboxEvent, Routing<br/>RowChange, TableMapping"]
-    Ports["ports<br/>CdcSource, RowChangeSource<br/>EventSink, EventSinkRegistry<br/>DeadLetterPort, MappingRules<br/>CheckpointStore"]
+    Ports["ports<br/>CdcSource, RowChangeSource<br/>EventSink, EventSinkRegistry<br/>DeadLetterPort, MappingRules<br/>CheckpointStore, LagProbe<br/>SourceReplayer"]
     App["application<br/>CdcProcessor<br/>MappingCdcSource<br/>DefaultMappingRules"]
     Domain --- Ports --- App
   end
 
-  subgraph Adapters_Out[Adaptadores de destino]
-    Sns[SnsEventSink]
-    Sqs[SqsEventSink]
-    Kfk[KafkaEventSink]
-    Rmq[RabbitMqEventSink]
-    Comp[CompositeEventSink]
+  subgraph SinkComp["sink-composition (módulo)"]
     Reg[DefaultEventSinkRegistry]
+    Comp[CompositeEventSink]
+    Router[SchemeRouterEventSink]
   end
 
-  subgraph DLQ[Dead-letter]
-    DlqAdapter[LegacyDeadLetterPortAdapter]
-    DlqSqs[SqsDeadLetterSink]
+  subgraph SinkAws["sink-aws (módulo)"]
+    Sns[SnsEventSink]
+    Sqs[SqsEventSink]
+  end
+
+  subgraph SinkKfk["sink-kafka (módulo)"]
+    Kfk[KafkaEventSink]
+  end
+
+  subgraph SinkRmq["sink-rabbitmq (módulo)"]
+    Rmq[RabbitMqEventSink]
+  end
+
+  subgraph Legacy["legacy (módulo opt-in)"]
+    LegDlqAdapter[LegacyDeadLetterPortAdapter]
+    LegDlqSqs[SqsDeadLetterSink]
+  end
+
+  subgraph Lag["lag-probes (módulo)"]
+    PgProbe[PostgresLagProbe]
+    MyProbe[MysqlLagProbe]
+    Sched[LagProbeScheduler]
+  end
+
+  subgraph DlqRep["dlq-replay (módulo)"]
+    DlqEnd["/actuator/cdcOutboxDlq"]
+  end
+
+  subgraph RepSrc["replay-source (módulo)"]
+    RepEnd["/actuator/cdcOutboxReplay"]
+    MyReplayer[MySqlBinlogReplayer]
+    PgReplayerStub[PgWalReplayerStub]
+  end
+
+  subgraph Starter["spring-boot-starter (módulo — amarra tudo)"]
+    Auto["auto-configs<br/>+ properties<br/>+ lifecycle"]
   end
 
   subgraph Brokers
-    SNS[(AWS SNS)]
-    SQS[(AWS SQS)]
-    KAFKA[(Apache Kafka)]
-    RABBIT[(RabbitMQ)]
-    DLQQ[(SQS DLQ)]
+    SNS[("AWS SNS")]
+    SQS[("AWS SQS")]
+    KAFKA[("Apache Kafka")]
+    RABBIT[("RabbitMQ")]
+    DLQQ[("SQS DLQ")]
   end
 
   subgraph Ops[Observabilidade]
-    Met[Micrometer<br/>cdc.outbox.*]
+    Met["Micrometer<br/>cdc.outbox.*"]
     Hea["/actuator/health"]
   end
 
@@ -274,8 +335,8 @@ flowchart LR
   MY --> MyBinlog --> Core
   MY --> MyTable --> Core
 
-  PgWal -. load/save .-> CkpStore
-  MyBinlog -. load/save .-> CkpStore
+  PgWal -. load/save .-> FileCkp
+  MyBinlog -. load/save .-> FileCkp
 
   Core --> Reg
   Reg --> Sns --> SNS
@@ -283,23 +344,47 @@ flowchart LR
   Reg --> Kfk --> KAFKA
   Reg --> Rmq --> RABBIT
   Reg --> Comp
+  Reg --> Router
 
-  Core -. retry esgotado .-> DlqAdapter --> DlqSqs --> DLQQ
+  Core -. retry esgotado .-> LegDlqAdapter --> LegDlqSqs --> DLQQ
+  DLQQ -. peek/replay/abandon .-> DlqEnd --> Reg
+
+  MY -. bounded session .-> MyReplayer --> Reg
+  PG -. stub .-> PgReplayerStub
+
+  PgProbe --> Sched --> Met
+  MyProbe --> Sched
+
   Core --> Met
   Core --> Hea
+
+  Auto -.-> Core
+  Auto -.-> SourcePg
+  Auto -.-> SourceMy
+  Auto -.-> SinkAws
+  Auto -.-> SinkKfk
+  Auto -.-> SinkRmq
+  Auto -.-> SinkComp
+  Auto -.-> Ckp
+  Auto -.-> Lag
+  Auto -.-> DlqRep
+  Auto -.-> RepSrc
 ```
 
-Sequência feliz (Postgres → SNS):
+Sequência feliz (Postgres → SNS). As caixas dos participantes
+indicam o **módulo Gradle / coordenada Maven** em que cada peça mora —
+o orquestrador (`CdcProcessor`) vive em `core`, e cada salto entre
+caixas é por interface (porta), nunca por classe concreta.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant App as Aplicação
+    participant App as Aplicação consumidora
     participant PG as Postgres (WAL)
-    participant Src as PgLogicalReplicationCdcSource
-    participant Proc as CdcProcessor
-    participant Reg as EventSinkRegistry
-    participant Sink as SnsEventSink
+    participant Src as PgLogicalReplicationCdcSource<br/>(source-postgres)
+    participant Proc as CdcProcessor<br/>(core)
+    participant Reg as EventSinkRegistry<br/>(sink-composition)
+    participant Sink as SnsEventSink<br/>(sink-aws)
     participant SNS as AWS SNS
 
     App->>PG: BEGIN; INSERT orders; pg_logical_emit_message(true, 'sns://orders.events', json); COMMIT
@@ -531,6 +616,135 @@ Os blocos principais:
 ## Instalação (Wave 7 — multi-artifact)
 
 Desde a v0.1.0, a lib é publicada como **N coordenadas Maven independentes** (uma por módulo) + um **BOM** (Bill of Materials) que pina versões. O coordinate antigo `cdc-outbox-event-producer` não existe mais.
+
+### Estrutura multi-módulo
+
+15 módulos Gradle + 1 BOM. `core` no fundo (zero framework deps),
+adapters em volta (cada um depende só de `core` e do driver/template
+que envelopa), `spring-boot-starter` no topo agregando tudo. As setas
+representam `api(project(":…"))` declarado no `build.gradle.kts` do
+módulo de cima.
+
+```mermaid
+flowchart TB
+  subgraph Top["Topo — wiring Spring"]
+    Starter["spring-boot-starter<br/>(auto-configs + properties + lifecycle)"]
+  end
+
+  subgraph Cross["Cross-cutting + ops"]
+    Lag["lag-probes"]
+    DlqRep["dlq-replay"]
+    RepSrc["replay-source"]
+    Legacy["legacy (pré-Wave-5, opt-in)"]
+  end
+
+  subgraph Sinks["Anel — adapters de destino"]
+    SinkAws["sink-aws<br/>(SNS + SQS)"]
+    SinkKfk["sink-kafka"]
+    SinkRmq["sink-rabbitmq"]
+    SinkComp["sink-composition<br/>(registry + composite + router)"]
+  end
+
+  subgraph Sources["Anel — adapters de origem"]
+    SrcPg["source-postgres"]
+    SrcMy["source-mysql"]
+    SrcStubs["source-stubs<br/>(Oracle + SqlServer)"]
+  end
+
+  subgraph Persist["Anel — persistência"]
+    Ckp["checkpoint-file"]
+  end
+
+  subgraph Base["Núcleo"]
+    Core["core<br/>(domain + ports + application)"]
+  end
+
+  subgraph Bom["Versioning"]
+    BOM["bom<br/>(POM-only, pina versões)"]
+  end
+
+  subgraph Tests["Test fixtures"]
+    TS["test-support<br/>(IntegrationBase, mothers, doubles)"]
+  end
+
+  SrcPg --> Core
+  SrcMy --> Core
+  SrcStubs --> Core
+  Ckp --> Core
+  SinkAws --> Core
+  SinkKfk --> Core
+  SinkRmq --> Core
+  SinkComp --> Core
+
+  Lag --> Core
+  Lag --> SrcPg
+  Lag --> SrcMy
+  Lag --> Ckp
+
+  DlqRep --> Core
+  RepSrc --> Core
+  RepSrc --> SrcMy
+  RepSrc --> SrcPg
+  Legacy --> Core
+  Legacy --> SrcPg
+  Legacy --> SinkAws
+
+  Starter --> Core
+  Starter -. compileOnly .-> Ckp
+  Starter -. compileOnly .-> SrcPg
+  Starter -. compileOnly .-> SrcMy
+  Starter -. compileOnly .-> SrcStubs
+  Starter -. compileOnly .-> SinkAws
+  Starter -. compileOnly .-> SinkKfk
+  Starter -. compileOnly .-> SinkRmq
+  Starter -. compileOnly .-> SinkComp
+  Starter -. compileOnly .-> Lag
+  Starter -. compileOnly .-> DlqRep
+  Starter -. compileOnly .-> RepSrc
+  Starter -. compileOnly .-> Legacy
+
+  BOM -. constraint .-> Core
+  BOM -. constraint .-> Starter
+  BOM -. constraint .-> SrcPg
+  BOM -. constraint .-> SrcMy
+  BOM -. constraint .-> SrcStubs
+  BOM -. constraint .-> Ckp
+  BOM -. constraint .-> SinkAws
+  BOM -. constraint .-> SinkKfk
+  BOM -. constraint .-> SinkRmq
+  BOM -. constraint .-> SinkComp
+  BOM -. constraint .-> Lag
+  BOM -. constraint .-> DlqRep
+  BOM -. constraint .-> RepSrc
+  BOM -. constraint .-> Legacy
+  BOM -. constraint .-> TS
+
+  TS --> Core
+  TS --> SrcPg
+  TS --> SrcMy
+  TS --> SinkAws
+  TS --> SinkRmq
+  TS --> Ckp
+```
+
+Como o consumidor enxerga isso depois do `platform(...)` + 1 declaração
+por adapter desejado:
+
+```mermaid
+flowchart LR
+  App["Aplicação consumidora<br/>(build.gradle.kts)"]
+  App -->|"implementation(platform(...))"| BOM["cdc-outbox-bom<br/>(pina versões)"]
+  App -->|implementation| Starter["cdc-outbox-spring-boot-starter"]
+  App -->|implementation| Pick["cdc-outbox-source-postgres<br/>cdc-outbox-sink-aws<br/>...só o que vai usar"]
+  Starter -. transitive .-> Core["cdc-outbox-core"]
+  Pick -. transitive .-> Core
+  Starter -->|"@ConditionalOnClass"| Wire["auto-config liga só<br/>os adapters declarados"]
+```
+
+Auto-config Spring detecta o que está no classpath via
+`@ConditionalOnClass` — você só "liga" o que declarar. Quem quer o
+modulith inteiro (todos os adapters) declara todas as coordenadas;
+quem quer mínimo declara só `starter` + 1 source + 1 sink.
 
 ### Setup mínimo — Postgres → SNS
 
