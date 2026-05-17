@@ -8,5 +8,5 @@ dependencies {
     api("io.micrometer:micrometer-core:1.12.13")
     api("com.fasterxml.jackson.module:jackson-module-kotlin:2.15.3")
     api("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.3")
-    api("org.json:json:20240205")
+    api("org.json:json:20251224")
 }
