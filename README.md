@@ -1,5 +1,7 @@
 # cdc-outbox-event-producer
 
+![Dependabot](https://img.shields.io/badge/dependabot-active-brightgreen)
+
 > **Status:** repositório revivido a partir do arquivo público
 > [`inventa-shop/kotlin-postgres-cdc-to-sns-module`](https://github.com/inventa-shop/kotlin-postgres-cdc-to-sns-module)
 > (último commit Fev/2024) e republicado privadamente para evoluir o
