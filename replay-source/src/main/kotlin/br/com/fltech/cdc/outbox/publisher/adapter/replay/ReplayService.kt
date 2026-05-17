@@ -96,7 +96,6 @@ class ReplayService(
     /** List of jobs that have completed since process start (capped to avoid leak). */
     fun finishedJobs(): List<ReplayJob> = finished.values.toList()
 
-    @Suppress("TooGenericExceptionCaught")
     private fun run(job: ReplayJob, replayer: SourceReplayer, executor: ExecutorService) {
         val started = System.currentTimeMillis()
         try {
@@ -108,14 +107,17 @@ class ReplayService(
                 source.close()
             }
             job.status = ReplayStatus.SUCCEEDED
-        } catch (t: Throwable) {
+        } catch (e: Exception) {
+            // Errors (OOM, etc) escape to the executor's
+            // UncaughtExceptionHandler — wired by the auto-config when
+            // it builds the daemon-thread factory.
             logger.error(
                 "ReplayService: job {} failed (sourceKind={}, from={}, to={}, cause={})",
-                job.jobId, job.sourceKind, job.fromPosition, job.toPosition, t.javaClass.simpleName, t,
+                job.jobId, job.sourceKind, job.fromPosition, job.toPosition, e.javaClass.simpleName, e,
             )
             job.status = ReplayStatus.FAILED
-            job.errorClass = t.javaClass.simpleName
-            job.errorMessage = t.message
+            job.errorClass = e.javaClass.simpleName
+            job.errorMessage = e.message
         } finally {
             job.finishedAt = Instant.now()
             job.elapsedMs = System.currentTimeMillis() - started
@@ -128,45 +130,85 @@ class ReplayService(
         }
     }
 
-    // LoopWithTooManyJumpStatements: the drain loop has 2 breaks +
-    // 1 continue mapping to 3 distinct exit reasons (cap hit,
-    // window drained, transient null). Folding into a single
-    // sentinel loses the diagnostic clarity.
-    @Suppress("LoopWithTooManyJumpStatements")
     private fun drainLoop(
         job: ReplayJob,
         source: br.com.fltech.cdc.outbox.publisher.core.port.RowChangeSource,
         started: Long,
     ) {
         var count = 0L
-        while (true) {
-            if (System.currentTimeMillis() - started > jobTimeoutMs) {
-                throw ReplayTimeoutException(
-                    "replay job ${job.jobId} exceeded ${jobTimeoutMs}ms timeout after $count events",
-                )
+        var running = true
+        while (running) {
+            when (val step = nextStep(job, source, started, count)) {
+                is DrainStep.Timeout -> throw step.cause
+                is DrainStep.Capped -> {
+                    job.cappedAtMaxEvents = true
+                    running = false
+                }
+                is DrainStep.Drained -> running = false
+                is DrainStep.Process -> {
+                    processOne(job, step.rowChange, ++count)
+                }
             }
-            if (count >= maxEventsPerJob) {
-                logger.warn(
-                    "ReplayService: job {} hit max-events cap ({}); stopping early",
-                    job.jobId, maxEventsPerJob,
-                )
-                job.cappedAtMaxEvents = true
-                break
-            }
-            val rowChange = source.poll()
-            if (rowChange == null) {
-                // null = source window exhausted OR brief gap with no event.
-                // We rely on the bounded source's reachedStop() to flip
-                // its `finished` flag; poll() returns null persistently
-                // after that. Two consecutive nulls = exit.
-                val second = source.poll()
-                if (second == null) break
-                processOne(job, second, ++count)
-                continue
-            }
-            processOne(job, rowChange, ++count)
         }
         job.eventsProcessed = count
+    }
+
+    /**
+     * One iteration of the drain loop. Decides whether to process a
+     * row, stop because the cap was hit, stop because the window
+     * drained, or abort because the job timed out. Pulled out of
+     * `drainLoop` so the loop body is a single `when` instead of a
+     * chain of `break`/`continue` jumps.
+     */
+    // ReturnCount: 4 distinct DrainStep outcomes (Timeout, Capped,
+    // Drained, Process). Guard-clause shape mirrors the existing
+    // project convention.
+    @Suppress("ReturnCount")
+    private fun nextStep(
+        job: ReplayJob,
+        source: br.com.fltech.cdc.outbox.publisher.core.port.RowChangeSource,
+        started: Long,
+        count: Long,
+    ): DrainStep {
+        if (System.currentTimeMillis() - started > jobTimeoutMs) {
+            return DrainStep.Timeout(
+                ReplayTimeoutException(
+                    "replay job ${job.jobId} exceeded ${jobTimeoutMs}ms timeout after $count events",
+                ),
+            )
+        }
+        if (count >= maxEventsPerJob) {
+            logger.warn(
+                "ReplayService: job {} hit max-events cap ({}); stopping early",
+                job.jobId, maxEventsPerJob,
+            )
+            return DrainStep.Capped
+        }
+        val first = source.poll() ?: return drainOrSecondPoll(source)
+        return DrainStep.Process(first)
+    }
+
+    /**
+     * `poll() == null` is ambiguous: either the bounded source's
+     * window was drained, or there was a brief gap with no event.
+     * One follow-up poll disambiguates — two consecutive nulls mean
+     * window drained.
+     */
+    private fun drainOrSecondPoll(
+        source: br.com.fltech.cdc.outbox.publisher.core.port.RowChangeSource,
+    ): DrainStep {
+        val second = source.poll() ?: return DrainStep.Drained
+        return DrainStep.Process(second)
+    }
+
+    /** Tri-state outcome of a drain-loop iteration. */
+    private sealed class DrainStep {
+        data class Timeout(val cause: ReplayTimeoutException) : DrainStep()
+        object Capped : DrainStep()
+        object Drained : DrainStep()
+        data class Process(
+            val rowChange: br.com.fltech.cdc.outbox.publisher.core.domain.RowChange,
+        ) : DrainStep()
     }
 
     private fun processOne(

@@ -196,11 +196,6 @@ class MySqlBinlogRowChangeSource(
     @Volatile
     private var lastAckedCheckpoint: String? = null
 
-    // TooGenericExceptionCaught: the connect()-thread catch is the
-    // last line of defence — anything that escapes would silently
-    // kill the daemon and leave the buffer dry forever. We log at
-    // ERROR so the operator notices, but never re-throw.
-    @Suppress("TooGenericExceptionCaught")
     override fun open() {
         if (!opened.compareAndSet(false, true)) {
             logger.debug("MySqlBinlogRowChangeSource already opened; ignoring duplicate open()")
@@ -215,13 +210,22 @@ class MySqlBinlogRowChangeSource(
         client.set(c)
         // Connect asynchronously so this method returns once the client
         // is queued, matching the open() contract on RowChangeSource.
+        // The thread carries an UncaughtExceptionHandler so any Error
+        // (OOM, etc) is logged before the daemon dies — same operator
+        // signal we used to get from the in-method `catch (Throwable)`,
+        // but without hiding Error inside a method-local catch.
         Thread({
             try {
                 c.connect()
-            } catch (t: Throwable) {
-                logger.error("MySqlBinlogRowChangeSource client died unexpectedly", t)
+            } catch (e: Exception) {
+                logger.error("MySqlBinlogRowChangeSource client died unexpectedly", e)
             }
-        }, "cdc-outbox-mysql-binlog").apply { isDaemon = true }.start()
+        }, "cdc-outbox-mysql-binlog").apply {
+            isDaemon = true
+            uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, t ->
+                logger.error("MySqlBinlogRowChangeSource daemon died with unrecoverable error", t)
+            }
+        }.start()
         logger.info("MySqlBinlogRowChangeSource connecting to {}:{} as serverId={}", host, port, serverId)
     }
 
@@ -312,11 +316,12 @@ class MySqlBinlogRowChangeSource(
         logger.info("MySqlBinlogRowChangeSource closed (last acked checkpoint: {})", lastAckedCheckpoint)
     }
 
-    // TooGenericExceptionCaught: this catch is the last line of defence
-    // for the binlog-client's listener thread. Anything that escapes here
-    // would silently kill the listener and leave the queue dry forever.
-    // We log and record a parse-error metric so the operator can act.
-    @Suppress("TooGenericExceptionCaught")
+    // The catch below is the last line of defence for the binlog-client's
+    // listener thread. We catch Exception (not Throwable) — Errors
+    // intentionally escape so the daemon thread's
+    // UncaughtExceptionHandler (set in `open()`) can log + signal
+    // operator visibility. Exception is logged + counted as a
+    // parse error so a malformed event does not kill the consumer.
     private fun handleEvent(event: com.github.shyiko.mysql.binlog.event.Event) {
         try {
             // `EventHeaderV4` is the post-5.0 binlog header — that's what
@@ -339,9 +344,9 @@ class MySqlBinlogRowChangeSource(
                 EventType.EXT_DELETE_ROWS, EventType.DELETE_ROWS -> handleDeleteRows(event.getData(), header)
                 else -> Unit  // ignore other event types
             }
-        } catch (t: Throwable) {
-            logger.warn("MySqlBinlogRowChangeSource failed to handle event {} ({})", event, t.javaClass.simpleName)
-            metrics.recordBinlogParseError(t.javaClass.simpleName)
+        } catch (e: Exception) {
+            logger.warn("MySqlBinlogRowChangeSource failed to handle event {} ({})", event, e.javaClass.simpleName)
+            metrics.recordBinlogParseError(e.javaClass.simpleName)
         }
     }
 

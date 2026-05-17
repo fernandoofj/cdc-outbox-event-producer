@@ -137,11 +137,6 @@ class CdcProcessor(
         val pendingFailureCheckpoint: String? = null,
     )
 
-    // LoopWithTooManyJumpStatements: the poll loop's `continue` branches
-    // are the structurally clearest way to express "skip this iteration"
-    // for both poll failures and empty polls — flattening them obscures
-    // the fact that BOTH paths sleep + retry from the same place.
-    @Suppress("LoopWithTooManyJumpStatements")
     private fun runLoop() {
         while (running) {
             // Record activity BEFORE the poll so a hang inside poll
@@ -151,21 +146,37 @@ class CdcProcessor(
             // moves `lastActivityMs` off `0L`, flipping the "never
             // iterated" sentinel to a real elapsed measurement.
             lastActivityMs = System.currentTimeMillis()
-            val event = try {
-                source.poll()
-            } catch (e: Exception) {
-                logger.error("CdcSource.poll() threw; sleeping {} ms before retrying", idleSleep.toMillis(), e)
-                metrics.recordReconnect(REASON_POLL_FAILURE)
-                sleepInterruptibly(idleSleep.toMillis())
-                continue
+            when (val result = pollOnce()) {
+                is PollResult.Failure -> {
+                    logger.error(
+                        "CdcSource.poll() threw; sleeping {} ms before retrying",
+                        idleSleep.toMillis(), result.cause,
+                    )
+                    metrics.recordReconnect(REASON_POLL_FAILURE)
+                    sleepInterruptibly(idleSleep.toMillis())
+                }
+                is PollResult.Empty -> sleepInterruptibly(idleSleep.toMillis())
+                is PollResult.Event -> {
+                    metrics.recordMessageRead(slotLabel)
+                    processEvent(result.event)
+                }
             }
-            if (event == null) {
-                sleepInterruptibly(idleSleep.toMillis())
-                continue
-            }
-            metrics.recordMessageRead(slotLabel)
-            processEvent(event)
         }
+    }
+
+    private fun pollOnce(): PollResult =
+        try {
+            val event = source.poll()
+            if (event == null) PollResult.Empty else PollResult.Event(event)
+        } catch (e: Exception) {
+            PollResult.Failure(e)
+        }
+
+    /** Tri-state result of a single source.poll() — drives runLoop's dispatch. */
+    private sealed class PollResult {
+        object Empty : PollResult()
+        data class Event(val event: OutboxEvent) : PollResult()
+        data class Failure(val cause: Exception) : PollResult()
     }
 
     // ReturnCount: 3 explicit returns map to 3 distinct outcomes

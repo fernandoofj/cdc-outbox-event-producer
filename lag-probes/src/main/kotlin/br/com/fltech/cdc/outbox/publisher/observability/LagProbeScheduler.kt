@@ -109,13 +109,14 @@ class LagProbeScheduler(
      * Performs one probe sample and updates the cached value.
      *
      * Visibility relaxed to `internal` so tests can invoke a single
-     * tick without driving the executor. Any throwable is caught and
+     * tick without driving the executor. Any Exception is caught and
      * logged — letting an exception escape would cancel the scheduled
      * task silently (cf. `ScheduledExecutorService.scheduleAtFixedRate`
      * Javadoc), exactly the kind of silent failure
-     * `feedback no_silent_errors` forbids.
+     * `feedback no_silent_errors` forbids. Errors (OOM, etc) are NOT
+     * caught — they bubble to the JVM uncaught-exception handler, by
+     * design.
      */
-    @Suppress("TooGenericExceptionCaught")
     internal fun sample() {
         try {
             val value = probe.lagBytes()
@@ -127,12 +128,12 @@ class LagProbeScheduler(
                 return
             }
             cached.set(value)
-        } catch (t: Throwable) {
+        } catch (e: Exception) {
             logger.warn(
                 "LagProbeScheduler: probe '{}' threw ({}); keeping previous cached lag value.",
                 probe.sourceLabel,
-                t.javaClass.simpleName,
-                t,
+                e.javaClass.simpleName,
+                e,
             )
         }
     }
