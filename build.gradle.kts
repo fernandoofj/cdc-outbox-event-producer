@@ -20,16 +20,26 @@ apply(plugin = "docker-compose")
 
 allprojects {
     group = "br.com.fltech.cdc.outbox"
-    version = "0.0.11"
+    // Wave 7 — Multi-artifact Maven publish. Bump 0.0.11 → 0.1.0 is
+    // a breaking change for consumers: the legacy coordinate
+    // `cdc-outbox-event-producer` is no longer published; each Gradle
+    // module ships under its own coordinate `cdc-outbox-<module>`.
+    version = "0.1.0"
 
     repositories {
         mavenCentral()
     }
 }
 
+// The `:bom` module is a `java-platform` (POM-only) — it does NOT
+// get the Kotlin/Java/Detekt/Jacoco apply{} below. Wired separately
+// further down.
 subprojects {
+    if (name == "bom") return@subprojects
+
     apply(plugin = "org.jetbrains.kotlin.jvm")
     apply(plugin = "java-library")
+    apply(plugin = "maven-publish")
     apply(plugin = "io.gitlab.arturbosch.detekt")
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
     apply(plugin = "jacoco")
@@ -41,6 +51,12 @@ subprojects {
     extensions.configure<JavaPluginExtension> {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Wave 7 — publish `-sources.jar` and `-javadoc.jar` alongside
+        // the main jar. Sources are valuable for IDE jump-to-definition
+        // for downstream consumers; the empty javadoc.jar satisfies the
+        // Maven Central convention even though Kotlin code uses KDoc.
+        withSourcesJar()
+        withJavadocJar()
     }
 
     tasks.withType<KotlinCompile> {
@@ -87,6 +103,56 @@ subprojects {
         "testImplementation"(kotlin("test"))
         "testImplementation"("io.mockk:mockk:1.13.13")
         "testRuntimeOnly"("org.slf4j:slf4j-simple:2.0.16")
+    }
+
+    // Wave 7 — per-module Maven publication. Each Gradle subproject
+    // ships under the coordinate `br.com.fltech.cdc.outbox:cdc-outbox-<name>`.
+    // The `from(components["java"])` wiring is what carries the
+    // correct dependency scopes through to the published POM
+    // (implementation → compile, compileOnly → provided, etc.).
+    extensions.configure<PublishingExtension> {
+        repositories {
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/fernandoofj/cdc-outbox-event-producer")
+                credentials {
+                    username = System.getenv("GITHUB_ACTOR")
+                    password = System.getenv("GITHUB_TOKEN")
+                }
+            }
+        }
+        publications {
+            register<MavenPublication>("library") {
+                from(components["java"])
+                artifactId = "cdc-outbox-${project.name}"
+                pom {
+                    name.set("cdc-outbox-${project.name}")
+                    description.set("CDC outbox producer — ${project.name} module")
+                    url.set("https://github.com/fernandoofj/cdc-outbox-event-producer")
+                    licenses {
+                        license {
+                            name.set("MIT License")
+                            url.set("https://opensource.org/licenses/MIT")
+                        }
+                    }
+                    developers {
+                        developer {
+                            id.set("fernandoofj")
+                            name.set("Fernando")
+                        }
+                    }
+                    scm {
+                        connection.set(
+                            "scm:git:https://github.com/fernandoofj/cdc-outbox-event-producer.git",
+                        )
+                        developerConnection.set(
+                            "scm:git:ssh://github.com:fernandoofj/cdc-outbox-event-producer.git",
+                        )
+                        url.set("https://github.com/fernandoofj/cdc-outbox-event-producer")
+                    }
+                }
+            }
+        }
     }
 }
 

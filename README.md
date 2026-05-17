@@ -528,6 +528,75 @@ Os blocos principais:
     da brief), consumida por
     [`CdcOutboxMappingAutoConfiguration`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxMappingAutoConfiguration.kt).
 
+## Instalação (Wave 7 — multi-artifact)
+
+Desde a v0.1.0, a lib é publicada como **N coordenadas Maven independentes** (uma por módulo) + um **BOM** (Bill of Materials) que pina versões. O coordinate antigo `cdc-outbox-event-producer` não existe mais.
+
+### Setup mínimo — Postgres → SNS
+
+```kotlin
+dependencies {
+    implementation(platform("br.com.fltech.cdc.outbox:cdc-outbox-bom:0.1.0"))
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-spring-boot-starter")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-source-postgres")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-sink-aws")
+}
+```
+
+### Setup MySQL binlog + Kafka
+
+```kotlin
+dependencies {
+    implementation(platform("br.com.fltech.cdc.outbox:cdc-outbox-bom:0.1.0"))
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-spring-boot-starter")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-source-mysql")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-sink-kafka")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-checkpoint-file")
+}
+```
+
+### Setup completo (modulith — tudo disponível)
+
+```kotlin
+dependencies {
+    implementation(platform("br.com.fltech.cdc.outbox:cdc-outbox-bom:0.1.0"))
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-spring-boot-starter")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-source-postgres")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-source-mysql")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-sink-aws")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-sink-kafka")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-sink-rabbitmq")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-sink-composition")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-checkpoint-file")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-lag-probes")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-dlq-replay")
+    implementation("br.com.fltech.cdc.outbox:cdc-outbox-replay-source")
+}
+```
+
+### Tabela de coordenadas
+
+| Coordenada | Função |
+|---|---|
+| `cdc-outbox-bom` | Pina versões de todos os outros (importar via `platform(...)`) |
+| `cdc-outbox-spring-boot-starter` | **Obrigatório** — auto-configs + properties |
+| `cdc-outbox-core` | Domain + ports + processor (entra transitivamente) |
+| `cdc-outbox-source-postgres` | Postgres logical replication + row-level |
+| `cdc-outbox-source-mysql` | MySQL outbox-table + binlog |
+| `cdc-outbox-source-stubs` | Stubs Oracle + SqlServer |
+| `cdc-outbox-sink-aws` | SNS + SQS |
+| `cdc-outbox-sink-kafka` | Kafka |
+| `cdc-outbox-sink-rabbitmq` | RabbitMQ |
+| `cdc-outbox-sink-composition` | Composite + scheme-router (entra transitivamente quando há ≥2 sinks) |
+| `cdc-outbox-checkpoint-file` | File-backed checkpoint persistido |
+| `cdc-outbox-lag-probes` | Lag gauge + scheduler (Postgres + MySQL) |
+| `cdc-outbox-dlq-replay` | Actuator endpoint `/actuator/cdcOutboxDlq` |
+| `cdc-outbox-replay-source` | Actuator endpoint `/actuator/cdcOutboxReplay` |
+| `cdc-outbox-legacy` | Chain pré-Wave-5 (`SlotReaderMessageProducer`) — só se você está migrando |
+| `cdc-outbox-test-support` | Fixtures de teste compartilhadas — só `testImplementation` |
+
+Auto-config Spring detecta o que está no classpath via `@ConditionalOnClass` — você só "liga" o que declarar.
+
 ## Quick start
 
 ### Producer side — emitir mensagem (Postgres)
@@ -711,6 +780,7 @@ com split hexagonal). Debezium Engine resolve um problema parecido
 | 13 | **DLQ replay tooling** | Done (Round 14). Novo módulo `dlq-replay` expõe Actuator endpoint `/actuator/cdcOutboxDlq` com 4 operações: **peek** (lista sem consumir), **replay 1** (re-publica via `EventSinkRegistry` + delete da DLQ), **replay-bulk** (com `dryRun`), **abandon**. Lê o envelope exato que o `SqsDeadLetterSink` escreve — sem migration. Opt-in via `cdc.outbox.dlq.replay.enabled=true`; auto-config recusa subir se Spring Security não está no classpath; cada operação faz `requireAuthenticated()` runtime check pra rejeitar acesso anônimo mesmo se o consumidor configurou Security permissivo. Métrica `cdc.outbox.dlq.replays{outcome,source_cause,target_scheme}`. | DLQ replay — done |
 | 14 | **Source-side replay / backfill** | Done (Round 15). Novo módulo `replay-source` com port `SourceReplayer` + adapter MySQL real (`MySqlBinlogReplayer` — abre sessão binlog isolada num `serverId` próprio, drena janela `from:to`) + Postgres stub (`PgWalReplayerStub` — falha com mensagem explícita já que slots Postgres são monotônicos). Actuator endpoint `/actuator/cdcOutboxReplay` com `POST /start` + `GET /{jobId}` (status). Job roda async em daemon thread isolada — live producer não é afetado. Replay reusa `EventSinkRegistry.publish()` + `MappingRules` — mesma pipeline do happy path. Caps: 1 job por vez, 100k eventos default, 10min timeout default. Suporta override de sink + dryRun. Métricas `cdc.outbox.replay.events{source_kind,target_scheme,outcome}` + `cdc.outbox.replay.duration{source_kind}`. Auth via `@ConditionalOnClass(SecurityFilterChain)` + `requireAuthenticated()` runtime. | Source replay — done |
 | 15 | **Schema-evolution guards (F8)** | Done (Round 16). `MySqlBinlogRowChangeSource` agora detecta também mudanças de **tipo** de coluna mid-stream (`ALTER TABLE … MODIFY COLUMN <name> <newtype>`, ex: `INT→BIGINT`, `VARCHAR(50)→VARCHAR(100)`). Antes, só mudanças de **contagem** de coluna eram pegas; mudanças de tipo passavam silenciosas e o downstream podia receber valor truncado/cast errado. Novo cache `columnTypesByTableId` compara o vetor de `columnTypes` a cada `TABLE_MAP`; diff dispara WARN log + nova métrica `cdc.outbox.source.binlog.schema_drift{table}` + invalida o cache de nomes pra forçar refresh do `INFORMATION_SCHEMA`. Baseline é a primeira `TABLE_MAP` do `tableId` — drift só é reportado a partir da segunda. | Schema drift — done |
+| 16 | **Wave 7 — Multi-artifact Maven publish (F1)** | Done (Round 17). Cada um dos 15 módulos Gradle agora é publicado como coordenada Maven própria (`cdc-outbox-<module>`) + 1 BOM (`cdc-outbox-bom`) que pina versões. Consumidor importa o BOM via `platform(...)` e declara só as coordenadas que vai usar — versões vêm do BOM. Coordinate antigo `cdc-outbox-event-producer` foi descontinuado; bump pra `0.1.0` é breaking change explícito. Padrão idêntico ao `spring-boot-dependencies` / `aws-bom` / `spring-cloud-aws-dependencies`. Auto-configs continuam idênticos (`@ConditionalOnClass`) — quem usa o classpath enxuto só ativa adapters que declarou; quem quer modulith declara todas as coordenadas. **Não muda topologia de deploy**: ainda é 1 JVM por consumidor; mudança é só de packaging Maven. | Wave 7 — done |
 | 14 | **Source-side replay / backfill** | Done (Round 15). Novo módulo `replay-source` expõe Actuator endpoint `/actuator/cdcOutboxReplay`. Operador chama `start` com `{sourceKind, fromPosition, toPosition, [override], dryRun}`, recebe um `jobId` e consulta progresso em `GET /actuator/cdcOutboxReplay/{jobId}`. Job roda em daemon thread isolada — não toca o checkpoint do live producer. Phase 1: **MySQL binlog real** + Postgres como stub que falha alto (lança `UnsupportedReplayException` com mensagem explicando o que falta operacionalmente). Mutex de 1 job ativo por JVM. Cap `cdc.outbox.replay.max-events-per-job` (default 100k) + timeout (default 10min). Auth mesmo padrão do DLQ replay. Métricas `cdc.outbox.replay.events{source_kind,target_scheme,outcome}` + `cdc.outbox.replay.duration{source_kind}`. | Replay/backfill — done (MySQL); Postgres stub |
 | 12 | **Wave 5.2 follow-ups landed in Round 10** | (a) **Lag-as-gauge**: novo port `core/port/LagProbe` + `PostgresLagProbe` (consulta `pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)` no `pg_replication_slots`) + `MysqlLagProbe` (compara `SHOW MASTER STATUS` com a posição persistida em `CheckpointStore`; rotação de binlog → `null` + INFO uma vez) + `LagProbeScheduler` (daemon `ScheduledExecutorService`, intervalo `cdc.outbox.lag.interval` = 10s default, cache `AtomicLong`). Métrica `cdc.outbox.source.lag_bytes{source=postgres\|mysql}`. (b) **`FileCheckpointStore` orphan-`.tmp` sweep**: varredura on-construct das `<key>.json.tmp` deixadas por crash mid-save; counter `cdc.outbox.checkpoint.orphans_swept{outcome=deleted\|failed}`. (c) **V1 wal2json column surfacing**: `ByteToClassParserImplV1` agora também emite `columns`/`identity` (paridade V1↔V2), zipando os arrays paralelos `columnnames`/`columntypes`/`columnvalues` (+ `oldkeys.*` em U/D). | Wave 5.2 follow-ups — done |
 
