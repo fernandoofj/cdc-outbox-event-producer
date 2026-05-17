@@ -1,0 +1,116 @@
+# Dependabot configuration for cdc-outbox-event-producer.
+#
+# Goals:
+#   * Surface every dependency update — no `ignore` rules; humans triage.
+#   * Group related families into a single PR per week so the multi-module
+#     Gradle build doesn't generate dozens of bumps every Monday.
+#   * Run weekly (not daily) — daily on a 15-module project explodes PR
+#     count without proportional value.
+#   * Use America/Sao_Paulo as the schedule timezone so the PRs land
+#     during local business hours, matching the project cadence.
+
+version: 2
+updates:
+
+  # --------------------------------------------------------------------
+  # Gradle / JVM ecosystem
+  #
+  # `/` is the root of the multi-module Gradle build. Dependabot walks
+  # the project graph (root + subprojects + version catalog if present)
+  # from there, so a single declaration covers all 15 modules + the BOM.
+  # --------------------------------------------------------------------
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Sao_Paulo"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "fernandoofj"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "gradle"
+    groups:
+      # Spring Boot core + Spring Cloud BOMs — bumped together so the
+      # transitive graph stays internally consistent.
+      spring-boot:
+        patterns:
+          - "org.springframework.boot:*"
+          - "org.springframework.boot.*"
+          - "org.springframework.cloud:*"
+      # Spring sub-frameworks that ship on their own cadence but are
+      # tightly coupled to the Boot version we run.
+      spring-frameworks:
+        patterns:
+          - "org.springframework:spring-context"
+          - "org.springframework.kafka:*"
+          - "org.springframework.amqp:*"
+          - "io.awspring.cloud:*"
+      # AWS SDK v2 — every artifact under software.amazon.awssdk:* must
+      # bump together; mixing minor versions is a known footgun.
+      aws-sdk:
+        patterns:
+          - "software.amazon.awssdk:*"
+      # Testcontainers core + module artifacts.
+      testcontainers:
+        patterns:
+          - "org.testcontainers:*"
+      # Kotlin toolchain + linter/formatter Gradle plugins. We pin them
+      # together because detekt/ktlint major versions track Kotlin
+      # majors closely.
+      kotlin:
+        patterns:
+          - "org.jetbrains.kotlin:*"
+          - "org.jetbrains.kotlin.*"
+          - "io.gitlab.arturbosch.detekt"
+          - "io.gitlab.arturbosch.detekt:*"
+          - "org.jlleitschuh.gradle.ktlint"
+          - "org.jlleitschuh.gradle.ktlint:*"
+      # Logging + metrics — micrometer-core / micrometer-registry-* +
+      # slf4j-api / slf4j-* bridges all march in lockstep.
+      observability:
+        patterns:
+          - "io.micrometer:*"
+          - "org.slf4j:*"
+      # Jackson core/databind/datatype/module artifacts — version skew
+      # across Jackson modules is the classic NoSuchMethodError trap.
+      jackson:
+        patterns:
+          - "com.fasterxml.jackson*"
+          - "com.fasterxml.jackson.*:*"
+
+  # --------------------------------------------------------------------
+  # GitHub Actions ecosystem
+  #
+  # Scans every workflow under .github/workflows/ for `uses:` pins
+  # (actions/checkout@vX, actions/setup-java@vY, etc.). One grouped PR
+  # per week keeps the noise floor low.
+  # --------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Sao_Paulo"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "fernandoofj"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      # Single weekly PR for ALL action bumps. Multi-module repo means
+      # checkout/setup-java/gradle-build-action all move together —
+      # there is no benefit to splitting them.
+      github-actions-all:
+        patterns:
+          - "*"

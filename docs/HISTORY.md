@@ -4,6 +4,100 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+## Round 19 — NF9 Dependabot config
+
+Adiciona `.github/dependabot.yml` cobrindo os ecossistemas `gradle`
+(15 módulos + BOM) e `github-actions`, com grupos por família de
+dependência pra reduzir ruído de PR. Worker dedicado dentro da Onda
+de NFs ("non-functional"); paralelo ao NF1 que adicionou os workflows
+de CI propriamente ditos.
+
+**Por que `weekly`, não `daily`**:
+
+Multi-módulo Gradle com Spring Boot, Spring Cloud, AWS SDK v2,
+Testcontainers, Kotlin toolchain, Jackson, Micrometer e SLF4J no
+classpath emite, em média, 8–15 atualizações por semana entre
+patch/minor. Schedule diário transforma isso em ~2 PRs/dia
+ininterruptamente — o sinal de "isto merece sua atenção" se afoga em
+ruído. Weekly bate com o ritmo de revisão humana solo do projeto.
+
+**Por que `groups` em vez de 1 PR por dependência**:
+
+A consistência interna do classpath EXIGE que famílias andem juntas:
+
+  * Jackson core/databind/datatype/module — versão divergente
+    quebra `NoSuchMethodError` em runtime, não em build.
+  * AWS SDK v2 — todos os artefatos `software.amazon.awssdk:*`
+    compartilham `BomImports`; mixar minor versions é footgun
+    documentado pela própria AWS.
+  * Spring Boot + Spring Cloud — release trains acoplados; bumpa
+    Boot sem bumpar Cloud (ou vice-versa) gera incompatibilidade
+    silenciosa de auto-config.
+  * Micrometer registry + core — APIs internas mudam entre minors
+    e o registry SNS/CloudWatch depende dos internals do core.
+
+Cada grupo gera UMA PR por semana com TODAS as atualizações da
+família. Revisão fica trivial: ou o teste passa (merge), ou não
+passa (investiga ali mesmo, sem cruzar PRs).
+
+**Por que sem `ignore`**:
+
+Não temos majors travados intencionalmente (toda Spring/Kotlin/AWS
+bump vira *issue* de upgrade explícito), nem dependências legacy que
+precisem ficar congeladas. Visibilidade total > ruído extra; é mais
+fácil fechar uma PR conhecida-má do que descobrir 6 meses depois
+que existe um CVE que o Dependabot nem viu porque alguém colocou um
+`ignore` em 2026.
+
+**Timezone explícita** (`America/Sao_Paulo`):
+
+Default do Dependabot é UTC. Schedule "09:00 UTC" no Brasil é 06:00
+local — PRs chegam antes do dia útil começar e ficam esquecidas até
+a tarde. Fixando `09:00 America/Sao_Paulo` (12:00 UTC) as PRs caem
+na inbox no início da janela de revisão.
+
+**Glob, não regex** (verificado): patterns como `spring-boot-*`,
+`software.amazon.awssdk:*`, `com.fasterxml.jackson*` são glob no
+sentido Dependabot (fnmatch-style) — NÃO regex. Erro comum é
+escrever `spring-boot.*` esperando regex; isso silenciosamente
+não matcha nada. Patterns aqui usam `*` somente.
+
+**README badge**: adicionado shield estático
+`![Dependabot](https://img.shields.io/badge/dependabot-active-brightgreen)`
+logo abaixo do H1. Não é badge dinâmico (Dependabot não expõe API
+pública pra status do repo); é sinalização visual de que o canal
+existe e está ativo.
+
+**Mudanças**:
+
+  * `.github/dependabot.yml` (novo, 110 linhas com comentários
+    explicando cada grupo).
+  * `README.md` (+1 linha): badge Dependabot logo após o H1.
+  * `docs/HISTORY.md`: esta entrada.
+
+**Verification**
+
+  * Sintaxe YAML válida (`cat` confere indentação consistente,
+    aspas balanceadas, sem tabs).
+  * Patterns auditados manualmente: todos usam glob `*`, nenhum
+    `.*` (regex-style) que falharia silenciosamente.
+  * Tech Lead self-review: o nome `io.awspring.cloud:*` (Spring
+    Cloud AWS 3.2) está corretamente no grupo `spring-frameworks`
+    — o ID Maven mudou de `org.springframework.cloud:spring-cloud-aws-*`
+    pra `io.awspring.cloud:*` na linha 3.x. Pattern legacy
+    removido.
+
+**Tech Lead persona**
+
+Tech Lead persona: **PASS**.
+  (a) Weekly + grouped é o sweet spot pra projeto solo multi-módulo
+      — diário ou ungrouped vira spam, monthly atrasa CVE patches.
+  (b) Sem `ignore` é a postura certa pra repo ainda em
+      desenvolvimento ativo — preferimos ver e descartar do que
+      perder e descobrir tarde.
+  (c) Timezone explícita evita janela "PRs caem 06:00 ninguém
+      atende"; pequeno detalhe que faz diferença operacional real.
+
 ## Round 15 — F6: source-side replay / backfill
 
 Novo módulo `replay-source` permite re-emitir uma janela passada
