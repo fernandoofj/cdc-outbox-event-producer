@@ -23,4 +23,5 @@ include(
     ":replay-source",
     ":spring-boot-starter",
     ":test-support",
+    ":bom",
 )

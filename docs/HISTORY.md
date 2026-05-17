@@ -108,6 +108,82 @@ Tech Lead persona: **PASS**.
   (c) Mesmo pipeline (`EventSinkRegistry.publish`) — naturalmente
       herda retry + DLQ + métricas do producer normal.
 
+## Round 17 — Wave 7 — Multi-artifact Maven publish (F1)
+
+Última mudança de packaging do cdc-outbox. Cada um dos 15 módulos
+Gradle agora ship como coordenada Maven própria + 1 BOM que pina
+versões. Coordinate antigo `cdc-outbox-event-producer` deixa de
+existir; bump pra `0.1.0` é breaking change explícito (e barato,
+porque ainda não tem consumidor externo).
+
+**Por quê**:
+  * Consumidor com Postgres → SNS só baixa o que usa (~30% do
+    bytecode total). MySQL binlog, Kafka, Rabbit, lag-probes
+    não entram no classpath dele.
+  * SBOM scanning fica limpo — vulnerabilidade num adapter não
+    usado não aparece no relatório do consumidor.
+  * Pré-requisito pra publicar no Maven Central futuramente
+    (Central espera multi-artifact com sources+javadoc por
+    convenção).
+
+**Por que NÃO complica**:
+  * Topologia de deploy é a mesma: 1 JVM, 1 deploy. Wave 7 muda
+    *como você instala*, não *como você roda*.
+  * BOM faz toda a heavy-lifting de versão — consumidor declara
+    coordenadas sem `:version`, garante consistência por
+    construção.
+  * Auto-config Spring é IDÊNTICO — `@ConditionalOnClass` faz
+    cada adapter wirar sozinho quando o classpath tem a lib.
+
+**Mudanças**:
+  * `build.gradle.kts` (root): `subprojects {}` ganhou bloco
+    `extensions.configure<PublishingExtension>` com:
+      * `apply(plugin = "maven-publish")` em todos os subprojetos
+        exceto `:bom`.
+      * `withSourcesJar()` + `withJavadocJar()`.
+      * Per-module `artifactId = "cdc-outbox-${project.name}"`.
+      * POM metadata: name, description, url, license MIT,
+        developer, scm.
+      * Repository `GitHubPackages` mantido (publish via
+        `GITHUB_ACTOR` + `GITHUB_TOKEN` env).
+  * Version `0.0.11` → `0.1.0` (semver — coordinate change).
+  * Novo módulo `bom/` (`java-platform` + `maven-publish`) com 15
+    `constraints` apontando pra cada `cdc-outbox-*` module.
+  * `settings.gradle.kts` ganha `include(":bom")`.
+  * `README.md`: nova seção `## Instalação (Wave 7 — multi-artifact)`
+    com 3 setups exemplares (mínimo Postgres+SNS, MySQL+Kafka,
+    modulith completo) + tabela com todas as coordenadas.
+
+**Smoke test pre-merge**: `./gradlew publishToMavenLocal` produziu
+16 artefatos (15 módulos + 1 BOM) em
+`~/.m2/repository/br/com/fltech/cdc/outbox/`. Inspeção dos POMs
+gerados confirmou:
+  * `cdc-outbox-core` POM só tem slf4j + micrometer + jackson +
+    json + kotlin-stdlib — zero Spring.
+  * `cdc-outbox-sink-aws` POM tem `cdc-outbox-core` em
+    `<scope>compile</scope>`, AWS SDK SNS/SQS/STS em
+    `<scope>runtime</scope>`, e Spring Cloud AWS NÃO aparece
+    (era `compileOnly`).
+  * `cdc-outbox-bom` POM tem `<packaging>pom</packaging>` +
+    `<dependencyManagement>` com 15 entries pinadas em `0.1.0`.
+
+**Verification**
+
+  * `./gradlew detekt` PASS (0 weighted issues).
+  * `./gradlew test` PASS — comportamento de runtime intocado
+    (Wave 7 é só packaging, código zero mudou).
+
+**Tech Lead persona**
+
+Tech Lead persona: **PASS**.
+  (a) Mudança puramente de packaging — 0 mudança de comportamento,
+      0 risco de regressão funcional.
+  (b) Breaking change pra consumer (coordinate mudou) é aceitável
+      porque ainda não há consumidor externo. Quanto mais tarde,
+      mais caro o split fica.
+  (c) BOM seguindo padrão da indústria (Spring/AWS/Jackson) — zero
+      invenção, zero surpresa pro consumidor.
+
 ## Round 16 — F8 schema-evolution guards (column-type drift)
 
 Estende a guarda de schema-change do `MySqlBinlogRowChangeSource`
