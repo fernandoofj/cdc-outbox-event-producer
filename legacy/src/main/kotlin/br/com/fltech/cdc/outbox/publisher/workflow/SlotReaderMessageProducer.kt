@@ -172,11 +172,12 @@ class SlotReaderMessageProducer(
         val msSinceLastActivity: Long,
     )
 
-    // TooGenericExceptionCaught: the streaming loop intentionally treats
-    // every unhandled exception as recoverable — anything that escapes
-    // here would otherwise kill the worker thread silently, which is
-    // worse than reconnecting. Each branch tags the reason for metrics.
-    @Suppress("TooGenericExceptionCaught")
+    // The streaming loop intentionally treats every Exception as
+    // recoverable — anything that escapes via Exception would
+    // otherwise kill the worker thread silently, which is worse
+    // than reconnecting. Each branch tags the reason for metrics.
+    // Errors (OOM, etc) escape to the thread's
+    // UncaughtExceptionHandler — set by the wrapper lifecycle.
     private fun readingSlotData() {
         try {
             createPostgresConnector(postgresConfiguration, replicationConfiguration).use { postgresConnector ->
@@ -307,13 +308,13 @@ class SlotReaderMessageProducer(
         }
     }
 
-    // TooGenericExceptionCaught: catching the full Exception hierarchy is
-    // intentional here so that an unexpected sink-specific exception does
-    // not crash the streaming loop. The captured throwable drives the
-    // retry/dead-letter state machine; the slot only advances on success
-    // (per-message LSN), explicit discard, or successful dead-letter.
-    // `internal` so unit tests can drive it without spinning the full loop.
-    @Suppress("TooGenericExceptionCaught")
+    // Catching Exception here is intentional so an unexpected
+    // sink-specific exception drives the retry/dead-letter state
+    // machine instead of killing the streaming loop. Errors
+    // (OOM, etc) escape on purpose — the slot only advances on
+    // successful publish, explicit discard, or dead-letter.
+    // `internal` so unit tests can drive it without spinning the
+    // full loop.
     internal fun processMessage(messageChange: MessageChange, fallbackLsn: LogSequenceNumber) {
         // Prefer the per-message LSN carried inside the wal2json payload over
         // the stream's high-water-mark fallback (see class KDoc).

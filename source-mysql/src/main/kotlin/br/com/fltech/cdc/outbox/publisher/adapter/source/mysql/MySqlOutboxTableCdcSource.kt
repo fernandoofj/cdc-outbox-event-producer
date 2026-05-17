@@ -79,47 +79,12 @@ class MySqlOutboxTableCdcSource(
         dataSource.connection.use { it.isValid(VALIDATION_TIMEOUT_SECONDS) }
     }
 
-    // NestedBlockDepth: SKIP LOCKED transactional poll needs the
-    // connection / statement / result-set scopes nested so AutoCloseable
-    // ordering matches the FOR UPDATE locking semantics — flattening
-    // would force the inflight-connection state to live OUTSIDE the
-    // try/catch and risk an unrolled-back tx on a parse exception.
-    @Suppress("NestedBlockDepth")
     override fun poll(): OutboxEvent? {
         cleanupInflight()
         val conn = dataSource.connection
         conn.autoCommit = false
         return try {
-            val sql = """
-                SELECT id, prefix, payload, headers, created_at
-                FROM $tableName
-                WHERE published_at IS NULL
-                ORDER BY id
-                LIMIT $batchSize
-                FOR UPDATE SKIP LOCKED
-            """.trimIndent()
-            conn.prepareStatement(sql).use { stmt ->
-                stmt.executeQuery().use { rs ->
-                    if (!rs.next()) {
-                        conn.rollback()
-                        conn.close()
-                        return null
-                    }
-                    val id = rs.getLong("id")
-                    val prefix = rs.getString("prefix")
-                    val payload = rs.getString("payload")
-                    val createdAt = rs.getTimestamp("created_at").toInstant()
-                    inflightConn = conn
-                    inflightId = id
-                    OutboxEvent(
-                        id = id.toString(),
-                        routing = Routing.parsePrefix(prefix),
-                        payload = payload.toByteArray(Charsets.UTF_8),
-                        occurredAt = createdAt,
-                        sourceCheckpoint = id.toString(),
-                    )
-                }
-            }
+            pollLocked(conn)
         } catch (e: Exception) {
             runCatching { conn.rollback() }
             runCatching { conn.close() }
@@ -128,6 +93,53 @@ class MySqlOutboxTableCdcSource(
             throw e
         }
     }
+
+    /**
+     * Runs the SKIP LOCKED prepared statement and either binds the
+     * connection as the new in-flight transaction (when a row was
+     * returned) or rolls back + closes it (when there is nothing
+     * to publish). Extracted out of [poll] so the
+     * connection/statement/result-set nesting stays at 3 levels
+     * instead of 4 — same AutoCloseable ordering semantics around
+     * the FOR UPDATE lock.
+     */
+    private fun pollLocked(conn: java.sql.Connection): OutboxEvent? =
+        conn.prepareStatement(pollSql).use { stmt ->
+            stmt.executeQuery().use { rs ->
+                if (!rs.next()) {
+                    conn.rollback()
+                    conn.close()
+                    null
+                } else {
+                    bindInflightAndProject(conn, rs)
+                }
+            }
+        }
+
+    private fun bindInflightAndProject(conn: java.sql.Connection, rs: java.sql.ResultSet): OutboxEvent {
+        val id = rs.getLong("id")
+        val prefix = rs.getString("prefix")
+        val payload = rs.getString("payload")
+        val createdAt = rs.getTimestamp("created_at").toInstant()
+        inflightConn = conn
+        inflightId = id
+        return OutboxEvent(
+            id = id.toString(),
+            routing = Routing.parsePrefix(prefix),
+            payload = payload.toByteArray(Charsets.UTF_8),
+            occurredAt = createdAt,
+            sourceCheckpoint = id.toString(),
+        )
+    }
+
+    private val pollSql = """
+        SELECT id, prefix, payload, headers, created_at
+        FROM $tableName
+        WHERE published_at IS NULL
+        ORDER BY id
+        LIMIT $batchSize
+        FOR UPDATE SKIP LOCKED
+    """.trimIndent()
 
     override fun ack(event: OutboxEvent) {
         val conn = inflightConn ?: run {

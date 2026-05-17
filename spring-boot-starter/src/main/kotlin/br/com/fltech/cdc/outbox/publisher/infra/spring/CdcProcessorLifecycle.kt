@@ -25,27 +25,33 @@ class CdcProcessorLifecycle(
     @Volatile
     private var running = false
 
-    // TooGenericExceptionCaught: the hex processor thread is the
-    // top-level driver of the orchestrator loop; same rationale as
-    // CdcOutboxLifecycle.start — catch Throwable + ERROR-log so the
-    // health indicator can surface DOWN even on Error/OOM surprises.
-    @Suppress("TooGenericExceptionCaught")
     override fun start() {
         if (running) {
             logger.debug("CdcProcessorLifecycle already running; ignoring start()")
             return
         }
         logger.info("Starting CDC outbox hexagonal processor")
+        // ThreadFactory wires an UncaughtExceptionHandler so any
+        // Error (OOM, StackOverflow) is logged + signals
+        // `running=false` for the health indicator — same operator
+        // visibility as the in-method catch, without swallowing
+        // Error inside the try.
         val pool = Executors.newSingleThreadExecutor { r ->
-            Thread(r, THREAD_NAME).apply { isDaemon = true }
+            Thread(r, THREAD_NAME).apply {
+                isDaemon = true
+                uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, t ->
+                    logger.error("CDC outbox processor died with unrecoverable error", t)
+                    running = false
+                }
+            }
         }
         executor = pool
         running = true
         pool.execute {
             try {
                 processor.start()
-            } catch (t: Throwable) {
-                logger.error("CDC outbox processor terminated unexpectedly", t)
+            } catch (e: Exception) {
+                logger.error("CDC outbox processor terminated unexpectedly", e)
             } finally {
                 running = false
             }

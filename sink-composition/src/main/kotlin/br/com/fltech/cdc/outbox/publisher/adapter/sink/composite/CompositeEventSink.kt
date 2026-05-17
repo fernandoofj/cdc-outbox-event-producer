@@ -33,23 +33,22 @@ class CompositeEventSink(
         require(delegates.isNotEmpty()) { "CompositeEventSink requires at least one delegate" }
     }
 
-    // TooGenericExceptionCaught: in fan-out mode we must aggregate
-    // failures across all delegates rather than short-circuit; catching
-    // Throwable is intentional so an Error from one sink (broker SDK
-    // bug, OOM mid-publish) still lets the rest try and aggregates
-    // into a suppressed-exception chain.
-    @Suppress("TooGenericExceptionCaught")
     override fun publish(routing: Routing, event: OutboxEvent) {
         if (failFast) {
             delegates.forEach { it.publish(routing, event) }
             return
         }
-        var firstFailure: Throwable? = null
+        // In fan-out mode we aggregate failures across delegates
+        // rather than short-circuit. We catch Exception (not
+        // Throwable) — an Error like OOM is unrecoverable and
+        // bubbles up to the caller, where the orchestrator's
+        // existing thread-level handlers take over.
+        var firstFailure: Exception? = null
         delegates.forEach { sink ->
             try {
                 sink.publish(routing, event)
-            } catch (t: Throwable) {
-                if (firstFailure == null) firstFailure = t else firstFailure!!.addSuppressed(t)
+            } catch (e: Exception) {
+                if (firstFailure == null) firstFailure = e else firstFailure!!.addSuppressed(e)
             }
         }
         firstFailure?.let { throw it }

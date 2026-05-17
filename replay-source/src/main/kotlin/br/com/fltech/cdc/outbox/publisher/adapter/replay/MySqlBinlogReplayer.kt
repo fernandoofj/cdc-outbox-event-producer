@@ -136,10 +136,6 @@ internal class BoundedMySqlBinlogSource(
     private val columnNamesByTableId = ConcurrentHashMap<Long, List<String>>()
     private var currentBinlogFile: String = fromFile
 
-    // TooGenericExceptionCaught: connect-thread catch is the last
-    // line of defence for the replay session — same rationale as
-    // the live MySqlBinlogRowChangeSource.
-    @Suppress("TooGenericExceptionCaught")
     override fun open() {
         if (!opened.compareAndSet(false, true)) return
         val c = clientFactory(host, port, username, password)
@@ -148,14 +144,24 @@ internal class BoundedMySqlBinlogSource(
         c.binlogPosition = fromOffset
         c.registerEventListener { event -> handleEvent(event) }
         client.set(c)
+        // Thread carries an UncaughtExceptionHandler so an Error
+        // (OOM, etc) marks the session finished and logs ERROR
+        // — Exception is caught in-method to mark finished too,
+        // both paths surface to the operator without silent death.
         Thread({
             try {
                 c.connect()
-            } catch (t: Throwable) {
-                logger.error("MySqlBinlogReplayer client died unexpectedly", t)
+            } catch (e: Exception) {
+                logger.error("MySqlBinlogReplayer client died unexpectedly", e)
                 finished.set(true)
             }
-        }, "cdc-outbox-replay-mysql-$serverId").apply { isDaemon = true }.start()
+        }, "cdc-outbox-replay-mysql-$serverId").apply {
+            isDaemon = true
+            uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, t ->
+                logger.error("MySqlBinlogReplayer daemon died with unrecoverable error", t)
+                finished.set(true)
+            }
+        }.start()
         logger.info(
             "MySqlBinlogReplayer: started replay session serverId={} from={}:{} to={}:{}",
             serverId, fromFile, fromOffset, toFile, toOffset,
@@ -178,10 +184,9 @@ internal class BoundedMySqlBinlogSource(
         columnNamesByTableId.clear()
     }
 
-    // TooGenericExceptionCaught: same rationale as the live binlog
-    // source — the listener thread is the last line of defence, a
-    // surprise here would silently kill the replay session.
-    @Suppress("TooGenericExceptionCaught")
+    // Catch Exception only — Errors escape to the daemon thread's
+    // UncaughtExceptionHandler (set in `open()`) so the operator
+    // sees them without us silently swallowing OOM/StackOverflow.
     private fun handleEvent(event: com.github.shyiko.mysql.binlog.event.Event) {
         if (finished.get()) return
         try {
@@ -203,8 +208,8 @@ internal class BoundedMySqlBinlogSource(
                 EventType.EXT_DELETE_ROWS, EventType.DELETE_ROWS -> handleDeleteRows(event.getData(), header)
                 else -> Unit
             }
-        } catch (t: Throwable) {
-            logger.warn("MySqlBinlogReplayer: dropped event {} ({})", event, t.javaClass.simpleName, t)
+        } catch (e: Exception) {
+            logger.warn("MySqlBinlogReplayer: dropped event {} ({})", event, e.javaClass.simpleName, e)
         }
     }
 

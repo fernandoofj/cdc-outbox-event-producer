@@ -174,19 +174,36 @@ class AtLeastOnceDeliveryIT {
         runCatching { sqsAsyncClient.close() }
     }
 
-    // LongMethod: end-to-end IT body cannot be trimmed further — each
-    // step (build producer + sink, drive 3 inserts, await receive,
-    // assert attempt count + bodies) is one logical phase the
-    // assertion narrative depends on.
-    @Suppress("LongMethod")
     @Test
     fun `transient failure on the first publish does not lose the message — retry recovers it`() {
         val received = ConcurrentHashMap.newKeySet<String>()
-        // Real SnsTemplate against LocalStack — but wrapped by a stub that fails
-        // the FIRST publish attempt globally before delegating onward.
-        val realSnsTemplate = SnsTemplate(snsClient)
         val publishAttempts = java.util.concurrent.atomic.AtomicInteger(0)
-        val failingSns = object : SNSProducer {
+        val failingSns = buildFailingSnsProducer(publishAttempts)
+        val producer = buildProducer(failingSns)
+        val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "test-slot-reader") }
+        executor.submit { producer.startStreaming() }
+
+        awaitSlotReady()
+        val sent = (1..3).map { emitMessage("test-message-$it") }
+        awaitMessagesReceived(received, expected = 3)
+
+        producer.stopStreaming()
+        executor.shutdown()
+
+        assertThreeMessagesWithRetry(publishAttempts, sent, received)
+    }
+
+    /**
+     * Wraps the real `SnsTemplate` with a stub that fails the FIRST
+     * publish attempt globally and delegates every later attempt
+     * onward — exercises the retry path on a transient broker error
+     * without faking the SDK.
+     */
+    private fun buildFailingSnsProducer(
+        publishAttempts: java.util.concurrent.atomic.AtomicInteger,
+    ): SNSProducer {
+        val realSnsTemplate = SnsTemplate(snsClient)
+        return object : SNSProducer {
             private val delegate = SNSTransactionalProducer(realSnsTemplate)
             override fun <T : Any> send(topicName: String, message: SNSMessage<T>) {
                 val count = publishAttempts.incrementAndGet()
@@ -196,10 +213,11 @@ class AtLeastOnceDeliveryIT {
                 delegate.send(topicArn, message)
             }
         }
-        val sqsTemplate = SqsTemplate.builder().sqsAsyncClient(sqsAsyncClient).build()
-        val sqsProducer = SQSTransactionalProducer(sqsTemplate)
+    }
 
-        val producer = SlotReaderMessageProducer(
+    private fun buildProducer(snsProducer: SNSProducer): SlotReaderMessageProducer {
+        val sqsTemplate = SqsTemplate.builder().sqsAsyncClient(sqsAsyncClient).build()
+        return SlotReaderMessageProducer(
             postgresConfiguration = PostgresConfiguration(
                 host = postgres.host,
                 port = postgres.getMappedPort(5432).toString(),
@@ -208,8 +226,8 @@ class AtLeastOnceDeliveryIT {
                 password = PG_PASSWORD,
             ),
             replicationConfiguration = ReplicationConfiguration(slotName = SLOT_NAME),
-            snsProducer = failingSns,
-            sqsProducer = sqsProducer,
+            snsProducer = snsProducer,
+            sqsProducer = SQSTransactionalProducer(sqsTemplate),
             connectionProvider = DefaultConnectionProvider(),
             reconnectBackOff = ExponentialBackOff(
                 initial = Duration.ofMillis(50),
@@ -222,12 +240,9 @@ class AtLeastOnceDeliveryIT {
                 max = Duration.ofMillis(200),
             ),
         )
+    }
 
-        val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "test-slot-reader") }
-        executor.submit { producer.startStreaming() }
-
-        // Give the slot reader a moment to create its replication slot and
-        // start streaming before we emit the messages.
+    private fun awaitSlotReady() {
         Awaitility.await().atMost(Duration.ofSeconds(15)).pollInterval(Duration.ofMillis(200)).until {
             queryConnection.createStatement().use { s ->
                 s.executeQuery("SELECT 1 FROM pg_replication_slots WHERE slot_name = '$SLOT_NAME'").use { rs ->
@@ -235,9 +250,9 @@ class AtLeastOnceDeliveryIT {
                 }
             }
         }
+    }
 
-        val sent = (1..3).map { emitMessage("test-message-$it") }
-
+    private fun awaitMessagesReceived(received: MutableSet<String>, expected: Int) {
         // Consume the SQS queue. Even though attempt #1 of message #1 failed,
         // the in-place retry must redeliver message #1 successfully, AND
         // messages #2 and #3 must still arrive — no skip due to LSN drift.
@@ -246,19 +261,19 @@ class AtLeastOnceDeliveryIT {
                 ReceiveMessageRequest.builder().queueUrl(queueUrl).maxNumberOfMessages(10).waitTimeSeconds(1).build(),
             )
             response.messages().forEach { received.add(it.body()) }
-            received.size >= 3
+            received.size >= expected
         }
+    }
 
-        producer.stopStreaming()
-        executor.shutdown()
-
-        // At least 1 publish failure (the simulated one) must have been
-        // attempted; receive count must include all 3 emitted payloads.
+    private fun assertThreeMessagesWithRetry(
+        publishAttempts: java.util.concurrent.atomic.AtomicInteger,
+        sent: List<String>,
+        received: Set<String>,
+    ) {
         assertTrue(
             publishAttempts.get() >= 4,
             "expected ≥4 publish attempts (3 messages + 1 retry); got ${publishAttempts.get()}",
         )
-        // Bodies are JSON; for each emitted ID, assert there's a body containing it.
         sent.forEach { expected ->
             assertTrue(
                 received.any { it.contains(expected) },

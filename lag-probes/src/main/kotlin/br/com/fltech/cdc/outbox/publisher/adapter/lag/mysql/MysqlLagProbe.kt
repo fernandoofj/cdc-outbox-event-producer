@@ -53,39 +53,9 @@ class MysqlLagProbe(
     // failure mode that warrants its own log line. Collapsing them
     // into a state machine would obscure the readable narrative for
     // a probe whose value is in the diagnostic logging itself.
-    //
-    // LongMethod (61 vs 60): the per-branch diagnostic logs push the
-    // method one line over the cap; extracting helpers would split
-    // the narrative across files for one line of gain.
-    @Suppress("ReturnCount", "LongMethod")
+    @Suppress("ReturnCount")
     override fun lagBytes(): Long? {
-        val persisted =
-            try {
-                checkpointStore.load(checkpointKey())
-            } catch (e: Exception) {
-                logger.warn(
-                    "MysqlLagProbe: CheckpointStore.load failed for key={} ({}); returning null.",
-                    checkpointKey(),
-                    e.javaClass.simpleName,
-                    e,
-                )
-                return null
-            }
-        if (persisted == null) {
-            // No checkpoint yet — the source hasn't acked anything, so
-            // we have no anchor to measure lag from. Stay silent: this
-            // is the normal startup state and would otherwise spam.
-            return null
-        }
-        val checkpoint = parseCheckpoint(persisted)
-        if (checkpoint == null) {
-            logger.warn(
-                "MysqlLagProbe: persisted checkpoint '{}' did not parse as <filename>:<position>; returning null.",
-                persisted,
-            )
-            return null
-        }
-        val (checkpointFile, checkpointPosition) = checkpoint
+        val (checkpointFile, checkpointPosition) = loadCheckpoint() ?: return null
 
         val head =
             try {
@@ -131,6 +101,39 @@ class MysqlLagProbe(
         } else {
             lag
         }
+    }
+
+    /**
+     * Reads the persisted checkpoint, parses it, and returns the
+     * `(file, position)` pair. Returns `null` when there is no
+     * anchor to measure lag from — either the source hasn't acked
+     * anything yet (normal startup state, kept silent) or the
+     * persisted value did not parse (logged WARN) or the
+     * `CheckpointStore.load` raised (logged WARN). Extracted out
+     * of [lagBytes] so the diagnostic narrative there stays
+     * focused on the upstream comparison.
+     */
+    @Suppress("ReturnCount")
+    private fun loadCheckpoint(): Pair<String, Long>? {
+        val persisted =
+            try {
+                checkpointStore.load(checkpointKey())
+            } catch (e: Exception) {
+                logger.warn(
+                    "MysqlLagProbe: CheckpointStore.load failed for key={} ({}); returning null.",
+                    checkpointKey(), e.javaClass.simpleName, e,
+                )
+                return null
+            } ?: return null
+        val parsed = parseCheckpoint(persisted)
+        if (parsed == null) {
+            logger.warn(
+                "MysqlLagProbe: persisted checkpoint '{}' did not parse as <filename>:<position>; returning null.",
+                persisted,
+            )
+            return null
+        }
+        return parsed
     }
 
     private fun queryMasterStatus(): Pair<String, Long>? =
