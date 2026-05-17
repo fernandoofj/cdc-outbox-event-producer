@@ -1,5 +1,7 @@
 # cdc-outbox-event-producer
 
+![CI](https://github.com/fernandoofj/cdc-outbox-event-producer/actions/workflows/ci.yml/badge.svg)
+
 > **Status:** repositório revivido a partir do arquivo público
 > [`inventa-shop/kotlin-postgres-cdc-to-sns-module`](https://github.com/inventa-shop/kotlin-postgres-cdc-to-sns-module)
 > (último commit Fev/2024) e republicado privadamente para evoluir o

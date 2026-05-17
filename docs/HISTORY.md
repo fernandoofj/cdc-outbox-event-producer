@@ -4,6 +4,84 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+## Round 19 — NF1 GitHub Actions CI
+
+**Problema que resolve**: até aqui o repo dependia inteiramente do
+disco do mantenedor para saber se a build estava verde. Os workflows
+herdados (`build.yaml`, `release.yaml`) ainda apontavam pra JDK 17 e
+rodavam um `./gradlew build` cego que (a) não exercitava os módulos
+publicados individualmente e (b) não bloqueava merge num PR vermelho.
+NF1 fecha esse gap com um pipeline mínimo, idiomático e auditável.
+
+**O que tem dentro** (`.github/workflows/ci.yml`):
+
+  * **Job `build`** — dispara em `push` pra `main` e em qualquer
+    `pull_request` mirando `main`. Faz `checkout`, sobe JDK 21
+    Corretto via `actions/setup-java@v4` (que já cacheia
+    `~/.gradle/caches` e `~/.gradle/wrapper` via `cache: gradle`),
+    roda `compileKotlin compileTestKotlin`, executa o sweep default
+    de testes (`test -x startDockerCompose -x stopDockerCompose`)
+    e fecha com `detekt` em modo zero-issue. Em falha, sobe os
+    relatórios HTML/XML de teste + detekt como artifact por 14
+    dias.
+  * **Job `publish`** — dispara *só* em `push` de tag matching
+    `v*` (ex.: `v0.1.0`, `v0.2.0`), depende do `build` passar e
+    chama `publishAllPublicationsToGitHubPackagesRepository`
+    propagando `GITHUB_ACTOR` + `GITHUB_TOKEN` como env vars (a
+    `PublishingExtension` em `build.gradle.kts` lê esses dois
+    nomes diretamente). `permissions: packages: write` no nível
+    do job, `contents: read` em ambos.
+  * **Concurrency**: `cancel-in-progress` por `ref` — pushes
+    sucessivos no mesmo branch cancelam a corrida anterior, evita
+    fila de builds redundantes em PRs ativos.
+
+**Trade-offs aceitos**:
+  * **Testcontainers ITs ficam fora do CI hospedado.** Os três
+    cenários E2E (Postgres+SNS, MySQL+RabbitMQ,
+    `AtLeastOnceDeliveryIT`) usam `@EnabledIfEnvironmentVariable`
+    em `RUN_TESTCONTAINERS` e o pipeline não exporta essa env,
+    então os três se reportam como skipped. Motivo: GitHub
+    runners não têm a configuração `DOCKER_API_VERSION=1.43` que
+    o OrbStack local exige. O workflow tem comentário inline
+    documentando o comando local
+    (`RUN_TESTCONTAINERS=1 DOCKER_API_VERSION=1.43 ./gradlew test`)
+    e o full sweep ainda é responsabilidade do operador antes de
+    tag de release.
+  * **`-x generateGitProperties` não entra** porque o plugin
+    `gradle-git-properties` está com `apply false` no root e a
+    task não existe no graph atual — incluir o `-x` quebra a
+    build com `Task 'generateGitProperties' not found`. Se um
+    módulo passar a aplicar o plugin no futuro, o `-x` volta.
+  * **Badge no README aponta pro path do workflow novo
+    (`/actions/workflows/ci.yml/badge.svg`)**, não pros legados.
+    Os workflows `build.yaml` / `release.yaml` continuam no disco
+    por enquanto pra evitar quebrar referências externas, mas a
+    intenção é depreciar/remover num próximo round.
+
+**Verification local** (do worktree, com JDK 21 Corretto):
+  * `./gradlew compileKotlin compileTestKotlin` — BUILD SUCCESSFUL
+    in 48s (49 tasks).
+  * `./gradlew detekt` — BUILD SUCCESSFUL in 6s, **0 weighted
+    issues**.
+  * `./gradlew test -x startDockerCompose -x stopDockerCompose` —
+    BUILD SUCCESSFUL in 1m 59s, agregado **230 tests, 5 skipped,
+    0 failures, 0 errors** (os 5 skipped são exatamente os ITs
+    gated por `RUN_TESTCONTAINERS`).
+
+**Tech Lead persona**
+
+Tech Lead persona: **PASS**.
+  (a) Zero secret hardcoded: `GITHUB_TOKEN` vem de
+      `${{ secrets.GITHUB_TOKEN }}`, `GITHUB_ACTOR` vem de
+      `${{ github.actor }}` (built-in, não é secret).
+  (b) Publish gated em tag `v*` via `on.push.tags` + `if:` no job
+      — PR não publica, branch sem tag não publica.
+  (c) `needs: build` no `publish` impede artifact verde sobre
+      commit vermelho.
+  (d) Cache do Gradle delegado ao `actions/setup-java@v4` em vez
+      de `actions/cache` ad-hoc — menos superfície, menos
+      manutenção de chave de cache.
+
 ## Round 15 — F6: source-side replay / backfill
 
 Novo módulo `replay-source` permite re-emitir uma janela passada
