@@ -21,30 +21,38 @@ Tech Lead is **mandatory** before every non-trivial commit — see the
   * **Hexagonal first.** Domain types live in `core/`. Ports are
     pure-Kotlin interfaces with no framework or driver imports.
     Adapters depend on ports, never the reverse. Spring annotations
-    live ONLY in `spring-boot-starter/`. The legacy single-module tree
-    (`br.com.fltech.cdc.outbox.publisher.**`) is tolerated until the
-    modular split lands, but no new code may deepen coupling between
-    domain and infrastructure.
+    live ONLY in `spring-boot-starter/`. The modular split landed in
+    **Wave 6 (Round 12)** — 15 Gradle modules — and **Wave 7
+    (Round 17)** turned each into a Maven coordinate of its own
+    (`cdc-outbox-<module>` + BOM). The hexagonal boundary is now
+    enforced at the build graph: any new code that breaks it fails to
+    compile, not just code review.
   * **Code identifiers + comments in en-US.** User-facing strings
     (log messages, error bodies) in pt-BR when the runtime context is
     Brazilian; en-US otherwise. Pick one per module and stay
     consistent.
   * **Document every public class/method** with short KDoc — focus on
     *why*, not *what*. Comments that restate the code rot.
-  * **Errors raise domain exceptions** from the project's exception
-    hierarchy (to be introduced in Wave 1). Never throw raw
-    `RuntimeException`; never use `ResponseStatusException`-like
-    framework exceptions inside domain code. Lesson imported from the
-    user's other project (PR #9 there).
+  * **Errors raise domain exceptions** (or `IllegalStateException` /
+    `IllegalArgumentException` for invariant violations). Never throw
+    raw `RuntimeException`; never use `ResponseStatusException`-like
+    framework exceptions inside domain code. Tests prefer Kotlin's
+    `error("...")` over `throw IllegalStateException(...)` for the
+    detekt `UseCheckOrError` rule.
   * **No silent error paths.** If a defensive branch skips an
     operation (publisher down, payload malformed, slot conflict), it
     MUST emit a log line at WARN or ERROR AND a Micrometer counter
-    once the observability module is in place. The happy path
-    returns "everything OK"; everything else surfaces.
+    via `CdcOutboxMetrics`. The happy path returns "everything OK";
+    everything else surfaces.
   * **No `@Suppress` without a one-line justification** immediately
     above it. Detekt suppressions in particular hide real findings.
+    Round 18 audited the 51 in-tree suppressions and removed 14
+    that hid refactorable code smells; the 37 remaining are
+    documented idioms (guard-clauses, Spring/Jackson patterns,
+    Actuator endpoint catches, etc).
   * **Bean Validation on every DTO that crosses an HTTP boundary**
-    once the Spring Boot starter lands. Front + back validation
+    (Actuator endpoints `/actuator/cdcOutboxDlq` and
+    `/actuator/cdcOutboxReplay`). Front + back validation
     redundancy is desirable.
   * **No `Thread.sleep` in hot loops without re-asserting the
     interrupt** — `catch (e: InterruptedException) {
@@ -143,6 +151,32 @@ Per round:
     `cdc.outbox.*` prefix, surfaced by `@ConfigurationProperties`
     POJOs. Production-mutable settings go through a
     `SystemSettingsService` once that pattern lands.
+
+## Parallel work via worker agents + worktrees
+
+Pattern validated in Round 19 (4 NFs in parallel) and Rounds 9–10
+(Wave 5.1, Wave 5.2 follow-ups). When > 2 independent deliverables
+can be cut along clear file-allowlists, dispatch them as concurrent
+background agents in separate `git worktree`s instead of doing them
+sequentially in the main worktree:
+
+  * **One worker, one worktree, one branch.** Create with
+    `git worktree add /private/tmp/cdc-outbox-<name> -b feat/<name> HEAD`
+    from the main worktree. Brief the agent with the WORKTREE path,
+    not the main repo path, and explicit file-allowlist /
+    file-denylist so agents do not collide.
+  * **Streaming review, not batched.** Tech Lead review per-PR as
+    soon as each worker completes, not at the end. Merge order is
+    arrival order; HISTORY.md conflicts are resolved inline (each
+    worker writes its own sub-section under a shared `## Round N`
+    umbrella).
+  * **GP status report cadence 10/10min.** Schedule a wake-up tick
+    so the user sees worker progress without you having to poll the
+    output files. Worker completion notifications usually interrupt
+    the tick.
+  * **Workers MUST NOT push or open PR.** Orchestrator merges
+    locally in arrival order; one push per merge keeps origin's
+    commit history coherent.
 
 ## Git and persistence
 
