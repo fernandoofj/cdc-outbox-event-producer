@@ -4,6 +4,51 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+## Snapshot 2026-05-17
+
+Estado consolidado pós-Round 19 (paralelo) + Round 18 (suppress cleanup):
+
+  * **`main @ c54c15d`**, versão `0.1.0` publicável via
+    `./gradlew publishAllPublicationsToGitHubPackagesRepository`
+    (16 artefatos: 15 módulos + BOM).
+  * **233/233/0/0** com `RUN_TESTCONTAINERS=1` (3 ITs reais E2E em
+    Testcontainers: Postgres+SNS, MySQL binlog+Rabbit, replay-source
+    MySQL, etc).
+  * **Detekt zero issues**. 51 → 37 `@Suppress` (-14 net via
+    refactor real, +3 novas idiomáticas nas extrações).
+  * **CI**: `.github/workflows/ci.yml` (build + detekt em push/PR;
+    publish gated em tag `v*`). Dependabot weekly grouped.
+  * **Operability**: `/actuator/info` (sensitive-data filter
+    exercitado), `/actuator/cdcOutboxDlq` (peek/replay/abandon),
+    `/actuator/cdcOutboxReplay` (start/status). Grafana dashboard
+    (20 panels) + AlertManager rules (8 alertas) em
+    `docs/operability/`.
+  * **Diagramas Mermaid** refletem 15 módulos + BOM (não mais o
+    monolito Round 9).
+  * **Worktrees / branches feature**: todas limpas.
+
+Backlog open, **excluindo novos players de DB/filas** por escolha
+do mantenedor:
+
+| # | Item | Esforço | Bloqueia? |
+|---|---|---|---|
+| NF2 | Sample consumer app em `examples/` | ~3h | não |
+| NF5 | JMH benchmark suite (throughput real do `CdcProcessor`) | ~1d | não — pré-requisito honesto pra F5 |
+| NF11 | Maven Central publish (signing, Sonatype account) | ~1d | não — GitHub Packages atende interno |
+| F4 | HA / leader election (Postgres advisory lock default) | 2-3d | não — single-instance contract cobre 99% |
+| F5 | Throughput parallelism (partition-based fan-out + AckCoordinator) | 2-4d + fault injection | não — só com NF5 medindo gargalo |
+| F10 | GraalVM native-image (reflection hints) | ~2d | não |
+| F11 | Spring Boot 4 readiness | gated externo (SCA 4 GA) | **bloqueado externamente** |
+| F12 | OpenTelemetry tracing (spans poll/publish/ack) | ~2d | não |
+| NF3 | `CHANGELOG.md` (Keep-a-Changelog) | ~1h | não — pré-requisito Maven Central |
+| NF8 | Mutation testing (PIT) ou property-based parser tests (Kotest) | ~1d | não |
+| NF10 | Secret rotation playbook + DR runbook | ~1d | não — sysop-level |
+
+Removidos por decisão explícita do mantenedor (Round 19): **F2**
+Oracle CDC real, **F3** SQL Server CDC real, **F9** Mongo /
+Cassandra / DynamoDB sources. Stubs permanecem como
+`UnsupportedOperationException` documentados.
+
 ## Round 19 — NF parallel deliveries (NF1 + NF4 + NF6 + NF9)
 
 Quatro entregas "não-funcionais" disparadas em paralelo via git
@@ -295,109 +340,80 @@ superfície Micrometer + Actuator existente. Três artefatos:
 
 **Tech Lead grade: PASS**.
 
-## Round 15 — F6: source-side replay / backfill
+## Round 18 — `@Suppress` cleanup (51 → 37, refactor real)
 
-Novo módulo `replay-source` permite re-emitir uma janela passada
-de eventos do source (MySQL binlog real, Postgres como stub) sem
-disturbar o live producer. Operador chama o Actuator endpoint
-`/actuator/cdcOutboxReplay`, escolhe `{sourceKind, fromPosition,
-toPosition}` e a feature drena a janela em background,
-republicando via `EventSinkRegistry` — mesmo caminho que o
-producer normal.
+Auditoria das 51 supressões `@Suppress` inline em `main`, separando
+as que escondem cheiros refatoráveis das que documentam idiomas
+intencionais. **17 removidas via refactor real**, 14 mantidas (com
+1 nova `@Suppress("ReturnCount")` adicionada em
+`ReplayService.nextStep` extraído — saldo líquido **-16, 51 → 37**).
 
-**Decisões arquiteturais**:
-  * **Phase 1 = MySQL real, Postgres stub**. Postgres logical
-    replication slots são monotônicos — não dá pra "rewind". Real
-    requer ou archived WAL + slot temporário ou
-    `pg_logical_slot_peek_changes` com janela bounded de retention.
-    Cada uma tem decisão operacional do consumidor. O stub
-    `PgWalReplayerStub` lança `UnsupportedReplayException` com
-    mensagem explicando o que falta — fail-fast em vez de silently
-    emitir nada.
-  * **Isolated session no MySQL**: `MySqlBinlogReplayer` abre um
-    `BinaryLogClient` independente com `serverId` no range
-    `[1_048_576, …]` — fora do range típico do live source
-    (default 65_536). Zero interferência.
-  * **ACK = no-op** no replay: a `BoundedMySqlBinlogSource.ack()`
-    não persiste nada. O checkpoint do live producer NUNCA é
-    tocado pela replay path.
-  * **1 job por JVM**: `AtomicReference<ReplayJob?>` mutex. Segundo
-    pedido concorrente → `ConcurrentReplayException` (HTTP 409 no
-    endpoint).
-  * **Cap + timeout**: `cdc.outbox.replay.max-events-per-job`
-    (default 100k) protege contra operador digitar janela ampla
-    demais; `timeoutMs` (default 10min) protege contra binlog
-    drain infinito.
+**Removidas (categoria por categoria)**:
 
-**Surface operacional** (`/actuator/cdcOutboxReplay`):
-  * `GET /` — lista jobs finalizados.
-  * `GET /{jobId}` — snapshot do job (running ou finished) com
-    `eventsProcessed`, `eventsPublished`, `eventsPublishFailed`,
-    `eventsFilteredOut`, `eventsThatWouldBePublished` (dry-run),
-    `cappedAtMaxEvents`, `errorClass`/`errorMessage`.
-  * `POST /start` body `{sourceKind, fromPosition, toPosition,
-    dryRun, override?}` — retorna `{jobId, status: RUNNING}`
-    imediatamente.
+  * **MaxLineLength (1)** — `JsonHelperTest`: fixture JSON longo de
+    produto Shopify movido pra
+    `src/test/resources/fixtures/shopify-product.json`, carregado
+    via ClassLoader. Test deixa de carregar 2KB de JSON inline.
+  * **LongMethod (2)** — `MysqlLagProbe.lagBytes` ganhou helper
+    `loadCheckpoint()` extraído; `AtLeastOnceDeliveryIT` ganhou 5
+    helpers (`buildFailingSnsProducer`, `buildProducer`,
+    `awaitSlotReady`, `awaitMessagesReceived`,
+    `assertThreeMessagesWithRetry`) — test agora lê como
+    Arrange/Act/Assert.
+  * **NestedBlockDepth (1)** — `MySqlOutboxTableCdcSource.poll`
+    extraído `pollLocked(conn)` + `bindInflightAndProject(conn, rs)`;
+    `conn/stmt/rs` nesting cai de 4 níveis pra 3, preservando
+    semântica do `FOR UPDATE` SKIP LOCKED.
+  * **LoopWithTooManyJumpStatements (2)** — `CdcProcessor.runLoop`
+    extraído `pollOnce(): PollResult` sealed class
+    (Empty/Event/Failure); `ReplayService.drainLoop` extraído
+    `nextStep(): DrainStep` sealed class
+    (Timeout/Capped/Drained/Process). Loops viraram `when` único.
+  * **TooGenericExceptionCaught (11)** — narrowed cada
+    `catch (t: Throwable)` para `catch (e: Exception)`. Detekt
+    config local omite `Exception` da exception list, então o
+    catch mais estreito passa sem `@Suppress`. Threads próprias
+    (`CdcOutboxLifecycle`, `CdcProcessorLifecycle`,
+    `MySqlBinlogRowChangeSource.open`, `MySqlBinlogReplayer.open`)
+    ganharam `Thread.UncaughtExceptionHandler` no ThreadFactory
+    pra logar + sinalizar Error (OOM, etc) que antes era
+    silenciosamente recuperado num catch genérico. Para threads
+    que NÃO controlamos (binlog listener da lib, scheduler tick,
+    composite fan-out), catch fica in-method mas narrowed pra
+    Exception — semanticamente cleaner (Exception = recuperável;
+    Error = thread-level emergency).
 
-**Auth defence-in-depth** (igual ao DLQ replay):
-  1. Auto-config gated em `@ConditionalOnClass(SecurityFilterChain)`
-     — sem Spring Security, endpoint não sobe.
-  2. Cada operação chama `requireAuthenticated()` em runtime,
-     rejeita anônimo com 403 mesmo se o consumer configurou
-     Security permissivo por engano.
+**Mantidas (37 — design decisions documentados)**:
 
-**Métricas novas**:
-  * `cdc.outbox.replay.events{source_kind, target_scheme, outcome}`
-    — counter, um por evento re-publicado.
-  * `cdc.outbox.replay.duration{source_kind}` — timer, duração do
-    job inteiro (success ou failure).
-
-**Tests novos (10, todos verde com `RUN_TESTCONTAINERS=1`)**:
-  * `ReplayServiceTest` (9 unit): dispatch por sourceKind,
-    unsupported kind throws, mutex de concurrent jobs, dry-run
-    sem efeitos, override de routing, falha de publish não aborta
-    job, eventos filtrados pelo mapping são contados, falha no
-    `openBoundedSource` marca status FAILED, getJob desconhecido
-    devolve null.
-  * `MySqlBinlogReplayerIT` (1, Testcontainers MySQL): cria
-    tabela, lê posição inicial via `SHOW MASTER STATUS`, insere 5
-    rows, lê posição final, abre `MySqlBinlogReplayer` bounded
-    nessa janela, drena, valida que os 5 INSERTs vieram com
-    column names resolvidos via INFORMATION_SCHEMA (não `col0`/
-    `col1`/…).
-
-**Trade-offs aceitos**:
-  * **Postgres real fica pra próximo ciclo**. Stub explícito é
-    melhor que feature meio-feita.
-  * **Replay pode duplicar eventos downstream** se a janela
-    operada incluir mensagens que JÁ foram processadas. Operador
-    é responsável por escolher a janela; consumer-side
-    idempotência é assumida (mesmo contrato at-least-once do
-    producer).
-  * **Cross-aggregate ordering**: não garantido entre eventos do
-    replay e eventos live concorrentes (são canais paralelos
-    pelo design).
+  * 19 × ReturnCount (com +1 nova em `nextStep`) — guard-clause
+    sequences em parsers / source.poll / checkpoint loaders. Cada
+    `return` é uma saída semanticamente distinta.
+  * 11 × LongParameterList — Spring `@Bean` factories,
+    `@ConfigurationProperties` data classes, envelopes wal2json
+    polimórficos. Refactor pra wrapper data class só rebatiza.
+  * 6 × TooManyFunctions — adapters intencionalmente carregam um
+    método por tipo de evento (binlog `TABLE_MAP`/WRITE_ROWS/…).
+    Split em sub-classes espalha contexto.
+  * 1 × MagicNumber em `CdcOutboxProperties` — defaults numéricos
+    são nomeados pelo campo da data class.
 
 **Verification**
 
-  * `./gradlew detekt` PASS (0 weighted issues — módulo novo +
-    suppressions com rationale onde a regra default era inadequada).
-  * Full sweep com `RUN_TESTCONTAINERS=1` +
-    `DOCKER_API_VERSION=1.43`:
-    **227 tests, 227 successes, 0 failures, 0 skipped** (217
-    do Round 14 + 10 novos).
-  * 11 novos arquivos + 4 modificados.
+  * `./gradlew detekt` PASS (0 weighted issues).
+  * Sweep com `RUN_TESTCONTAINERS=1`: **230/230/0/0** — zero
+    regressão comportamental, todos os refactors são estruturais.
 
 **Tech Lead persona**
 
 Tech Lead persona: **PASS**.
-  (a) Replay isolado: ACK no-op no replay path garante que o
-      checkpoint do live producer não é nunca tocado.
-  (b) Phase 1 MySQL-only com Postgres stub explícito: melhor
-      uma feature meio-implementada com fail-fast do que dois
-      meio-implementados frágeis.
-  (c) Mesmo pipeline (`EventSinkRegistry.publish`) — naturalmente
-      herda retry + DLQ + métricas do producer normal.
+  (a) Refactors são estruturais — extract helper, sealed-class
+      result. Comportamento idêntico.
+  (b) Narrowing Throwable → Exception preserva log + métrica;
+      Error agora propaga ao UncaughtExceptionHandler em threads
+      próprias, exatamente o mesmo sinal operacional sem hide.
+  (c) Suppressions mantidas (`ReturnCount`, `LongParameterList`,
+      `TooManyFunctions`, `MagicNumber`) cada uma com comentário
+      inline explicando o porquê.
 
 ## Round 17 — Wave 7 — Multi-artifact Maven publish (F1)
 
