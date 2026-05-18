@@ -23,9 +23,9 @@ dependencies {
     api("com.mysql:mysql-connector-j:8.4.0")
     api("com.zendesk:mysql-binlog-connector-java:0.29.2")
 
-    api("io.awspring.cloud:spring-cloud-aws-sns:3.2.1")
-    api("io.awspring.cloud:spring-cloud-aws-sqs:3.2.1")
-    api("org.springframework.amqp:spring-rabbit:3.1.7")
+    api("io.awspring.cloud:spring-cloud-aws-sns:4.0.2")
+    api("io.awspring.cloud:spring-cloud-aws-sqs:4.0.2")
+    api("org.springframework.amqp:spring-rabbit:4.0.3")
     api("org.springframework.boot:spring-boot-autoconfigure:3.3.5")
     api("org.springframework.boot:spring-boot-test:3.3.5")
 }
