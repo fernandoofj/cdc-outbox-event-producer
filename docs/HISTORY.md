@@ -4,6 +4,136 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+## Round 19 — NF6 Operability bundle
+
+Entrega o pacote operacional pronto-para-deploy em torno da
+superfície Micrometer + Actuator existente. Três artefatos:
+
+  1. **`docs/operability/grafana-dashboard.json`** — dashboard
+     Grafana 10+ com 15 painéis em 5 linhas (Throughput, Latency,
+     Recovery, Source-specific, Replay). Variáveis `datasource`,
+     `slot` e `sink` para multi-tenant. Métricas cobertas:
+     `cdc.outbox.messages.{read,published,failed,
+     dead_lettered,discarded}`, `publish.{duration,retries}`,
+     `source.lag_bytes`, `source.binlog.{parse_errors,
+     column_resolution.fallbacks,schema_drift}`,
+     `checkpoint.orphans_swept`, `dead_letter.failures`,
+     `dlq.replays`, `replay.{events,duration}`. Nomes Prometheus
+     (dot→underscore + `_total` em counters).
+  2. **`docs/operability/alertmanager-rules.yml`** — `PrometheusRule`
+     (Prometheus Operator) com 8 alertas + runbook stubs +
+     labels (severity/team/component): `CdcOutboxDeadLetterFailures`
+     (critical), `CdcOutboxHealthDown` (critical),
+     `CdcOutboxHighLag` (> 100 MiB por 10 min),
+     `CdcOutboxNoMessagesRead` (slot parado), `CdcOutboxSchemaDrift`,
+     `CdcOutboxReplayPublishFailing`,
+     `CdcOutboxDeadLetterRising` (> 0.1 msg/s),
+     `CdcOutboxOrphanCheckpoints` (> 5 sweeps/h).
+  3. **`CdcOutboxInfoContributor` + `CdcOutboxInfoAutoConfiguration`** —
+     Actuator info contributor exposto sob a chave `cdc-outbox` em
+     `/actuator/info`. Surfaceia: `version` (do `Implementation-Version`
+     do manifest), `processor.kind`, `replication.{slot,outputPlugin,
+     formatVersion}`, `source.type` (nome da classe), `sinks.schemes`
+     (resolvido em runtime via `EventSinkRegistry.knownSchemes()`),
+     `mappings.count`, `checkpoint.{enabled,directory}`,
+     `lag.{enabled,interval}`, `dlqReplay.enabled`, `replay.enabled`.
+     **Sensitive-data policy** documentada e exercitada por teste:
+     host/usuário/senha do Postgres e nomes de fila DLQ NÃO aparecem
+     no payload (lição de hardening — `/actuator/info` costuma ser
+     público).
+
+**Decisões arquiteturais**:
+  * **Auto-config dedicada** (`CdcOutboxInfoAutoConfiguration`)
+    em vez de colocar o `@Bean` na health auto-config. Consumers
+    podem flipar uma sem afetar a outra; `@ConditionalOnClass(
+    InfoContributor::class)` mantém o starter usável em apps sem
+    Actuator.
+  * **`ObjectProvider<EventSinkRegistry>` + `ObjectProvider<CdcSource>`**
+    em vez de injeção direta. Um deploy mal-configurado pode subir
+    sem sink ou source registrado — o info contributor é justamente
+    a ferramenta de diagnóstico nesse cenário. Injeção direta
+    quebraria o refresh.
+  * **`schemes` resolvido em runtime** via
+    `EventSinkRegistry.knownSchemes()` ao invés de derivar de
+    propriedades. Reflete o que realmente está ativo, não o que
+    está configurado (que pode ser diferente quando o
+    `@ConditionalOnClass` desliga um adapter por classpath).
+  * **Versão lida do manifest** (`this::class.java.\`package\`.
+    implementationVersion`), com fallback `"unknown"` para
+    classpath explodido (testes/IDE). Spring Boot Gradle plugin
+    popula automaticamente para `bootJar`.
+  * **Alertas com `for:` deliberadamente conservador** — 5 min de
+    rate antes de paginar. Evita ruído em picos transitórios mas
+    detecta degradação real. Tarefa do operador é tunar pra cada
+    SLO específico via override do `PrometheusRule`.
+
+**Verification**
+
+  * `./gradlew :spring-boot-starter:compileKotlin` — **BUILD
+    SUCCESSFUL** (30 actionable tasks).
+  * `./gradlew :spring-boot-starter:test` — **BUILD SUCCESSFUL**,
+    35 tests passed (32 pré-existentes + 3 novos no
+    `CdcOutboxInfoContributorTest`), 2 skipped (testcontainers
+    desligados — gate `RUN_TESTCONTAINERS`).
+  * `./gradlew detekt` — **BUILD SUCCESSFUL** (15 módulos, 0
+    weighted issues).
+  * `python3 -c 'import json; json.load(open("docs/operability/
+    grafana-dashboard.json"))'` — JSON parse OK (15 panels + 5
+    rows).
+  * `python3 -c 'import yaml; yaml.safe_load(open("docs/
+    operability/alertmanager-rules.yml"))'` — YAML parse OK
+    (8 rules, kind=PrometheusRule).
+
+**Files added** (5 novos):
+  * `docs/operability/grafana-dashboard.json`
+  * `docs/operability/alertmanager-rules.yml`
+  * `spring-boot-starter/src/main/kotlin/.../infra/spring/CdcOutboxInfoContributor.kt`
+  * `spring-boot-starter/src/main/kotlin/.../infra/spring/CdcOutboxInfoAutoConfiguration.kt`
+  * `spring-boot-starter/src/test/kotlin/.../infra/spring/CdcOutboxInfoContributorTest.kt`
+
+**Files modified** (3):
+  * `spring-boot-starter/src/main/resources/META-INF/spring/
+    org.springframework.boot.autoconfigure.AutoConfiguration.imports`
+    (registra a nova auto-config)
+  * `README.md` (nova seção `### Operabilidade`)
+  * `docs/HISTORY.md` (este registro)
+
+**Tech Lead persona (self-review)**
+
+  * **BLOCKER**: PASS — passwords/hosts/queue-names não vazam no
+    `/actuator/info`. Política documentada no KDoc do contributor
+    + exercitada por `does NOT expose passwords, db hosts or dlq
+    queue names` test (sentinel strings garantem que substring
+    leaks falham o teste).
+  * **MAJOR**: PASS — `CdcOutboxInfoAutoConfiguration` registrada
+    em `AutoConfiguration.imports`, gated por `@ConditionalOnClass(
+    InfoContributor::class)` e `@ConditionalOnProperty(enabled=true)`.
+  * **MAJOR**: PASS — métricas no dashboard usam naming Prometheus
+    correto (snake_case, sufixo `_total` em counters, `_seconds_
+    bucket` em timer histogram). Cross-validado contra
+    `CdcOutboxMetrics.kt`.
+  * **MINOR**: PASS — labels têm `severity`, `team: platform-data`,
+    `component: cdc-outbox`. Annotations têm `summary`,
+    `description` multilinha e `runbook_url` stub (a ser
+    preenchido pela equipe consumidora).
+
+**Trade-offs aceitos**:
+  * Runbook URLs são placeholders (`https://example.com/runbooks/
+    cdc-outbox#...`). A intenção é que a equipe consumidora os
+    redirecione para seu próprio sistema de runbooks (Confluence,
+    Backstage, etc) — esses links são parametrização operacional,
+    não código.
+  * Dashboard não tem painel de alerta integrado (Grafana Alerting).
+    Decisão deliberada — alerting fica em AlertManager (centralizado,
+    silenciamento, routing). Grafana é só visualização.
+  * Stub do Postgres replay (`PgWalReplayerStub`) já contribui pro
+    counter `cdc.outbox.replay.events{outcome=publish_failed}` em
+    teoria, mas como o stub falha antes de qualquer publish, esse
+    painel do dashboard ficará em zero pra Postgres até a feature
+    real chegar. Aceito — visualização honesta do estado atual.
+
+**Tech Lead grade: PASS**.
+
 ## Round 15 — F6: source-side replay / backfill
 
 Novo módulo `replay-source` permite re-emitir uma janela passada
