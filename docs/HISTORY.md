@@ -4,13 +4,79 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
-## Round 19 — NF9 Dependabot config
+## Round 19 — NF parallel deliveries (NF1 + NF4 + NF6 + NF9)
+
+Quatro entregas "não-funcionais" disparadas em paralelo via git
+worktrees + worker agents, mergeadas em streaming conforme cada
+worker conclui. Objetivo: fechar os gaps mais visíveis de
+production-readiness sem adicionar complexidade no código.
+
+### NF1 — GitHub Actions CI
+
+**Problema que resolve**: até aqui o repo dependia inteiramente do
+disco do mantenedor para saber se a build estava verde. Os workflows
+herdados (`build.yaml`, `release.yaml`) ainda apontavam pra JDK 17 e
+rodavam um `./gradlew build` cego que (a) não exercitava os módulos
+publicados individualmente e (b) não bloqueava merge num PR vermelho.
+NF1 fecha esse gap com um pipeline mínimo, idiomático e auditável.
+
+**O que tem dentro** (`.github/workflows/ci.yml`):
+
+  * **Job `build`** — dispara em `push` pra `main` e em qualquer
+    `pull_request` mirando `main`. Faz `checkout`, sobe JDK 21
+    Corretto via `actions/setup-java@v4` (que já cacheia
+    `~/.gradle/caches` e `~/.gradle/wrapper` via `cache: gradle`),
+    roda `compileKotlin compileTestKotlin`, executa o sweep default
+    de testes (`test -x startDockerCompose -x stopDockerCompose`)
+    e fecha com `detekt` em modo zero-issue. Em falha, sobe os
+    relatórios HTML/XML de teste + detekt como artifact por 14
+    dias.
+  * **Job `publish`** — dispara *só* em `push` de tag matching
+    `v*` (ex.: `v0.1.0`, `v0.2.0`), depende do `build` passar e
+    chama `publishAllPublicationsToGitHubPackagesRepository`
+    propagando `GITHUB_ACTOR` + `GITHUB_TOKEN` como env vars (a
+    `PublishingExtension` em `build.gradle.kts` lê esses dois
+    nomes diretamente). `permissions: packages: write` no nível
+    do job, `contents: read` em ambos.
+  * **Concurrency**: `cancel-in-progress` por `ref` — pushes
+    sucessivos no mesmo branch cancelam a corrida anterior, evita
+    fila de builds redundantes em PRs ativos.
+
+**Trade-offs aceitos**:
+  * **Testcontainers ITs ficam fora do CI hospedado.** Os três
+    cenários E2E (Postgres+SNS, MySQL+RabbitMQ,
+    `AtLeastOnceDeliveryIT`) usam `@EnabledIfEnvironmentVariable`
+    em `RUN_TESTCONTAINERS` e o pipeline não exporta essa env,
+    então os três se reportam como skipped. Motivo: GitHub
+    runners não têm a configuração `DOCKER_API_VERSION=1.43` que
+    o OrbStack local exige. Sweep completo continua local antes
+    de tag de release.
+  * **`-x generateGitProperties` não entra** porque o plugin
+    `gradle-git-properties` está com `apply false` no root e a
+    task não existe no graph atual — incluir o `-x` quebra a
+    build com `Task 'generateGitProperties' not found`.
+
+**Verification local** (JDK 21 Corretto):
+  * `./gradlew compileKotlin compileTestKotlin` — BUILD SUCCESSFUL
+    in 48s.
+  * `./gradlew detekt` — **0 weighted issues**.
+  * `./gradlew test -x startDockerCompose -x stopDockerCompose` —
+    **230 tests, 5 skipped, 0 failures, 0 errors**.
+
+Tech Lead PASS:
+  (a) Zero secret hardcoded: `GITHUB_TOKEN` vem de
+      `${{ secrets.GITHUB_TOKEN }}`, `GITHUB_ACTOR` de
+      `${{ github.actor }}`.
+  (b) Publish gated em tag `v*` via `on.push.tags` + `if:` no job.
+  (c) `needs: build` impede artifact sobre commit vermelho.
+  (d) Cache do Gradle via `actions/setup-java@v4` — menos
+      superfície que `actions/cache` ad-hoc.
+
+### NF9 — Dependabot config
 
 Adiciona `.github/dependabot.yml` cobrindo os ecossistemas `gradle`
 (15 módulos + BOM) e `github-actions`, com grupos por família de
-dependência pra reduzir ruído de PR. Worker dedicado dentro da Onda
-de NFs ("non-functional"); paralelo ao NF1 que adicionou os workflows
-de CI propriamente ditos.
+dependência pra reduzir ruído de PR.
 
 **Por que `weekly`, não `daily`**:
 
@@ -40,63 +106,29 @@ Cada grupo gera UMA PR por semana com TODAS as atualizações da
 família. Revisão fica trivial: ou o teste passa (merge), ou não
 passa (investiga ali mesmo, sem cruzar PRs).
 
-**Por que sem `ignore`**:
+**Sem `ignore`**: Não temos majors travados intencionalmente nem
+dependências legacy que precisem ficar congeladas. Visibilidade
+total > ruído extra.
 
-Não temos majors travados intencionalmente (toda Spring/Kotlin/AWS
-bump vira *issue* de upgrade explícito), nem dependências legacy que
-precisem ficar congeladas. Visibilidade total > ruído extra; é mais
-fácil fechar uma PR conhecida-má do que descobrir 6 meses depois
-que existe um CVE que o Dependabot nem viu porque alguém colocou um
-`ignore` em 2026.
-
-**Timezone explícita** (`America/Sao_Paulo`):
-
-Default do Dependabot é UTC. Schedule "09:00 UTC" no Brasil é 06:00
-local — PRs chegam antes do dia útil começar e ficam esquecidas até
-a tarde. Fixando `09:00 America/Sao_Paulo` (12:00 UTC) as PRs caem
-na inbox no início da janela de revisão.
+**Timezone explícita** (`America/Sao_Paulo`): default Dependabot é
+UTC. Fixando `09:00 America/Sao_Paulo` (12:00 UTC) as PRs caem na
+inbox no início da janela de revisão local.
 
 **Glob, não regex** (verificado): patterns como `spring-boot-*`,
-`software.amazon.awssdk:*`, `com.fasterxml.jackson*` são glob no
-sentido Dependabot (fnmatch-style) — NÃO regex. Erro comum é
-escrever `spring-boot.*` esperando regex; isso silenciosamente
-não matcha nada. Patterns aqui usam `*` somente.
+`software.amazon.awssdk:*` são glob no sentido Dependabot
+(fnmatch-style) — escrever `spring-boot.*` esperando regex
+silenciosamente não matcha nada.
 
-**README badge**: adicionado shield estático
+**README badge**: shield estático
 `![Dependabot](https://img.shields.io/badge/dependabot-active-brightgreen)`
-logo abaixo do H1. Não é badge dinâmico (Dependabot não expõe API
-pública pra status do repo); é sinalização visual de que o canal
-existe e está ativo.
+ao lado do badge de CI. Dependabot não expõe API pública pra status
+do repo, então é sinalização visual de que o canal existe e está
+ativo.
 
-**Mudanças**:
-
-  * `.github/dependabot.yml` (novo, 110 linhas com comentários
-    explicando cada grupo).
-  * `README.md` (+1 linha): badge Dependabot logo após o H1.
-  * `docs/HISTORY.md`: esta entrada.
-
-**Verification**
-
-  * Sintaxe YAML válida (`cat` confere indentação consistente,
-    aspas balanceadas, sem tabs).
-  * Patterns auditados manualmente: todos usam glob `*`, nenhum
-    `.*` (regex-style) que falharia silenciosamente.
-  * Tech Lead self-review: o nome `io.awspring.cloud:*` (Spring
-    Cloud AWS 3.2) está corretamente no grupo `spring-frameworks`
-    — o ID Maven mudou de `org.springframework.cloud:spring-cloud-aws-*`
-    pra `io.awspring.cloud:*` na linha 3.x. Pattern legacy
-    removido.
-
-**Tech Lead persona**
-
-Tech Lead persona: **PASS**.
-  (a) Weekly + grouped é o sweet spot pra projeto solo multi-módulo
-      — diário ou ungrouped vira spam, monthly atrasa CVE patches.
-  (b) Sem `ignore` é a postura certa pra repo ainda em
-      desenvolvimento ativo — preferimos ver e descartar do que
-      perder e descobrir tarde.
-  (c) Timezone explícita evita janela "PRs caem 06:00 ninguém
-      atende"; pequeno detalhe que faz diferença operacional real.
+Tech Lead PASS:
+  (a) Weekly + grouped é o sweet spot pra projeto solo multi-módulo.
+  (b) Sem `ignore` é a postura certa pra repo em desenvolvimento ativo.
+  (c) Timezone explícita evita janela "PRs caem 06:00 ninguém atende".
 
 ## Round 15 — F6: source-side replay / backfill
 
