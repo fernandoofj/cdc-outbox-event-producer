@@ -39,92 +39,188 @@
     0.29.2 (binlog), HikariCP 5.1, Micrometer 1.12, Testcontainers 1.20.
   * O núcleo (`core/`) compila **sem** Spring e **sem** drivers JDBC.
 
-A separação hexagonal é um princípio: domínio e portas em `core/`,
-adaptadores em `adapter/`, infraestrutura Spring em `infra/spring/`. A
-divisão por módulos Gradle (`core/`, `adapter-source-*/`,
-`adapter-sink-*/`, `spring-boot-starter/`) entra na Onda 6 (item 11
-da roadmap).
+A separação hexagonal é um princípio: domínio e portas em `core`,
+adaptadores em módulos `source-*` / `sink-*` / `checkpoint-*` /
+`lag-probes` / `dlq-replay` / `replay-source`, infraestrutura Spring
+em `spring-boot-starter`. A **divisão por módulos Gradle entrou na
+Onda 6** (item 11 da roadmap, Round 12) e na **Wave 7** (Round 17)
+cada módulo virou uma coordenada Maven própria, com um BOM
+(`cdc-outbox-bom`) pinando versões.
 
 ## Mapa do código (hexagonal)
 
+15 módulos Gradle + 1 BOM. Cada um publica `cdc-outbox-<módulo>`
+(Wave 7); `core` no fundo, adapters em volta, `spring-boot-starter`
+no topo amarrando tudo via auto-config.
+
 ```
-src/main/kotlin/br/com/fltech/cdc/outbox/publisher/
-├── core/                                      ← núcleo puro (sem Spring, sem drivers)
-│   ├── domain/                                ← tipos de valor
-│   │   ├── OutboxEvent.kt
-│   │   ├── Routing.kt
-│   │   ├── RowChange.kt
-│   │   └── TableMapping.kt
-│   ├── port/                                  ← interfaces puras
-│   │   ├── CdcSource.kt              (driving — origem alto-nível)
-│   │   ├── RowChangeSource.kt        (driving — origem row-level)
-│   │   ├── EventSink.kt              (driven — destino broker)
-│   │   ├── EventSinkRegistry.kt      (driven — resolução por scheme)
-│   │   ├── DeadLetterPort.kt         (driven — DLQ hexagonal)
-│   │   ├── MappingRules.kt           (driven — projeção RowChange→OutboxEvent)
-│   │   └── CheckpointStore.kt        (driven — persistência de checkpoint; Onda 5.2)
-│   └── application/                           ← orquestração
-│       ├── CdcProcessor.kt           (loop hexagonal + retry + DLQ)
-│       ├── MappingCdcSource.kt       (decorator RowChangeSource → CdcSource)
-│       └── DefaultMappingRules.kt    (motor de TableMapping)
+cdc-outbox-event-producer/
+├── core/                                  ← núcleo puro, zero framework deps
+│   ├── domain/   OutboxEvent, Routing, RowChange, TableMapping
+│   ├── port/     CdcSource, RowChangeSource (driving)
+│   │             EventSink, EventSinkRegistry, DeadLetterPort,
+│   │             MappingRules, CheckpointStore, LagProbe,
+│   │             SourceReplayer (driven)
+│   └── application/  CdcProcessor, MappingCdcSource, DefaultMappingRules
 │
-├── adapter/                                   ← anel adaptador
-│   ├── source/
-│   │   ├── postgres/PgLogicalReplicationCdcSource.kt
-│   │   ├── postgres/PgWalRowChangeSource.kt           (Onda 5.2)
-│   │   ├── mysql/MySqlOutboxTableCdcSource.kt
-│   │   ├── mysql/MySqlBinlogRowChangeSource.kt
-│   │   ├── sqlserver/SqlServerCdcSourceStub.kt        (placeholder)
-│   │   └── oracle/OracleCdcSourceStub.kt              (placeholder)
-│   ├── sink/
-│   │   ├── sns/SnsEventSink.kt
-│   │   ├── sqs/SqsEventSink.kt
-│   │   ├── kafka/KafkaEventSink.kt
-│   │   ├── rabbitmq/RabbitMqEventSink.kt
-│   │   ├── composite/CompositeEventSink.kt
-│   │   ├── router/SchemeRouterEventSink.kt
-│   │   └── registry/DefaultEventSinkRegistry.kt
-│   ├── checkpoint/FileCheckpointStore.kt              (Onda 5.2)
-│   └── deadletter/LegacyDeadLetterPortAdapter.kt
+├── source-postgres/                       ← Wave 6
+│   ├── adapter/source/postgres/PgLogicalReplicationCdcSource.kt
+│   ├── adapter/source/postgres/PgWalRowChangeSource.kt        (Onda 5.2)
+│   └── replication/                       ← infra Postgres (slot, parser wal2json, pool)
+│       ├── config/{Postgres,Replication}Configuration.kt
+│       ├── connector/{Postgres,Default,HikariCP}Connector.kt
+│       └── strategy/ByteToClassParser*.kt  + model/{Slot,Message,Insert,Update,Delete}*.kt
 │
-├── infra/spring/                              ← auto-configurações Spring Boot
-│   ├── CdcOutboxAutoConfiguration.kt
-│   ├── CdcOutboxHexagonalAutoConfiguration.kt
-│   ├── CdcOutboxSinkAutoConfiguration.kt
-│   ├── CdcOutboxMappingAutoConfiguration.kt
-│   ├── CdcOutboxHealthAutoConfiguration.kt
-│   ├── CdcOutboxProperties.kt
-│   ├── CdcOutboxLifecycle.kt              (legado)
-│   ├── CdcProcessorLifecycle.kt           (hex)
-│   ├── CdcOutboxHealthIndicator.kt        (legado)
-│   └── CdcProcessorHealthIndicator.kt     (hex)
+├── source-mysql/                          ← Wave 6
+│   ├── adapter/source/mysql/MySqlOutboxTableCdcSource.kt
+│   └── adapter/source/mysql/MySqlBinlogRowChangeSource.kt
 │
-├── workflow/                                  ← orquestrador legado (chain pré-Onda 3)
-│   ├── SlotReaderMessageProducer.kt
-│   ├── SlotReaderCallback.kt
-│   └── DestinationType.kt
+├── source-stubs/                          ← Wave 6
+│   ├── adapter/source/sqlserver/SqlServerCdcSourceStub.kt     (placeholder)
+│   └── adapter/source/oracle/OracleCdcSourceStub.kt           (placeholder)
 │
-├── replication/                               ← infraestrutura Postgres (slot, parser, pool)
-│   ├── config/{Postgres,Replication}Configuration.kt
-│   ├── connector/{Postgres,Default,HikariCP}Connector.kt
-│   ├── strategy/ByteToClassParser*.kt
-│   └── model/{Slot,Message,Insert,Update,Delete}*.kt
+├── sink-aws/                              ← Wave 6
+│   ├── adapter/sink/sns/SnsEventSink.kt
+│   ├── adapter/sink/sqs/SqsEventSink.kt
+│   └── aws/sns,sqs/                       ← producers SCA 3 (Sns/SqsTemplate)
 │
-├── aws/sns,sqs/                               ← producers SCA 3 (`Sns/SqsTemplate`)
-├── deadletter/                                ← `DeadLetterSink` legado + `SqsDeadLetterSink`
-├── retry/BackOff.kt                           ← `ExponentialBackOff` + interface
-├── observability/CdcOutboxMetrics.kt          ← façade Micrometer
-└── helper, jackson, ...
+├── sink-kafka/                            ← Wave 6
+│   └── adapter/sink/kafka/KafkaEventSink.kt
+│
+├── sink-rabbitmq/                         ← Wave 6
+│   └── adapter/sink/rabbitmq/RabbitMqEventSink.kt
+│
+├── sink-composition/                      ← Wave 6
+│   ├── adapter/sink/composite/CompositeEventSink.kt
+│   ├── adapter/sink/router/SchemeRouterEventSink.kt
+│   └── adapter/sink/registry/DefaultEventSinkRegistry.kt
+│
+├── checkpoint-file/                       ← Onda 5.2
+│   └── adapter/checkpoint/FileCheckpointStore.kt
+│
+├── lag-probes/                            ← Round 10
+│   ├── adapter/lag/postgres/PostgresLagProbe.kt
+│   ├── adapter/lag/mysql/MysqlLagProbe.kt
+│   └── observability/LagProbeScheduler.kt
+│
+├── dlq-replay/                            ← Round 14
+│   └── adapter actuator/cdcOutboxDlq    (peek/replay/abandon)
+│
+├── replay-source/                         ← Round 15
+│   ├── adapter actuator/cdcOutboxReplay
+│   ├── replay/MySqlBinlogReplayer.kt
+│   └── replay/PgWalReplayerStub.kt
+│
+├── legacy/                                ← chain pré-Onda 5 (opt-in)
+│   ├── workflow/SlotReaderMessageProducer.kt + SlotReaderCallback + DestinationType
+│   ├── deadletter/{DeadLetterSink, SqsDeadLetterSink}
+│   └── adapter/deadletter/LegacyDeadLetterPortAdapter.kt
+│
+├── spring-boot-starter/                   ← único módulo que conhece a superfície
+│   └── infra/spring/                      ← auto-configurações Spring Boot
+│       ├── CdcOutboxAutoConfiguration.kt
+│       ├── CdcOutboxHexagonalAutoConfiguration.kt
+│       ├── CdcOutboxSinkAutoConfiguration.kt
+│       ├── CdcOutboxMappingAutoConfiguration.kt
+│       ├── CdcOutboxHealthAutoConfiguration.kt
+│       ├── CdcOutboxProperties.kt
+│       ├── CdcOutboxLifecycle.kt          (legado, ativo com processor.kind=LEGACY)
+│       ├── CdcProcessorLifecycle.kt       (hex)
+│       ├── CdcOutboxHealthIndicator.kt    (legado)
+│       └── CdcProcessorHealthIndicator.kt (hex)
+│
+├── test-support/                          ← fixtures compartilhadas (só testImplementation)
+│   ├── E2EContainers, IntegrationBase
+│   ├── InMemoryCheckpointStore (test double)
+│   └── configuration mothers
+│
+└── bom/                                   ← Wave 7 — POM-only, pina versões
 ```
 
-Regras invioláveis:
+Regras invioláveis (enforçadas no build graph desde Wave 6):
 
-  * Nada em `core/` importa de `adapter/`, `infra/`, `workflow/`,
-    `aws/`, `replication/` (drivers).
-  * Adaptadores podem importar de `core/`. O caminho contrário é
+  * `core` é Kotlin puro — não importa Spring, drivers, broker
+    templates, AWS SDK.
+  * Adaptadores podem depender de `core`. O caminho contrário é
     interdição arquitetural — quebra de hexágono.
-  * Spring (anotações `@Bean`, `@Conditional*`, `@ConfigurationProperties`)
-    aparece **apenas** em `infra/spring/`.
+  * Spring (anotações `@Bean`, `@Conditional*`, `@ConfigurationProperties`,
+    `SmartLifecycle`, `HealthIndicator`) só vive em `spring-boot-starter`.
+  * Cada adapter declara seu driver/template como `compileOnly` — o
+    consumidor traz a versão.
+
+```mermaid
+flowchart TB
+  subgraph Top[" "]
+    Starter["spring-boot-starter"]
+  end
+  subgraph Ring1[" "]
+    Lag["lag-probes"]
+    DlqRep["dlq-replay"]
+    RepSrc["replay-source"]
+    Legacy["legacy"]
+  end
+  subgraph Ring2[" "]
+    SinkAws["sink-aws"]
+    SinkKfk["sink-kafka"]
+    SinkRmq["sink-rabbitmq"]
+    SinkComp["sink-composition"]
+    SrcPg["source-postgres"]
+    SrcMy["source-mysql"]
+    SrcStubs["source-stubs"]
+    Ckp["checkpoint-file"]
+  end
+  subgraph Base[" "]
+    Core["core"]
+  end
+  subgraph Side[" "]
+    BOM["bom (POM-only)"]
+    TS["test-support"]
+  end
+
+  Starter --> Core
+  Starter -. compileOnly .-> SinkAws
+  Starter -. compileOnly .-> SinkKfk
+  Starter -. compileOnly .-> SinkRmq
+  Starter -. compileOnly .-> SinkComp
+  Starter -. compileOnly .-> SrcPg
+  Starter -. compileOnly .-> SrcMy
+  Starter -. compileOnly .-> SrcStubs
+  Starter -. compileOnly .-> Ckp
+  Starter -. compileOnly .-> Lag
+  Starter -. compileOnly .-> DlqRep
+  Starter -. compileOnly .-> RepSrc
+  Starter -. compileOnly .-> Legacy
+
+  SrcPg --> Core
+  SrcMy --> Core
+  SrcStubs --> Core
+  Ckp --> Core
+  SinkAws --> Core
+  SinkKfk --> Core
+  SinkRmq --> Core
+  SinkComp --> Core
+
+  Lag --> Core
+  Lag --> SrcPg
+  Lag --> SrcMy
+  Lag --> Ckp
+  DlqRep --> Core
+  RepSrc --> Core
+  RepSrc --> SrcMy
+  RepSrc --> SrcPg
+  Legacy --> Core
+  Legacy --> SrcPg
+  Legacy --> SinkAws
+
+  BOM -. constraint .-> Core
+  BOM -. constraint .-> Starter
+  TS --> Core
+  TS --> SrcPg
+  TS --> SrcMy
+  TS --> SinkAws
+  TS --> SinkRmq
+  TS --> Ckp
+```
 
 > Diagrama hexagonal de containers e sequência feliz Postgres → SNS
 > vivem no [README](../README.md#diagrama-hexagonal); aqui ficam o
@@ -484,14 +580,18 @@ Detalhes operacionais:
 
 ### Composição de sinks
 
+`EventSinkRegistry` + `CompositeEventSink` + `SchemeRouterEventSink`
+moram em **sink-composition**; cada leaf sink mora no seu próprio
+módulo (`sink-aws`, `sink-kafka`, `sink-rabbitmq`).
+
 ```mermaid
 flowchart LR
-  Proc[CdcProcessor] -->|publish| Reg{EventSinkRegistry}
-  Reg -->|sns| Sns[SnsEventSink]
-  Reg -->|sqs| Sqs[SqsEventSink]
-  Reg -->|kafka| Kfk[KafkaEventSink]
-  Reg -->|amqp| Rmq[RabbitMqEventSink]
-  Reg -->|sns durante migração| Comp[CompositeEventSink]
+  Proc["CdcProcessor<br/>(core)"] -->|publish| Reg{"EventSinkRegistry<br/>(sink-composition)"}
+  Reg -->|sns| Sns["SnsEventSink<br/>(sink-aws)"]
+  Reg -->|sqs| Sqs["SqsEventSink<br/>(sink-aws)"]
+  Reg -->|kafka| Kfk["KafkaEventSink<br/>(sink-kafka)"]
+  Reg -->|amqp| Rmq["RabbitMqEventSink<br/>(sink-rabbitmq)"]
+  Reg -->|sns durante migração| Comp["CompositeEventSink<br/>(sink-composition)"]
   Comp --> Sns
   Comp --> Kfk
 ```
@@ -611,15 +711,15 @@ Pontos não óbvios:
 ```mermaid
 sequenceDiagram
     autonumber
-    participant App as Aplicação
+    participant App as Aplicação consumidora
     participant MY as MySQL
-    participant Cli as BinaryLogClient
-    participant Row as MySqlBinlogRowChangeSource
-    participant Map as MappingCdcSource
-    participant Proc as CdcProcessor
-    participant Kfk as KafkaEventSink
+    participant Cli as BinaryLogClient<br/>(source-mysql)
+    participant Row as MySqlBinlogRowChangeSource<br/>(source-mysql)
+    participant Map as MappingCdcSource<br/>(core)
+    participant Proc as CdcProcessor<br/>(core)
+    participant Kfk as KafkaEventSink<br/>(sink-kafka)
     participant K as Kafka
-    participant Ckp as CheckpointStore
+    participant Ckp as FileCheckpointStore<br/>(checkpoint-file)
 
     App->>MY: BEGIN; INSERT orders; COMMIT
     MY-->>Cli: WRITE_ROWS event
@@ -642,9 +742,10 @@ sequenceDiagram
     Row->>Ckp: save(binlog:serverId, file:pos)
 ```
 
-> Legenda: `Ckp` representa o `CheckpointStore` opcional (Onda 5.2).
-> Quando ausente, o ramo final é elidido — comportamento histórico
-> in-memory.
+> Legenda: `Ckp` representa o `CheckpointStore` opcional (Onda 5.2,
+> módulo `checkpoint-file` quando file-backed). Quando o consumidor
+> não declara nenhum `CheckpointStore`, o ramo final é elidido —
+> comportamento histórico in-memory.
 
 ## Catálogo de propriedades (`cdc.outbox.*`)
 
@@ -747,8 +848,11 @@ e exemplo YAML no [README](../README.md).
 
 ## Auto-configurações e ordem de wiring
 
-O JAR registra cinco auto-configs no
-[`AutoConfiguration.imports`](../src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports):
+O módulo `spring-boot-starter` registra cinco auto-configs no
+`META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`
+(mais auto-configs específicas dos módulos opt-in `dlq-replay` e
+`replay-source`, que ficam no classpath só se o consumidor declarou a
+coordenada Maven correspondente):
 
 | Auto-config                          | Responsabilidade                                                                            |
 |--------------------------------------|---------------------------------------------------------------------------------------------|
@@ -792,8 +896,13 @@ hex: `pendingFailureCheckpoint != null` (`DOWN`) > lifecycle parada
 `cdc.outbox.health.max-idle` (`OUT_OF_SERVICE`) > `UP`. Paridade
 funcional com o indicador legado entregue na Onda 5.2.
 
-Lag upstream (slot Postgres, binlog MySQL) ainda **não** é exposto
-como gauge no producer — fica para uma onda futura.
+Lag upstream (slot Postgres, binlog MySQL) é exposto como gauge
+`cdc.outbox.source.lag_bytes{source=postgres|mysql}` pelo módulo
+opt-in **lag-probes** (Round 10): `PostgresLagProbe` +
+`MysqlLagProbe` + `LagProbeScheduler` (daemon `ScheduledExecutorService`,
+intervalo `cdc.outbox.lag.interval`). Valor `Double.NaN` quando ainda
+não há amostra ou a consulta falha temporariamente. Detalhe na seção
+[Adaptador de lag-probe](#adaptador-de-lag-probe).
 
 ## Contratos de threading
 
@@ -843,4 +952,6 @@ onda posterior, enquanto existirem deployments antigos.
 
 ---
 
-Última atualização: 2026-05 (após Onda 5.2 — merge `a159fa7`).
+Última atualização: 2026-05 (após Round 19 — NF4 Mermaid diagrams
+refresh para refletir Wave 6 multi-módulo + Wave 7 multi-artifact +
+módulos DLQ/source-replay/lag-probes).

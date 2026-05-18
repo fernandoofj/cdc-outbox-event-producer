@@ -130,6 +130,41 @@ Tech Lead PASS:
   (b) Sem `ignore` é a postura certa pra repo em desenvolvimento ativo.
   (c) Timezone explícita evita janela "PRs caem 06:00 ninguém atende".
 
+### NF4 — Mermaid diagrams refresh
+
+Os diagramas Mermaid no `README.md` e em `docs/ARCHITECTURE.md` foram
+desenhados no Round 9-10, quando a lib ainda era 1 módulo Gradle
+monolítico. Pós-Wave 6 (Round 12) ela virou **15 módulos Gradle**, e
+pós-Wave 7 (Round 17) cada módulo virou uma coordenada Maven própria
+(+ um BOM). Os diagramas mostravam "1 caixa monolítica core+adapter+
+infra/spring" e ignoravam `lag-probes`, `dlq-replay`, `replay-source`,
+o `bom`, e o `test-support`. Este sub-round fecha esse gap.
+
+**Diagramas atualizados / adicionados**:
+
+| Diagrama | Localização | O que mudou |
+|---|---|---|
+| Hexagonal containers | `README.md` § Diagrama hexagonal | Cada caixa agrupada por **módulo Gradle/coordenada Maven Wave 7** (15 módulos). Adicionados subgrafos `source-stubs`, `lag-probes`, `dlq-replay`, `replay-source`, `spring-boot-starter`. Setas pontilhadas do starter pros adapters mostram o wiring `@ConditionalOnClass`. Portas do `core` ampliadas para listar `LagProbe` + `SourceReplayer`. |
+| Sequência feliz Postgres → SNS | `README.md` § Diagrama hexagonal | Cada participante anotado com o módulo onde a classe vive (`source-postgres`, `core`, `sink-composition`, `sink-aws`). |
+| **Estrutura multi-módulo Gradle** (novo) | `README.md` § Instalação | Diagrama dedicado mostrando as 15 dependências `api(project(":…"))` entre módulos + o `bom` como POM-only constraint provider + `test-support` paralelo. Bate 1:1 com `settings.gradle.kts`. |
+| **Visão do consumidor Wave 7** (novo) | `README.md` § Instalação | Fluxo `App → platform(BOM) + implementation(starter + adapters escolhidos) → @ConditionalOnClass liga só o que foi declarado`. |
+| Composição de sinks | `docs/ARCHITECTURE.md` § Composição de sinks | Cada nó anotado com módulo (`sink-composition`, `sink-aws`, `sink-kafka`, `sink-rabbitmq`). |
+| Sequência MySQL binlog → Kafka | `docs/ARCHITECTURE.md` § Sequência | Participantes anotados com módulo (`source-mysql`, `core`, `sink-kafka`, `checkpoint-file`). |
+| **Multi-módulo Gradle (versão técnica)** (novo) | `docs/ARCHITECTURE.md` § Mapa do código | Build graph compacto perto da árvore de diretórios atualizada para Wave 6 + Wave 7. |
+
+**Prosa atualizada**: README "Arquitetura técnica" reescrito por módulo; ARCHITECTURE "Mapa do código" + "Auto-configurações" + "Observabilidade" refletem Wave 6/7 (não mais "library jar"); última-atualização bumped pra Round 19.
+
+Tech Lead PASS:
+  (a) BLOCKER: nenhum diagrama referencia módulo inexistente —
+      todos têm contrapartida em `settings.gradle.kts` (16 includes).
+  (b) MAJOR: dependências `api(project(...))` nos diagramas batem
+      com os `build.gradle.kts` reais (`lag-probes → core + pg +
+      mysql + checkpoint`, `replay-source → core + pg + mysql`,
+      `legacy → core + pg + aws`, starter é `compileOnly` em
+      todos adapters).
+  (c) MINOR: prosa coerente Wave 6/7; "library jar" remanescente só
+      no roadmap histórico (Wave 2), apropriado.
+
 ## Round 15 — F6: source-side replay / backfill
 
 Novo módulo `replay-source` permite re-emitir uma janela passada
