@@ -1,0 +1,206 @@
+# PrometheusRule resource — alerting rules for the cdc-outbox producer.
+#
+# Drop this into a Kubernetes cluster running the Prometheus Operator
+# (or the kube-prometheus-stack Helm chart) and the rules will be
+# scraped automatically. For plain Prometheus + AlertManager, lift the
+# `groups:` block into your `rules.yml`.
+#
+# Metric names follow Prometheus naming conventions: every dot in the
+# Micrometer surface (`cdc.outbox.*`) becomes an underscore, and
+# counters get a `_total` suffix when scraped through the Prometheus
+# meter registry. Adjust the `job` label below to match your scrape
+# config (`scrape_configs[].job_name`).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cdc-outbox-alerts
+  labels:
+    app.kubernetes.io/name: cdc-outbox
+    app.kubernetes.io/component: alerting
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    - name: cdc-outbox.rules
+      interval: 30s
+      rules:
+        # ---------------------------------------------------------------
+        # CRITICAL — dead-letter SINK itself is failing.
+        #
+        # When this fires, retries have been exhausted AND we failed to
+        # park the message in the DLQ. The slot is stuck. Page someone.
+        # ---------------------------------------------------------------
+        - alert: CdcOutboxDeadLetterFailures
+          expr: sum(rate(cdc_outbox_dead_letter_failures_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            team: platform-data
+            component: cdc-outbox
+          annotations:
+            summary: "CDC outbox: dead-letter sink is FAILING"
+            description: |
+              cdc_outbox_dead_letter_failures_total is incrementing on
+              {{ $labels.instance }}. The producer cannot park
+              exhausted-retry messages — the slot will stall.
+              Inspect SQS DLQ availability, IAM permissions and
+              `cdc.outbox.dead-letter.queue-name` immediately.
+            runbook_url: "https://example.com/runbooks/cdc-outbox#dead-letter-failures"
+
+        # ---------------------------------------------------------------
+        # CRITICAL — the instance itself is unreachable to Prometheus.
+        # ---------------------------------------------------------------
+        - alert: CdcOutboxHealthDown
+          expr: up{job="cdc-outbox"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            team: platform-data
+            component: cdc-outbox
+          annotations:
+            summary: "CDC outbox instance is DOWN"
+            description: |
+              Prometheus has not been able to scrape
+              {{ $labels.instance }} for at least 1 minute. The JVM
+              may have crashed; check `/actuator/health` and pod
+              logs.
+            runbook_url: "https://example.com/runbooks/cdc-outbox#instance-down"
+
+        # ---------------------------------------------------------------
+        # WARNING — source replication lag exceeds 100 MiB for 10 min.
+        #
+        # On Postgres this is `pg_wal_lsn_diff(pg_current_wal_lsn(),
+        # confirmed_flush_lsn)` on `pg_replication_slots`. On MySQL it
+        # is `SHOW MASTER STATUS` minus the persisted binlog checkpoint.
+        # ---------------------------------------------------------------
+        - alert: CdcOutboxHighLag
+          expr: cdc_outbox_source_lag_bytes > 100000000
+          for: 10m
+          labels:
+            severity: warning
+            team: platform-data
+            component: cdc-outbox
+          annotations:
+            summary: "CDC outbox: source lag > 100 MiB"
+            description: |
+              Source {{ $labels.source }} on {{ $labels.instance }}
+              has been more than 100 MiB behind for at least 10 min.
+              The producer may be slower than write throughput;
+              investigate sink latency or scale the producer.
+            runbook_url: "https://example.com/runbooks/cdc-outbox#high-lag"
+
+        # ---------------------------------------------------------------
+        # WARNING — no messages read for 30 min.
+        #
+        # Either the upstream slot is silent (no writes — possibly
+        # expected) or the orchestrator is stuck. Cross-reference with
+        # /actuator/health: if the indicator is UP and this fires, the
+        # source genuinely has no traffic; if it is OUT_OF_SERVICE the
+        # loop is stuck.
+        # ---------------------------------------------------------------
+        - alert: CdcOutboxNoMessagesRead
+          expr: sum(rate(cdc_outbox_messages_read_total[10m])) == 0
+          for: 30m
+          labels:
+            severity: warning
+            team: platform-data
+            component: cdc-outbox
+          annotations:
+            summary: "CDC outbox: no messages read for 30 min"
+            description: |
+              No events have been read from any slot on
+              {{ $labels.instance }} in the last 30 minutes. If the
+              upstream system normally has traffic during this window
+              the orchestrator may be stuck — check
+              /actuator/health and the producer logs.
+            runbook_url: "https://example.com/runbooks/cdc-outbox#slot-idle"
+
+        # ---------------------------------------------------------------
+        # WARNING — MySQL binlog schema drift detected.
+        #
+        # A column count or column type changed mid-stream. Downstream
+        # consumers may misparse — operator review required.
+        # ---------------------------------------------------------------
+        - alert: CdcOutboxSchemaDrift
+          expr: sum(rate(cdc_outbox_source_binlog_schema_drift_total[5m])) > 0
+          for: 0m
+          labels:
+            severity: warning
+            team: platform-data
+            component: cdc-outbox
+          annotations:
+            summary: "CDC outbox: binlog schema drift on {{ $labels.table }}"
+            description: |
+              MySQL binlog source observed a column count or type
+              change on table {{ $labels.table }}. Confirm the
+              schema change was intentional and that downstream
+              consumers tolerate the new shape.
+            runbook_url: "https://example.com/runbooks/cdc-outbox#schema-drift"
+
+        # ---------------------------------------------------------------
+        # WARNING — source-side replay jobs are failing to publish.
+        # ---------------------------------------------------------------
+        - alert: CdcOutboxReplayPublishFailing
+          expr: sum(rate(cdc_outbox_replay_events_total{outcome="publish_failed"}[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+            team: platform-data
+            component: cdc-outbox
+          annotations:
+            summary: "CDC outbox: replay job publish failures"
+            description: |
+              An /actuator/cdcOutboxReplay job on
+              {{ $labels.instance }} is failing to publish events
+              downstream at > 0.1 evt/s for the last 5 minutes.
+              Check the job status via GET
+              /actuator/cdcOutboxReplay/{jobId}.
+            runbook_url: "https://example.com/runbooks/cdc-outbox#replay-failing"
+
+        # ---------------------------------------------------------------
+        # WARNING — dead-letter rate rising.
+        #
+        # We are sending messages to the DLQ at > 0.1 evt/s. The DLQ
+        # itself works (otherwise CdcOutboxDeadLetterFailures fires
+        # first), but the producer is dropping more than expected.
+        # ---------------------------------------------------------------
+        - alert: CdcOutboxDeadLetterRising
+          expr: sum(rate(cdc_outbox_messages_dead_lettered_total[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+            team: platform-data
+            component: cdc-outbox
+          annotations:
+            summary: "CDC outbox: dead-letter rate > 0.1 evt/s"
+            description: |
+              The producer is dead-lettering messages at >
+              0.1 evt/s for the last 5 minutes. Triage the DLQ via
+              /actuator/cdcOutboxDlq and identify the upstream
+              cause ({{ $labels.cause }} for the most recent
+              samples).
+            runbook_url: "https://example.com/runbooks/cdc-outbox#dead-letter-rate"
+
+        # ---------------------------------------------------------------
+        # WARNING — orphan checkpoint files keep being swept.
+        #
+        # Each .tmp orphan corresponds to a crash that interrupted an
+        # atomic-save. A few are tolerable across pod restarts; > 5 in
+        # an hour suggests a crash loop or a flaky volume.
+        # ---------------------------------------------------------------
+        - alert: CdcOutboxOrphanCheckpoints
+          expr: sum(increase(cdc_outbox_checkpoint_orphans_swept_total[1h])) > 5
+          for: 5m
+          labels:
+            severity: warning
+            team: platform-data
+            component: cdc-outbox
+          annotations:
+            summary: "CDC outbox: > 5 orphan checkpoint files in 1h"
+            description: |
+              More than 5 .tmp checkpoint orphans have been swept
+              from the FileCheckpointStore on {{ $labels.instance }}
+              in the last hour, suggesting recent crashes during
+              mid-save. Inspect prior pod restarts and volume
+              health.
+            runbook_url: "https://example.com/runbooks/cdc-outbox#orphan-checkpoints"

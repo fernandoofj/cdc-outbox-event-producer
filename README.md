@@ -577,6 +577,59 @@ presente no contexto (gated por `@ConditionalOnClass` +
     `CheckpointStore` no MySQL) e parqueia o valor num cache
     `AtomicLong` lido pelo gauge.
 
+### Operabilidade
+
+A pasta [`docs/operability/`](docs/operability/) traz o bundle pronto
+para rodar em produção:
+
+  * **Grafana dashboard** —
+    [`docs/operability/grafana-dashboard.json`](docs/operability/grafana-dashboard.json).
+    Importar via `Grafana → Dashboards → New → Import → Upload JSON`.
+    O dashboard expõe 5 linhas: throughput
+    (`messages.read|published|failed`), latência (`publish.duration`
+    p50/p95/p99 + `source.lag_bytes`), recovery (retries,
+    dead-letter, DLQ replays), métricas específicas de source
+    (binlog `parse_errors`, `column_resolution.fallbacks`,
+    `schema_drift`, `checkpoint.orphans_swept`) e operações de
+    replay (`replay.events`, `replay.duration`). Datasource +
+    variáveis `slot` e `sink` são parametrizáveis no header.
+  * **AlertManager rules** —
+    [`docs/operability/alertmanager-rules.yml`](docs/operability/alertmanager-rules.yml).
+    Formato `PrometheusRule` (Prometheus Operator / kube-prometheus
+    stack). 8 alertas: `CdcOutboxDeadLetterFailures` (critical —
+    DLQ sink falhando), `CdcOutboxHealthDown` (critical — instância
+    fora), `CdcOutboxHighLag` (> 100 MiB por 10 min),
+    `CdcOutboxNoMessagesRead` (slot parado por 30 min),
+    `CdcOutboxSchemaDrift` (mudança de schema mid-stream),
+    `CdcOutboxReplayPublishFailing`, `CdcOutboxDeadLetterRising`
+    (> 0.1 msg/s indo pra DLQ), `CdcOutboxOrphanCheckpoints`
+    (> 5 sweeps/h). Para Prometheus standalone, levantar o bloco
+    `spec.groups` para o `rules.yml` montado.
+  * **Actuator `/actuator/info`** — contribuidor
+    [`CdcOutboxInfoContributor`](spring-boot-starter/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxInfoContributor.kt)
+    surfaceia versão da lib, kind do processor, slot configurado,
+    schemes dos sinks resolvidos pelo `EventSinkRegistry`, nome da
+    classe de `CdcSource` em uso, contagem de mappings, estado de
+    `checkpoint/lag/dlq/replay`. **Não expõe** secrets: host, usuário,
+    senha, queue names da DLQ ficam fora do payload (lição de
+    hardening: `/actuator/info` é frequentemente público). Wired
+    automaticamente via `CdcOutboxInfoAutoConfiguration` quando
+    `spring-boot-actuator` está no classpath. Habilitar o endpoint
+    na app consumidora
+    (`management.endpoints.web.exposure.include=info,health,...`):
+    ```bash
+    curl -s localhost:8080/actuator/info | jq '.["cdc-outbox"]'
+    # {
+    #   "version": "0.1.0",
+    #   "processor": {"kind": "HEXAGONAL"},
+    #   "replication": {"slot": "orders_outbox_slot", "outputPlugin": "wal2json", ...},
+    #   "source": {"type": "PgLogicalReplicationCdcSource"},
+    #   "sinks": {"schemes": ["kafka", "sns", "sqs"]},
+    #   "mappings": {"count": 3},
+    #   ...
+    # }
+    ```
+
 ### Superfície de configuração (`cdc.outbox.*`)
 
 Estrutura completa em
