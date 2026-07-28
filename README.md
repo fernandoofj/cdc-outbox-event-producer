@@ -2,6 +2,7 @@
 
 ![CI](https://github.com/fernandoofj/cdc-outbox-event-producer/actions/workflows/ci.yml/badge.svg)
 ![Dependabot](https://img.shields.io/badge/dependabot-active-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 > **Status:** repositório revivido a partir do arquivo público
 > [`inventa-shop/kotlin-postgres-cdc-to-sns-module`](https://github.com/inventa-shop/kotlin-postgres-cdc-to-sns-module)
@@ -175,63 +176,63 @@ test-support/                  ← fixtures de teste compartilhadas (só testImp
 ```
 
   * **Domínio:**
-    [`OutboxEvent`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/OutboxEvent.kt),
-    [`Routing`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/Routing.kt),
-    [`RowChange`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/RowChange.kt),
-    [`TableMapping`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/TableMapping.kt).
+    [`OutboxEvent`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/OutboxEvent.kt),
+    [`Routing`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/Routing.kt),
+    [`RowChange`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/RowChange.kt),
+    [`TableMapping`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/TableMapping.kt).
     Tipos de valor imutáveis, `equals`/`hashCode` corretos para `ByteArray`.
   * **Portas driving** (entrada):
-    [`CdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/CdcSource.kt)
+    [`CdcSource`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/CdcSource.kt)
     (alto nível, entrega `OutboxEvent`) e
-    [`RowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/RowChangeSource.kt)
+    [`RowChangeSource`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/RowChangeSource.kt)
     (baixo nível, entrega `RowChange`). Single-thread por instância.
   * **Portas driven** (saída):
-    [`EventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/EventSink.kt),
-    [`EventSinkRegistry`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/EventSinkRegistry.kt),
-    [`DeadLetterPort`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/DeadLetterPort.kt),
-    [`MappingRules`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/MappingRules.kt),
-    [`CheckpointStore`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/CheckpointStore.kt)
+    [`EventSink`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/EventSink.kt),
+    [`EventSinkRegistry`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/EventSinkRegistry.kt),
+    [`DeadLetterPort`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/DeadLetterPort.kt),
+    [`MappingRules`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/MappingRules.kt),
+    [`CheckpointStore`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/CheckpointStore.kt)
     (persistência de checkpoint por origem, Onda 5.2). Interfaces
     puras sem dependência de framework ou driver.
   * **Aplicação:**
-    [`CdcProcessor`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/CdcProcessor.kt)
+    [`CdcProcessor`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/CdcProcessor.kt)
     (loop hexagonal),
-    [`MappingCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/MappingCdcSource.kt)
+    [`MappingCdcSource`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/MappingCdcSource.kt)
     (decorator `RowChangeSource` → `CdcSource`),
-    [`DefaultMappingRules`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/DefaultMappingRules.kt)
+    [`DefaultMappingRules`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/DefaultMappingRules.kt)
     (motor de `TableMapping`).
   * **Adaptadores de origem:**
-    [`PgLogicalReplicationCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt),
-    [`PgWalRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgWalRowChangeSource.kt)
+    [`PgLogicalReplicationCdcSource`](source-postgres/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt),
+    [`PgWalRowChangeSource`](source-postgres/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgWalRowChangeSource.kt)
     (row-level wal2json `I/U/D`, Onda 5.2),
-    [`MySqlOutboxTableCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt),
-    [`MySqlBinlogRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt),
+    [`MySqlOutboxTableCdcSource`](source-mysql/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt),
+    [`MySqlBinlogRowChangeSource`](source-mysql/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt),
     e stubs SQL Server / Oracle.
   * **Adaptadores de destino:**
-    [`SnsEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sns/SnsEventSink.kt),
-    [`SqsEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sqs/SqsEventSink.kt),
-    [`KafkaEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/kafka/KafkaEventSink.kt),
-    [`RabbitMqEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/rabbitmq/RabbitMqEventSink.kt),
-    [`CompositeEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/composite/CompositeEventSink.kt),
-    [`SchemeRouterEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/router/SchemeRouterEventSink.kt),
-    [`DefaultEventSinkRegistry`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/registry/DefaultEventSinkRegistry.kt).
+    [`SnsEventSink`](sink-aws/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sns/SnsEventSink.kt),
+    [`SqsEventSink`](sink-aws/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sqs/SqsEventSink.kt),
+    [`KafkaEventSink`](sink-kafka/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/kafka/KafkaEventSink.kt),
+    [`RabbitMqEventSink`](sink-rabbitmq/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/rabbitmq/RabbitMqEventSink.kt),
+    [`CompositeEventSink`](sink-composition/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/composite/CompositeEventSink.kt),
+    [`SchemeRouterEventSink`](sink-composition/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/router/SchemeRouterEventSink.kt),
+    [`DefaultEventSinkRegistry`](sink-composition/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/registry/DefaultEventSinkRegistry.kt).
   * **Adaptador de dead-letter legado:**
-    [`LegacyDeadLetterPortAdapter`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/deadletter/LegacyDeadLetterPortAdapter.kt)
+    [`LegacyDeadLetterPortAdapter`](legacy/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/deadletter/LegacyDeadLetterPortAdapter.kt)
     para reaproveitar
-    [`SqsDeadLetterSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/deadletter/SqsDeadLetterSink.kt).
+    [`SqsDeadLetterSink`](legacy/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/deadletter/SqsDeadLetterSink.kt).
 
 ### Toggle hexagonal × legado
 
 `cdc.outbox.processor.kind` aceita `HEXAGONAL` (default desde Onda 5)
 ou `LEGACY`. O hexagonal monta `CdcSource` + `EventSinkRegistry` +
 `CdcProcessor` + `CdcProcessorLifecycle`. O legado monta
-[`SlotReaderMessageProducer`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt)
+[`SlotReaderMessageProducer`](legacy/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt)
 + `CdcOutboxLifecycle`. Os dois ciclos são mutuamente exclusivos via
 `@ConditionalOnProperty`, então nunca tem duas streaming-threads
 concorrentes. O Actuator health indicator também tem duas variantes
-([`CdcOutboxHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxHealthIndicator.kt)
+([`CdcOutboxHealthIndicator`](spring-boot-starter/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxHealthIndicator.kt)
 para legado,
-[`CdcProcessorHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcProcessorHealthIndicator.kt)
+[`CdcProcessorHealthIndicator`](spring-boot-starter/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcProcessorHealthIndicator.kt)
 para hex), também mutuamente exclusivas.
 
 ## Diagrama hexagonal
@@ -493,12 +494,12 @@ sequência MySQL binlog → Kafka) estão em
 
 | Player                                           | Adapter                                                                                                                                                          | Estado                                                                          |
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------|
-| PostgreSQL via `wal2json` + `pg_logical_emit_message` | [`PgLogicalReplicationCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt)                    | Pronto. Default wal2json v2, include-lsn=true.                                  |
-| PostgreSQL row-level (`I/U/D` via wal2json)      | [`PgWalRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgWalRowChangeSource.kt)                                      | Pronto desde a Onda 5.2. Consome `I/U/D` do wal2json (`format-version=2` por default; `format-version=1` também suportado desde Round 10 — paridade `columns`/`identity` no parser V1), surface `before`/`after` em `RowChange`. Coexiste com `PgLogicalReplicationCdcSource` (slots distintos); auto-config escolhe um ou outro pelo bean wiring. |
-| MySQL via tabela `outbox_events` + `SKIP LOCKED` | [`MySqlOutboxTableCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt)                               | Pronto. MySQL 8+; identifier hard-validated contra SQLi.                        |
-| MySQL via binlog (`mysql-binlog-connector-java`) | [`MySqlBinlogRowChangeSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt)                             | Pronto. Resolve nomes de coluna via `INFORMATION_SCHEMA` (fallback para `col0`/`col1`/… reporta counter `binlog.column_resolution.fallbacks`); invalida o cache quando o `columnCount` muda mid-stream (ALTER TABLE). Checkpoint persiste via `CheckpointStore` quando `cdc.outbox.checkpoint.enabled=true` (Onda 5.2) — restart retoma da posição confirmada; sem essa property o comportamento histórico in-memory permanece. IT MySQL coberto por `MysqlRabbitMqE2EIT` (gated por `RUN_TESTCONTAINERS=1`). |
-| SQL Server                                       | [`SqlServerCdcSourceStub`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/sqlserver/SqlServerCdcSourceStub.kt)                                 | Stub. Lança `UnsupportedOperationException`. Implementação real fica para uma onda futura. |
-| Oracle                                           | [`OracleCdcSourceStub`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/oracle/OracleCdcSourceStub.kt)                                          | Stub. Implementação real fica para uma onda futura (LogMiner / OpenLogReplicator / GoldenGate). |
+| PostgreSQL via `wal2json` + `pg_logical_emit_message` | [`PgLogicalReplicationCdcSource`](source-postgres/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt)                    | Pronto. Default wal2json v2, include-lsn=true.                                  |
+| PostgreSQL row-level (`I/U/D` via wal2json)      | [`PgWalRowChangeSource`](source-postgres/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgWalRowChangeSource.kt)                                      | Pronto desde a Onda 5.2. Consome `I/U/D` do wal2json (`format-version=2` por default; `format-version=1` também suportado desde Round 10 — paridade `columns`/`identity` no parser V1), surface `before`/`after` em `RowChange`. Coexiste com `PgLogicalReplicationCdcSource` (slots distintos); auto-config escolhe um ou outro pelo bean wiring. |
+| MySQL via tabela `outbox_events` + `SKIP LOCKED` | [`MySqlOutboxTableCdcSource`](source-mysql/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt)                               | Pronto. MySQL 8+; identifier hard-validated contra SQLi.                        |
+| MySQL via binlog (`mysql-binlog-connector-java`) | [`MySqlBinlogRowChangeSource`](source-mysql/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt)                             | Pronto. Resolve nomes de coluna via `INFORMATION_SCHEMA` (fallback para `col0`/`col1`/… reporta counter `binlog.column_resolution.fallbacks`); invalida o cache quando o `columnCount` muda mid-stream (ALTER TABLE). Checkpoint persiste via `CheckpointStore` quando `cdc.outbox.checkpoint.enabled=true` (Onda 5.2) — restart retoma da posição confirmada; sem essa property o comportamento histórico in-memory permanece. IT MySQL coberto por `MysqlRabbitMqE2EIT` (gated por `RUN_TESTCONTAINERS=1`). |
+| SQL Server                                       | [`SqlServerCdcSourceStub`](source-stubs/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/sqlserver/SqlServerCdcSourceStub.kt)                                 | Stub. Lança `UnsupportedOperationException`. Implementação real fica para uma onda futura. |
+| Oracle                                           | [`OracleCdcSourceStub`](source-stubs/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/oracle/OracleCdcSourceStub.kt)                                          | Stub. Implementação real fica para uma onda futura (LogMiner / OpenLogReplicator / GoldenGate). |
 
 Pré-requisitos de operação:
 
@@ -514,12 +515,12 @@ Pré-requisitos de operação:
 
 | Player        | Adapter                                                                                                                                                       | Scheme  | Template (SCA 3 / Spring)                                       |
 |---------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|-----------------------------------------------------------------|
-| AWS SNS       | [`SnsEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sns/SnsEventSink.kt)                                                          | `sns`   | `io.awspring.cloud.sns.core.SnsTemplate` (SCA 3.2.x, AWS SDK v2). |
-| AWS SQS       | [`SqsEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sqs/SqsEventSink.kt)                                                          | `sqs`   | `io.awspring.cloud.sqs.operations.SqsTemplate` (SCA 3.2.x, AWS SDK v2). |
-| Apache Kafka  | [`KafkaEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/kafka/KafkaEventSink.kt)                                                    | `kafka` | `org.springframework.kafka.core.KafkaTemplate<String, ByteArray>`. Publish bloqueante (`send().get()`). |
-| RabbitMQ      | [`RabbitMqEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/rabbitmq/RabbitMqEventSink.kt)                                           | `amqp`  | `org.springframework.amqp.rabbit.core.RabbitTemplate`. `target` é `exchange/routingKey`. |
-| Composite     | [`CompositeEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/composite/CompositeEventSink.kt)                                        | —       | Fan-out (`failFast=true` default). Dual-write em migrações.    |
-| Scheme router | [`SchemeRouterEventSink`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/router/SchemeRouterEventSink.kt)                                     | —       | Re-roteia via `EventSinkRegistry`.                              |
+| AWS SNS       | [`SnsEventSink`](sink-aws/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sns/SnsEventSink.kt)                                                          | `sns`   | `io.awspring.cloud.sns.core.SnsTemplate` (SCA 3.2.x, AWS SDK v2). |
+| AWS SQS       | [`SqsEventSink`](sink-aws/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sqs/SqsEventSink.kt)                                                          | `sqs`   | `io.awspring.cloud.sqs.operations.SqsTemplate` (SCA 3.2.x, AWS SDK v2). |
+| Apache Kafka  | [`KafkaEventSink`](sink-kafka/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/kafka/KafkaEventSink.kt)                                                    | `kafka` | `org.springframework.kafka.core.KafkaTemplate<String, ByteArray>`. Publish bloqueante (`send().get()`). |
+| RabbitMQ      | [`RabbitMqEventSink`](sink-rabbitmq/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/rabbitmq/RabbitMqEventSink.kt)                                           | `amqp`  | `org.springframework.amqp.rabbit.core.RabbitTemplate`. `target` é `exchange/routingKey`. |
+| Composite     | [`CompositeEventSink`](sink-composition/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/composite/CompositeEventSink.kt)                                        | —       | Fan-out (`failFast=true` default). Dual-write em migrações.    |
+| Scheme router | [`SchemeRouterEventSink`](sink-composition/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/router/SchemeRouterEventSink.kt)                                     | —       | Re-roteia via `EventSinkRegistry`.                              |
 
 Cada sink é registrado **apenas** se o template correspondente está
 presente no contexto (gated por `@ConditionalOnClass` +
@@ -530,7 +531,7 @@ presente no contexto (gated por `@ConditionalOnClass` +
 ### Observabilidade
 
   * **Micrometer** via
-    [`CdcOutboxMetrics`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/observability/CdcOutboxMetrics.kt).
+    [`CdcOutboxMetrics`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/observability/CdcOutboxMetrics.kt).
     No-op quando não há `MeterRegistry` no contexto. Counters principais:
     `cdc.outbox.messages.read{slot}`,
     `cdc.outbox.messages.published{sink,topic}`,
@@ -551,14 +552,14 @@ presente no contexto (gated por `@ConditionalOnClass` +
     `Double.NaN` quando ainda não há amostra ou quando a
     consulta falha temporariamente.
   * **Spring Boot Actuator** via
-    [`CdcOutboxHealthAutoConfiguration`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxHealthAutoConfiguration.kt).
+    [`CdcOutboxHealthAutoConfiguration`](spring-boot-starter/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxHealthAutoConfiguration.kt).
     Branch legado:
-    [`CdcOutboxHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxHealthIndicator.kt)
+    [`CdcOutboxHealthIndicator`](spring-boot-starter/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxHealthIndicator.kt)
     (`DOWN` em pending-failure / not-running, `OUT_OF_SERVICE` em
     idle além de `cdc.outbox.health.max-idle`, `UP` caso contrário,
     detalhes `slot`, `running`, `lifecycleRunning`, `pendingFailureLsn`,
     `idleFor`, `maxIdle`). Branch hex:
-    [`CdcProcessorHealthIndicator`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcProcessorHealthIndicator.kt)
+    [`CdcProcessorHealthIndicator`](spring-boot-starter/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcProcessorHealthIndicator.kt)
     reporta `processorRunning`, `lifecycleRunning`, `pendingFailureCheckpoint`,
     `idleFor` + `maxIdle`. Precedência: `pendingFailureCheckpoint != null`
     (`DOWN`, sinaliza que o source não foi acked) > lifecycle não iniciada
@@ -633,7 +634,7 @@ para rodar em produção:
 ### Superfície de configuração (`cdc.outbox.*`)
 
 Estrutura completa em
-[`CdcOutboxProperties.kt`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxProperties.kt)
+[`CdcOutboxProperties.kt`](spring-boot-starter/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxProperties.kt)
 e catálogo detalhado em
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#catálogo-de-propriedades-cdcoutbox).
 Os blocos principais:
@@ -667,7 +668,7 @@ Os blocos principais:
   * `cdc.outbox.dead-letter.queueName` — DLQ SQS opcional.
   * `cdc.outbox.mappings` — lista declarativa de `TableMapping` (item 7
     da brief), consumida por
-    [`CdcOutboxMappingAutoConfiguration`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxMappingAutoConfiguration.kt).
+    [`CdcOutboxMappingAutoConfiguration`](spring-boot-starter/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxMappingAutoConfiguration.kt).
 
 ## Instalação (Wave 7 — multi-artifact)
 
@@ -908,7 +909,7 @@ VALUES ('sns://orders.events', '{"eventType":"OrderPlaced", ...}', NULL);
 ```
 
 Schema da tabela documentado no KDoc de
-[`MySqlOutboxTableCdcSource`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt).
+[`MySqlOutboxTableCdcSource`](source-mysql/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt).
 
 ### Producer side — MySQL binlog + mapping
 
@@ -942,7 +943,7 @@ cdc:
 ```
 
 `cdc.outbox.checkpoint.enabled=true` instala um
-[`FileCheckpointStore`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/checkpoint/FileCheckpointStore.kt)
+[`FileCheckpointStore`](checkpoint-file/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/checkpoint/FileCheckpointStore.kt)
 sob `cdc.outbox.checkpoint.directory` (default `.cdc-outbox-checkpoints`).
 `MySqlBinlogRowChangeSource` consulta o store em `open()` e persiste em
 cada `ack()` — restart retoma do `<binlog>:<nextPosition>` confirmado em
@@ -1002,7 +1003,7 @@ O destino é codificado no `Routing`:
 | `orders.events` (legacy, sem scheme) | `Routing(scheme="sns", target="orders.events")` |
 
 Parsing em
-[`Routing.parsePrefix`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/Routing.kt).
+[`Routing.parsePrefix`](core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/Routing.kt).
 As formas legadas existem para preservar compatibilidade com bases que
 ainda usam o protocolo antigo do projeto-origem.
 
@@ -1010,7 +1011,7 @@ ainda usam o protocolo antigo do projeto-origem.
 
 Vide [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#catálogo-de-propriedades-cdcoutbox)
 para a tabela completa de cada bloco. Fonte canônica:
-[`CdcOutboxProperties.kt`](src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxProperties.kt).
+[`CdcOutboxProperties.kt`](spring-boot-starter/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxProperties.kt).
 
 ## Alternativas no ecossistema
 
@@ -1110,3 +1111,16 @@ default.
 | ktlint plugin             | 12.1.1                                                 |
 | Testcontainers            | 1.20.4                                                 |
 | Awaitility (test)         | 4.2.2                                                  |
+
+## Contribuindo
+
+Contribuições são bem-vindas — veja [`CONTRIBUTING.md`](CONTRIBUTING.md)
+para o fluxo de fork/PR, estilo de código e as invariantes de entrega
+que todo PR precisa preservar. Ao participar, você concorda com o
+[Código de Conduta](CODE_OF_CONDUCT.md). Para reportar vulnerabilidades
+de segurança, veja [`SECURITY.md`](SECURITY.md) em vez de abrir uma
+issue pública.
+
+## Licença
+
+[MIT](LICENSE) © Fernando Fernandes.
