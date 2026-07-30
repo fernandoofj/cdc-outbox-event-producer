@@ -58,6 +58,21 @@ class ReplayActuatorEndpointTest {
     }
 
     @Test
+    fun `AnonymousAuthenticationToken is rejected even with a non-standard authority`() {
+        // Isolates the isAnonymous() class-name fallback: an app that
+        // configures AnonymousAuthenticationFilter with a custom authority
+        // (not ROLE_ANONYMOUS) must still be caught by the class check, not
+        // just the authority check the other anonymous test also satisfies.
+        SecurityContextHolder.getContext().authentication = AnonymousAuthenticationToken(
+            "key",
+            "anonymousUser",
+            listOf(SimpleGrantedAuthority("ROLE_GUEST")),
+        )
+
+        assertFailsWith<AccessDeniedException> { endpoint.snapshot() }
+    }
+
+    @Test
     fun `authenticated non-anonymous principal is let through`() {
         SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken.authenticated(
             "operator",

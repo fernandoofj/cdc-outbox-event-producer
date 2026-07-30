@@ -36,9 +36,9 @@ allprojects {
     // group itself moved in Round 20 —
     // br.com.fltech.cdc.outbox → br.com.fltech.outbox; (2) the Kotlin
     // toolchain moved 1.9.25 → 2.3.21 and Micrometer 1.12.13 → 1.16.5,
-    // both ahead of what the Spring Boot 3.3.5 BOM this library still
-    // targets would resolve on its own — a consumer on plain Boot
-    // 3.3.5 dependency management could otherwise silently downgrade
+    // both ahead of what the Spring Boot 3.3.5 BOM this library
+    // targeted at the time would resolve on its own — a consumer on
+    // plain Boot 3.3.5 dependency management could otherwise silently downgrade
     // kotlin-stdlib/micrometer-core underneath classes compiled
     // against the newer versions. Same version, two groups, would
     // have hidden that.

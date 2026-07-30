@@ -58,6 +58,23 @@ class DlqReplayActuatorEndpointTest {
     }
 
     @Test
+    fun `AnonymousAuthenticationToken is rejected even with a non-standard authority`() {
+        // Isolates the isAnonymous() class-name fallback: an app that
+        // configures AnonymousAuthenticationFilter with a custom authority
+        // (not ROLE_ANONYMOUS) must still be caught by the class check, not
+        // just the authority check the other anonymous test also satisfies.
+        val anonymous = AnonymousAuthenticationToken(
+            "key",
+            "anonymousUser",
+            listOf(SimpleGrantedAuthority("ROLE_GUEST")),
+        )
+        SecurityContextHolder.getContext().authentication = anonymous
+
+        assertFailsWith<AccessDeniedException> { endpoint.abandon("h1") }
+        verify(exactly = 0) { service.abandon(any()) }
+    }
+
+    @Test
     fun `authenticated non-anonymous principal is let through`() {
         val auth = UsernamePasswordAuthenticationToken.authenticated(
             "operator",
