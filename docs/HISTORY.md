@@ -73,12 +73,17 @@ confirmation, including the JVM baseline bump this requires.
     second pass after Tech Lead review caught that leaving it at 6.3.4
     left `spring-security-web:6.3.4`'s own `spring-web:6.1.14`
     transitive dependency un-lifted next to `spring-core`/`-context` at
-    7.0.7 on the test classpath — a Framework 6/7 hybrid that never
-    surfaced as a failure (the auth-gate tests on
-    `/actuator/cdcOutboxDlq` and `/actuator/cdcOutboxReplay` don't
-    touch the divergent surface) but meant those security-gate tests
-    were validated against a combination no real consumer runs. 7.0.5
-    is what Boot 4.0.6's own BOM pins.
+    7.0.7 on the test classpath — a Framework 6/7 hybrid no real
+    consumer runs. A third Tech Lead pass then caught something worse
+    than the hybrid classpath itself: `DlqReplayActuatorEndpoint` and
+    `ReplayActuatorEndpoint`'s `requireAuthenticated()` — the only auth
+    gate this library has — had **zero test coverage**, so the Security
+    bump was closed on a false claim of being validated by tests that
+    didn't exist. Added `DlqReplayActuatorEndpointTest` and
+    `ReplayActuatorEndpointTest` (4 cases each: null auth, unauthenticated
+    principal, a real `AnonymousAuthenticationToken` from 7.0.5, and an
+    authenticated non-anonymous principal let through) against the real
+    Spring Security 7.0.5 types, not mocks of them.
 
 ## Round 21 — Dependabot batch (9 of 11 open PRs)
 
