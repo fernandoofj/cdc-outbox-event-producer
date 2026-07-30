@@ -14,7 +14,7 @@ import org.springframework.boot.actuate.info.InfoContributor
  * ```
  * {
  *   "cdc-outbox": {
- *     "version": "0.1.0",
+ *     "version": "0.2.0",
  *     "processor": {"kind": "HEXAGONAL"},
  *     "replication": {"slot": "orders_outbox_slot", "outputPlugin": "wal2json"},
  *     "source": {"type": "PgLogicalReplicationCdcSource"},
