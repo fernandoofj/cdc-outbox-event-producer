@@ -620,7 +620,7 @@ para rodar em produção:
     ```bash
     curl -s localhost:8080/actuator/info | jq '.["cdc-outbox"]'
     # {
-    #   "version": "0.1.0",
+    #   "version": "0.2.0",
     #   "processor": {"kind": "HEXAGONAL"},
     #   "replication": {"slot": "orders_outbox_slot", "outputPlugin": "wal2json", ...},
     #   "source": {"type": "PgLogicalReplicationCdcSource"},
@@ -806,7 +806,7 @@ quem quer mínimo declara só `starter` + 1 source + 1 sink.
 
 ```kotlin
 dependencies {
-    implementation(platform("br.com.fltech.outbox:cdc-outbox-bom:0.1.0"))
+    implementation(platform("br.com.fltech.outbox:cdc-outbox-bom:0.2.0"))
     implementation("br.com.fltech.outbox:cdc-outbox-spring-boot-starter")
     implementation("br.com.fltech.outbox:cdc-outbox-source-postgres")
     implementation("br.com.fltech.outbox:cdc-outbox-sink-aws")
@@ -817,7 +817,7 @@ dependencies {
 
 ```kotlin
 dependencies {
-    implementation(platform("br.com.fltech.outbox:cdc-outbox-bom:0.1.0"))
+    implementation(platform("br.com.fltech.outbox:cdc-outbox-bom:0.2.0"))
     implementation("br.com.fltech.outbox:cdc-outbox-spring-boot-starter")
     implementation("br.com.fltech.outbox:cdc-outbox-source-mysql")
     implementation("br.com.fltech.outbox:cdc-outbox-sink-kafka")
@@ -829,7 +829,7 @@ dependencies {
 
 ```kotlin
 dependencies {
-    implementation(platform("br.com.fltech.outbox:cdc-outbox-bom:0.1.0"))
+    implementation(platform("br.com.fltech.outbox:cdc-outbox-bom:0.2.0"))
     implementation("br.com.fltech.outbox:cdc-outbox-spring-boot-starter")
     implementation("br.com.fltech.outbox:cdc-outbox-source-postgres")
     implementation("br.com.fltech.outbox:cdc-outbox-source-mysql")
@@ -1054,7 +1054,7 @@ com split hexagonal). Debezium Engine resolve um problema parecido
 | 17 | **Round 18 — Suppress cleanup** | Done (Round 18). Auditoria das 51 `@Suppress` inline; **17 removidas via refactor real** (MaxLineLength → fixture pra resource file; LongMethod → extract helpers; NestedBlockDepth → extract helper; LoopWithTooManyJumpStatements → sealed-class result + `when`; TooGenericExceptionCaught → narrow pra `Exception` + `UncaughtExceptionHandler` em threads-próprias). 37 mantidas como idiomas documentados (ReturnCount guard-clauses, LongParameterList em Spring/Jackson, TooManyFunctions em adapters, MagicNumber em `@ConfigurationProperties`). Zero mudança comportamental, 230 testes verde. | Suppress cleanup — done |
 | 18 | **Round 19 — NF parallel deliveries (NF1+NF4+NF6+NF9)** | Done (Round 19). Quatro entregas "não-funcionais" via 4 worker agents paralelos em git worktrees, mergeados em streaming conforme cada um concluiu. **NF1** GitHub Actions CI (`.github/workflows/ci.yml`): build + detekt + test sweep em push/PR; publish gated em tag `v*` — **desativado no Round 20** (ver linha abaixo), os workflows continuam no repo mas não rodam. **NF4** Mermaid diagrams refresh: 8 diagramas atualizados/adicionados pra refletir Wave 6+7 (15 módulos + BOM). **NF6** Operability bundle: Grafana dashboard (20 panels), AlertManager rules (8 alerts), `CdcOutboxInfoContributor` em `/actuator/info` (com sensitive-data filter exercitado por teste). **NF9** Dependabot config: weekly grouped updates por família (Spring, AWS SDK, Jackson, Testcontainers, Kotlin, Micrometer). Sweep final 233/233/0/0. | NF wave — done |
 | 20 | **Round 20 — Open-source readiness** | Done. Repo público (`fernandoofj/cdc-outbox-event-producer`): `LICENSE` (MIT) + `CONTRIBUTING.md` + `CODE_OF_CONDUCT.md` + `SECURITY.md`; 53 links mortos em `README.md`/`docs/ARCHITECTURE.md` corrigidos (`src/main/kotlin/...` pré-Wave-6). GitHub Actions desativado repo-wide; branch protection em `main` (bloqueia force-push/deleção, sem PR review obrigatório — preserva o fluxo solo de merge local); topics, Discussions, secret scanning + push protection + Dependabot security updates habilitados; `pull_request_creation_policy` aberta pra `all` (forks externos conseguem abrir PR). Package rename `br.com.fltech.cdc.outbox` → `br.com.fltech.outbox` (`cdc` removido, 15 módulos + BOM). Detalhe completo em `docs/HISTORY.md`. | Open-source readiness — done |
-| 21 | **Round 21 — Dependabot batch** | Done. 9 dos 11 PRs abertos avaliados e testados localmente (build completo antes de cada merge): aws-sdk, testcontainers, kotlin/kapt 2.3.21 + detekt (ktlint plugin segurado em 12.1.1 — bump de 2 majors nunca validado, pioraria um gate já vermelho), micrometer + slf4j, jackson, ben-manes.versions, org.json, HikariCP 7.0.2, GitHub Actions pins. **#2/#3 (Spring Boot 3→4) propositalmente não mergeados** — é o próprio item F11 do roadmap, bloqueado externamente. Achados corrigidos: bug no PR do Kotlin (kapt bumpado, `kotlin("jvm")` esquecido — corrigido + migração pra DSL `compilerOptions`); K2 mudando annotation-default-target silenciosamente nos DTOs do wal2json/DLQ (pinado `-Xannotation-default-target=param-property`); HikariCP 7 ligando keepalive por default (2min) onde antes era desligado — `PoolConfig.keepaliveTime` agora explícito. Version bump `0.1.0` → `0.2.0` (breaking: group mudou + Kotlin/Micrometer à frente do que Spring Boot 3.3.5 resolveria sozinho). Validado com as 5 suítes Testcontainers reais (`RUN_TESTCONTAINERS=1`), não só testes unitários mockados. Detalhe completo em `docs/HISTORY.md`. | Dependency batch — done |
+| 21 | **Round 21 — Dependabot batch** | Done. 9 dos 11 PRs abertos avaliados e testados localmente (build completo antes de cada merge): aws-sdk, testcontainers, kotlin/kapt 2.3.21 + detekt (ktlint plugin segurado em 12.1.1 — bump de 2 majors nunca validado, pioraria um gate já vermelho), micrometer + slf4j, jackson, ben-manes.versions, org.json, HikariCP 7.0.2, GitHub Actions pins. **#2/#3 (Spring Boot 3→4) propositalmente não mergeados** — é o próprio item F11 do roadmap, bloqueado externamente. Achados corrigidos: bug no PR do Kotlin (kapt bumpado, `kotlin("jvm")` esquecido — corrigido + migração pra DSL `compilerOptions`); K2 mudando annotation-default-target silenciosamente nos DTOs do wal2json/DLQ (pinado `-Xannotation-default-target=first-only`); HikariCP 7 ligando keepalive por default (2min) onde antes era desligado — `PoolConfig.keepaliveTime` agora explícito. Version bump `0.1.0` → `0.2.0` (breaking: group mudou + Kotlin/Micrometer à frente do que Spring Boot 3.3.5 resolveria sozinho). Validado com as 5 suítes Testcontainers reais (`RUN_TESTCONTAINERS=1`), não só testes unitários mockados. Detalhe completo em `docs/HISTORY.md`. | Dependency batch — done |
 | 12 | **Wave 5.2 follow-ups landed in Round 10** | (a) **Lag-as-gauge**: novo port `core/port/LagProbe` + `PostgresLagProbe` (consulta `pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)` no `pg_replication_slots`) + `MysqlLagProbe` (compara `SHOW MASTER STATUS` com a posição persistida em `CheckpointStore`; rotação de binlog → `null` + INFO uma vez) + `LagProbeScheduler` (daemon `ScheduledExecutorService`, intervalo `cdc.outbox.lag.interval` = 10s default, cache `AtomicLong`). Métrica `cdc.outbox.source.lag_bytes{source=postgres\|mysql}`. (b) **`FileCheckpointStore` orphan-`.tmp` sweep**: varredura on-construct das `<key>.json.tmp` deixadas por crash mid-save; counter `cdc.outbox.checkpoint.orphans_swept{outcome=deleted\|failed}`. (c) **V1 wal2json column surfacing**: `ByteToClassParserImplV1` agora também emite `columns`/`identity` (paridade V1↔V2), zipando os arrays paralelos `columnnames`/`columntypes`/`columnvalues` (+ `oldkeys.*` em U/D). | Wave 5.2 follow-ups — done |
 | 19 | **Backlog priorizado pós-MVP** | (NF2) Sample consumer app em `examples/` ~3h; (NF5) JMH benchmark suite ~1d; (NF11) Maven Central publish (signing, Sonatype) ~1d; (F4) HA / leader election via `pg_try_advisory_lock` ~2-3d; (F5) partition-based parallelism + AckCoordinator ~2-4d + fault injection; (F12) OpenTelemetry tracing spans poll/publish/ack ~2d; (F10) GraalVM native-image hints ~2d. Bloqueio externo: F11 (Spring Boot 4) aguarda SCA 4 GA. **Player de DB/fila novo (F2/F3/F9) está fora deste backlog** por escolha explícita do mantenedor. | open |
 
@@ -1109,7 +1109,7 @@ default.
 | Micrometer                | 1.16.5                                                 |
 | mysql-binlog-connector    | 0.29.2 (Zendesk fork; package `com.github.shyiko.*`)   |
 | Detekt                    | 1.23.8                                                 |
-| ktlint plugin             | 12.1.1 (Dependabot propôs 14.2.0 — segurado, ver Round 20 em `docs/HISTORY.md`) |
+| ktlint plugin             | 12.1.1 (Dependabot propôs 14.2.0 — segurado, ver Round 21 em `docs/HISTORY.md`) |
 | Testcontainers            | 1.21.4                                                 |
 | Awaitility (test)         | 4.2.2                                                  |
 

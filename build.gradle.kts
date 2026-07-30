@@ -31,8 +31,9 @@ allprojects {
     // `cdc-outbox-event-producer` is no longer published; each Gradle
     // module ships under its own coordinate `cdc-outbox-<module>`.
     //
-    // Round 20 (open-source readiness): 0.1.0 → 0.2.0, also breaking.
-    // Two independent reasons: (1) the group itself moved —
+    // Round 21 (dependency batch, on top of the Round 20 group move):
+    // 0.1.0 → 0.2.0, also breaking. Two independent reasons: (1) the
+    // group itself moved in Round 20 —
     // br.com.fltech.cdc.outbox → br.com.fltech.outbox; (2) the Kotlin
     // toolchain moved 1.9.25 → 2.3.21 and Micrometer 1.12.13 → 1.16.5,
     // both ahead of what the Spring Boot 3.3.5 BOM this library still
@@ -80,11 +81,12 @@ subprojects {
         compilerOptions {
             freeCompilerArgs.add("-Xjsr305=strict")
             // Kotlin 2.x is moving the default annotation use-site target from
-            // param-only to param+field (planned default flip in 2.4). Pin the
-            // pre-2.x behavior explicitly so @JsonProperty on constructor vals
-            // (wal2json row-change models, DlqEnvelope) keeps targeting only the
-            // constructor parameter Jackson actually binds against.
-            freeCompilerArgs.add("-Xannotation-default-target=param-property")
+            // param-only ("first-only") to param+field ("param-property"),
+            // planned as the default in 2.4. Pin "first-only" explicitly so
+            // @JsonProperty on constructor vals (wal2json row-change models,
+            // DlqEnvelope) keeps targeting only the constructor parameter
+            // Jackson actually binds against, not also the backing field.
+            freeCompilerArgs.add("-Xannotation-default-target=first-only")
             jvmTarget.set(JvmTarget.JVM_17)
         }
     }

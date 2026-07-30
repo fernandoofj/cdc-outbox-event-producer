@@ -48,15 +48,20 @@ into `main` for real) rather than trusting the diff at face value.
     bump would have landed silently via the group merge. Re-evaluate
     once the existing ktlint debt has a dedicated cleanup round.
   * **Kotlin 2.x annotation-default-target**: pinned
-    `-Xannotation-default-target=param-property` in the root
+    `-Xannotation-default-target=first-only` in the root
     `compilerOptions` block. Kotlin is moving the default from
-    param-only to param+field (planned flip in 2.4); left unpinned it
-    silently added the field as a second `@JsonProperty` target on
-    every wal2json row-change model and `DlqEnvelope` — 20 new
-    compiler warnings that `./gradlew build`'s task-interleaved output
-    doesn't surface, and a real risk to Jackson property resolution
-    on the WAL/DLQ deserialization path. Explicit pin keeps pre-2.4
-    behavior.
+    param-only (`first-only`) to param+field (`param-property`,
+    planned flip in 2.4); left unpinned it silently added the field as
+    a second `@JsonProperty` target on every wal2json row-change model
+    and `DlqEnvelope` — 20 new compiler warnings that `./gradlew
+    build`'s task-interleaved output doesn't surface, and (bytecode-
+    verified) a real rename of `InsertChange.kindInput`'s exposed
+    Jackson property to `kind` via the class's own
+    `@JsonAutoDetect(fieldVisibility = ANY)`. A first attempt at this
+    fix pinned `param-property` instead — the *new* K2 default, not
+    the old one — which a second Tech Lead pass caught by diffing
+    `javap -v` output against the pre-Round-21 jar. `first-only`
+    reproduces the pre-2.4 property set exactly.
   * **HikariCP 7 default behavior change**: `keepaliveTime` moved from
     disabled (`0`, HikariCP 5) to enabled (`2 min`, HikariCP 7).
     `HikariCPConnectionProvider.PoolConfig` gained an explicit
