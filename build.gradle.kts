@@ -11,7 +11,7 @@ plugins {
     id("org.jlleitschuh.gradle.ktlint") version "14.2.0" apply false
     id("org.jetbrains.kotlin.kapt") version "2.3.21" apply false
     id("org.sonarqube") version "5.1.0.4882"
-    id("com.github.ben-manes.versions") version "0.51.0"
+    id("com.github.ben-manes.versions") version "0.54.0"
     id("com.gorylenko.gradle-git-properties") version "2.4.2" apply false
     id("com.avast.gradle.docker-compose") version "0.17.12"
     jacoco
