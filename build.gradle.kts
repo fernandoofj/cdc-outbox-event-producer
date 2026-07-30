@@ -8,7 +8,12 @@ plugins {
     `maven-publish`
 
     id("io.gitlab.arturbosch.detekt") version "1.23.8" apply false
-    id("org.jlleitschuh.gradle.ktlint") version "14.2.0" apply false
+    // Held back at 12.1.1 (Dependabot proposed 14.2.0, two majors): the
+    // ktlintCheck gate is already red pre-existing (checkpoint-file and
+    // others; see docs/HISTORY.md); the 14.x engine adds ~19% more findings
+    // across more modules and was never actually run before this bump would
+    // have landed. Re-evaluate once the existing ktlint debt is cleaned up.
+    id("org.jlleitschuh.gradle.ktlint") version "12.1.1" apply false
     id("org.jetbrains.kotlin.kapt") version "2.3.21" apply false
     id("org.sonarqube") version "5.1.0.4882"
     id("com.github.ben-manes.versions") version "0.54.0"
@@ -21,11 +26,22 @@ apply(plugin = "docker-compose")
 
 allprojects {
     group = "br.com.fltech.outbox"
-    // Wave 7 — Multi-artifact Maven publish. Bump 0.0.11 → 0.1.0 is
+    // Wave 7 — Multi-artifact Maven publish. Bump 0.0.11 → 0.1.0 was
     // a breaking change for consumers: the legacy coordinate
     // `cdc-outbox-event-producer` is no longer published; each Gradle
     // module ships under its own coordinate `cdc-outbox-<module>`.
-    version = "0.1.0"
+    //
+    // Round 20 (open-source readiness): 0.1.0 → 0.2.0, also breaking.
+    // Two independent reasons: (1) the group itself moved —
+    // br.com.fltech.cdc.outbox → br.com.fltech.outbox; (2) the Kotlin
+    // toolchain moved 1.9.25 → 2.3.21 and Micrometer 1.12.13 → 1.16.5,
+    // both ahead of what the Spring Boot 3.3.5 BOM this library still
+    // targets would resolve on its own — a consumer on plain Boot
+    // 3.3.5 dependency management could otherwise silently downgrade
+    // kotlin-stdlib/micrometer-core underneath classes compiled
+    // against the newer versions. Same version, two groups, would
+    // have hidden that.
+    version = "0.2.0"
 
     repositories {
         mavenCentral()
@@ -63,6 +79,12 @@ subprojects {
     tasks.withType<KotlinCompile> {
         compilerOptions {
             freeCompilerArgs.add("-Xjsr305=strict")
+            // Kotlin 2.x is moving the default annotation use-site target from
+            // param-only to param+field (planned default flip in 2.4). Pin the
+            // pre-2.x behavior explicitly so @JsonProperty on constructor vals
+            // (wal2json row-change models, DlqEnvelope) keeps targeting only the
+            // constructor parameter Jackson actually binds against.
+            freeCompilerArgs.add("-Xannotation-default-target=param-property")
             jvmTarget.set(JvmTarget.JVM_17)
         }
     }

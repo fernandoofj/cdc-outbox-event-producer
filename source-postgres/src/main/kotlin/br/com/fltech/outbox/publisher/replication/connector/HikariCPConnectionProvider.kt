@@ -67,6 +67,7 @@ class HikariCPConnectionProvider(
             idleTimeout = poolConfig.idleTimeout.toMillis()
             maxLifetime = poolConfig.maxLifetime.toMillis()
             leakDetectionThreshold = poolConfig.leakDetectionThreshold.toMillis()
+            keepaliveTime = poolConfig.keepaliveTime.toMillis()
             poolName = poolConfig.poolName
             isAutoCommit = poolConfig.autoCommit
         }
@@ -91,6 +92,13 @@ class HikariCPConnectionProvider(
         val leakDetectionThreshold: Duration = Duration.ofSeconds(DEFAULT_LEAK_DETECTION_SECONDS),
         val poolName: String = DEFAULT_POOL_NAME,
         val autoCommit: Boolean = true,
+        // HikariCP 7 changed its own default from disabled (0) to 2 minutes;
+        // kept explicitly disabled here to preserve this pool's pre-existing
+        // behavior across the HikariCP 5 -> 7 bump. The single query connection
+        // this pool serves is held too briefly for a keepalive probe to matter,
+        // and an unexpected background probe is not something a routine
+        // dependency bump should introduce silently.
+        val keepaliveTime: Duration = Duration.ZERO,
     )
 
     companion object {

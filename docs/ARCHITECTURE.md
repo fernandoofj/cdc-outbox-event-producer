@@ -31,12 +31,12 @@
 
 ## Stack e premissas
 
-  * Kotlin **1.9.25** sobre JVM 17 (compilado com JDK 21).
+  * Kotlin **2.3.21** sobre JVM 17 (compilado com JDK 21).
   * Spring Boot **3.3.5** (dependências em `compileOnly` — o JAR roda
     fora do Boot).
   * Spring Cloud AWS **3.2.1** (`SnsTemplate` / `SqsTemplate`, AWS SDK v2).
   * `pgjdbc` 42.6 (replicação lógica), `mysql-binlog-connector-java`
-    0.29.2 (binlog), HikariCP 5.1, Micrometer 1.12, Testcontainers 1.20.
+    0.29.2 (binlog), HikariCP 7.0.2, Micrometer 1.16.5, Testcontainers 1.21.4.
   * O núcleo (`core/`) compila **sem** Spring e **sem** drivers JDBC.
 
 A separação hexagonal é um princípio: domínio e portas em `core`,

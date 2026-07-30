@@ -9,6 +9,81 @@ file records the actual delivery and the Tech Lead verdict per round.
 > external release scheme. They're kept here as-is because they're
 > the actual identifiers used in the corresponding commits and PRs.
 
+## Round 21 — Dependabot batch (9 of 11 open PRs)
+
+11 Dependabot PRs had accumulated unreviewed while GitHub Actions was
+disabled (Round 20), so none had ever run CI. Evaluated and tested
+each locally (merge into a scratch branch off `main`, full
+`./gradlew build` — compile + unit tests + detekt — before merging
+into `main` for real) rather than trusting the diff at face value.
+
+  * **Merged (9): #4** aws-sdk 2.27.21→2.44.7, **#5** testcontainers
+    1.20.4→1.21.4, **#6** detekt 1.23.7→1.23.8 + kapt/kotlin
+    1.9.25→2.3.21 (ktlint plugin held back, see below), **#7**
+    micrometer 1.12.13→1.16.5 + slf4j 2.0.16→2.0.18, **#8** jackson
+    2.15.3→2.21.3, **#9** com.github.ben-manes.versions plugin
+    0.51.0→0.54.0, **#10** org.json 20240205→20251224, **#11**
+    HikariCP 5.1.0→7.0.2, **#12** GitHub Actions pins (inert while
+    Actions stay disabled).
+  * **Skipped (2): #2** (Spring Boot 3.3.5→4.0.6) and **#3** (coupled
+    Spring Framework 7 / spring-kafka 4 / spring-rabbit 4 /
+    spring-cloud-aws 4). This is the roadmap's own F11 item, already
+    flagged "blocked externally (aguarda SCA 4 GA)" — a routine
+    Dependabot merge is exactly the shortcut the global cross-repo
+    policy (`/Users/fernando/Repositorios/CLAUDE.md`) warns against
+    for major-incompatibility jumps, naming Spring Boot 3→4 by name.
+    Both PRs are still open on GitHub, untouched.
+  * **PR #6 had a real bug**: Dependabot bumped
+    `org.jetbrains.kotlin.kapt` to 2.3.21 but left `kotlin("jvm")` at
+    1.9.25 (its Gradle scanner doesn't match the `kotlin("jvm")`
+    shorthand against the `org.jetbrains.kotlin.*` glob it groups on)
+    — a mismatched toolchain that failed outright, since Kotlin 2.x
+    hard-errors the old `kotlinOptions {}` DSL. Fixed by bumping
+    `kotlin("jvm")` to match and migrating to `compilerOptions { ... }`.
+  * **ktlint plugin held at 12.1.1** (Dependabot proposed 14.2.0 as
+    part of the kotlin group). The `ktlintCheck` gate is already red
+    pre-existing (`checkpoint-file` and others — undocumented debt
+    from before this round); the 14.x engine adds ~19% more findings
+    across more modules and was never actually exercised before the
+    bump would have landed silently via the group merge. Re-evaluate
+    once the existing ktlint debt has a dedicated cleanup round.
+  * **Kotlin 2.x annotation-default-target**: pinned
+    `-Xannotation-default-target=param-property` in the root
+    `compilerOptions` block. Kotlin is moving the default from
+    param-only to param+field (planned flip in 2.4); left unpinned it
+    silently added the field as a second `@JsonProperty` target on
+    every wal2json row-change model and `DlqEnvelope` — 20 new
+    compiler warnings that `./gradlew build`'s task-interleaved output
+    doesn't surface, and a real risk to Jackson property resolution
+    on the WAL/DLQ deserialization path. Explicit pin keeps pre-2.4
+    behavior.
+  * **HikariCP 7 default behavior change**: `keepaliveTime` moved from
+    disabled (`0`, HikariCP 5) to enabled (`2 min`, HikariCP 7).
+    `HikariCPConnectionProvider.PoolConfig` gained an explicit
+    `keepaliveTime: Duration = Duration.ZERO` so the query pool's
+    behavior doesn't silently change underneath a routine dependency
+    bump. Verified via jar decompilation, not just a green test run
+    (the unit tests mock the datasource).
+  * **Version bump 0.1.0 → 0.2.0** (breaking, matching the Wave 7
+    convention of bumping on any breaking change): two independent
+    reasons — the Maven group itself moved
+    (`br.com.fltech.cdc.outbox` → `br.com.fltech.outbox`, Round 20),
+    and Kotlin 2.3.21 / Micrometer 1.16.5 are now ahead of what a
+    consumer on plain Spring Boot 3.3.5 dependency management (this
+    library's `compileOnly` target) would resolve on its own — same
+    version under the old group and the new one would have hidden
+    that a straight upgrade isn't safe without checking.
+  * **Verification**: `./gradlew clean build` (compile + unit tests +
+    detekt, ktlint/`:legacy:test`'s two DB-dependent ITs excluded —
+    both pre-existing, unrelated environmental/debt items) green
+    across all 15 modules + BOM. Additionally ran the 5
+    Testcontainers-backed integration/E2E suites for real
+    (`RUN_TESTCONTAINERS=1 DOCKER_API_VERSION=1.43`):
+    `MysqlRabbitMqE2EIT`, `PostgresSnsE2EIT`, `MySqlBinlogReplayerIT`,
+    `DlqReplayIT`, `AtLeastOnceDeliveryIT` — all green, exercising the
+    real HikariCP pool, real Jackson (de)serialization, and real
+    AWS/RabbitMQ/MySQL wire paths, not just mocked unit tests.
+
 ## Round 20 — Open-source readiness
 
 Repo flipped from private to public (`fernandoofj/cdc-outbox-event-producer`).

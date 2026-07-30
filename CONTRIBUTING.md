@@ -7,6 +7,11 @@ what a pull request needs to be mergeable.
 
 ## Getting started
 
+Requires **JDK 21** as `JAVA_HOME` — Gradle 8.10.2's embedded Kotlin
+DSL compiler cannot parse a two-digit `java -version` (fails with a
+bare `26.0.1`-style error on JDK 24+). JDK 17 also works since that's
+the compile target; JDK 21 is what the project builds and tests with.
+
 ```sh
 git clone https://github.com/fernandoofj/cdc-outbox-event-producer.git
 cd cdc-outbox-event-producer
