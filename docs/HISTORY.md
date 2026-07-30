@@ -4,6 +4,47 @@ A rolling record of what landed on `main`, ordered newest-first. The
 canonical roadmap is in [README §Roadmap](../README.md#roadmap); this
 file records the actual delivery and the Tech Lead verdict per round.
 
+> **Terminology:** "Round N" and "Onda N" ("Wave N") are this
+> project's own internal labels for a development iteration — not an
+> external release scheme. They're kept here as-is because they're
+> the actual identifiers used in the corresponding commits and PRs.
+
+## Round 20 — Open-source readiness
+
+Repo flipped from private to public (`fernandoofj/cdc-outbox-event-producer`).
+
+  * **Baseline OSS files**: `LICENSE` (MIT, matching the `pom` metadata
+    already declared in `build.gradle.kts`), `CONTRIBUTING.md`,
+    `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), `SECURITY.md`.
+    53 dead `src/main/kotlin/...` links in `README.md` /
+    `docs/ARCHITECTURE.md` fixed (stale since the Wave 6 multi-module
+    split — never updated). (commits `6ddd5b0`, `9ecebed`)
+  * **GitHub Actions disabled** repo-wide (`actions/permissions`).
+    `README.md` CI badge dropped; `CONTRIBUTING.md` corrected to say
+    `./gradlew build` locally is the gate, not CI. (commit `ad56772`)
+  * **Branch protection on `main`**: force-push and deletion blocked.
+    No required PR review — preserves the existing solo merge-locally
+    workflow — so `enforce_admins`/`required_pull_request_reviews`
+    stay off.
+  * **Repo settings**: topics added (`kotlin`, `cdc`,
+    `change-data-capture`, `outbox-pattern`, `postgres`, `mysql`,
+    `sns`, `sqs`, `kafka`, `rabbitmq`, `spring-boot`,
+    `event-driven-architecture`, `jvm`); Discussions enabled;
+    `pull_request_creation_policy` flipped `collaborators_only` →
+    `all` (external forks can now actually open the PRs
+    `CONTRIBUTING.md` invites); secret scanning + push protection +
+    Dependabot security updates enabled (free tier, public repo).
+  * **Package rename**: `br.com.fltech.cdc.outbox.publisher` →
+    `br.com.fltech.outbox.publisher` (`cdc` segment dropped) across
+    all 15 modules + BOM (152 source files moved, Maven `group`
+    updated). First attempt targeted `io.github.cdc.outbox` — Tech
+    Lead review caught that `github.com/cdc` is a different GitHub
+    account, not `fernandoofj`, which would have made the coordinate
+    both unpublishable to Maven Central (ownership of the `io.github.*`
+    segment has to be proven for the actual account) and a namespace
+    squat on a third party. Corrected to stay under `br.com.fltech`,
+    same as before, just shorter.
+
 ## Snapshot 2026-05-17
 
 Estado consolidado pós-Round 19 (paralelo) + Round 18 (suppress cleanup):

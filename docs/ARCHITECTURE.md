@@ -230,7 +230,7 @@ flowchart TB
 
 ### `OutboxEvent`
 
-[OutboxEvent.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/OutboxEvent.kt)
+[OutboxEvent.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/domain/OutboxEvent.kt)
 é o único tipo que atravessa a fronteira do hexágono. Imutável,
 serializável, value-type real (`equals`/`hashCode` sobre o array de
 bytes via `contentEquals` — o `data class` default compararia o
@@ -247,7 +247,7 @@ bytes via `contentEquals` — o `data class` default compararia o
 
 ### `Routing`
 
-[Routing.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/Routing.kt).
+[Routing.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/domain/Routing.kt).
 Tripla `(scheme, target, attributes)`:
 
   * `scheme` em minúsculo (`sns`, `sqs`, `kafka`, `amqp`) — é o que o
@@ -261,7 +261,7 @@ Tripla `(scheme, target, attributes)`:
 
 ### `RowChange`
 
-[RowChange.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/RowChange.kt)
+[RowChange.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/domain/RowChange.kt)
 representa um evento I/U/D antes de virar `OutboxEvent`. Usado pelas
 origens row-level (MySQL binlog, futuro Postgres I/U/D). Contém:
 
@@ -273,7 +273,7 @@ origens row-level (MySQL binlog, futuro Postgres I/U/D). Contém:
 
 ### `TableMapping`
 
-[TableMapping.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/TableMapping.kt)
+[TableMapping.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/domain/TableMapping.kt)
 é a especificação declarativa do item 7 da brief (mapeamento flexível
 de tabela / coluna / sink). Cinco blocos:
 
@@ -289,7 +289,7 @@ de tabela / coluna / sink). Cinco blocos:
 
 ### Driving — `CdcSource`
 
-[CdcSource.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/CdcSource.kt).
+[CdcSource.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/port/CdcSource.kt).
 Porta de **alto nível** — entrega `OutboxEvent` direto ao orquestrador.
 
 ```kotlin
@@ -311,7 +311,7 @@ política de consolidação).
 
 ### Driving — `RowChangeSource`
 
-[RowChangeSource.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/RowChangeSource.kt).
+[RowChangeSource.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/port/RowChangeSource.kt).
 Versão de **baixo nível** que entrega `RowChange`. Existe pra que o
 mapeamento declarativo possa rodar entre a origem row-level e o
 orquestrador. O decorator [`MappingCdcSource`](#núcleo-de-aplicação-coreapplication)
@@ -320,32 +320,32 @@ casa uma `RowChangeSource` com uma `MappingRules` e satisfaz a
 
 ### Driven — `EventSink`
 
-[EventSink.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/EventSink.kt).
+[EventSink.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/port/EventSink.kt).
 `fun interface EventSink { fun publish(routing: Routing, event: OutboxEvent) }`.
 Cada sink é responsável por **um** scheme. Falhas permanentes devem
 ser lançadas — retry é responsabilidade do orquestrador, não do sink.
 
 ### Driven — `EventSinkRegistry`
 
-[EventSinkRegistry.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/EventSinkRegistry.kt).
+[EventSinkRegistry.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/port/EventSinkRegistry.kt).
 Resolução `scheme → EventSink`. Implementação default em
-[DefaultEventSinkRegistry](../sink-composition/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/registry/DefaultEventSinkRegistry.kt)
+[DefaultEventSinkRegistry](../sink-composition/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/sink/registry/DefaultEventSinkRegistry.kt)
 case-insensitive. `publish()` lança `NoSinkForSchemeException` quando
 não há sink — o orquestrador trata isso como falha permanente (sem
 retry) e direciona pra DLQ se houver.
 
 ### Driven — `DeadLetterPort`
 
-[DeadLetterPort.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/DeadLetterPort.kt).
+[DeadLetterPort.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/port/DeadLetterPort.kt).
 `fun interface DeadLetterPort { fun send(event: OutboxEvent, cause: Throwable) }`.
 Recebe um evento que esgotou retries. Adaptador legado em
-[LegacyDeadLetterPortAdapter](../legacy/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/deadletter/LegacyDeadLetterPortAdapter.kt)
+[LegacyDeadLetterPortAdapter](../legacy/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/deadletter/LegacyDeadLetterPortAdapter.kt)
 faz a ponte para o `DeadLetterSink` legado (envelope SQS) — assim
 quem já tinha `SqsDeadLetterSink` configurado mantém a configuração.
 
 ### Driven — `MappingRules`
 
-[MappingRules.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/MappingRules.kt).
+[MappingRules.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/port/MappingRules.kt).
 `fun interface MappingRules { fun map(rowChange: RowChange): OutboxEvent? }`.
 Retorna `null` quando não há mapeamento para a tabela ou quando a op
 está fora do `capture` — `MappingCdcSource` então faz `ack` na origem
@@ -353,7 +353,7 @@ e drop silencioso no orquestrador.
 
 ### Driven — `CheckpointStore`
 
-[CheckpointStore.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/CheckpointStore.kt)
+[CheckpointStore.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/port/CheckpointStore.kt)
 (Onda 5.2). `interface CheckpointStore : AutoCloseable { fun load(key: String): String?; fun save(key: String, value: String) }`.
 Persiste marcadores opacos por origem (`"binlog:<serverId>"`,
 `"pg-wal:<slotName>"`). Invariantes contratuais: `save` é atômico
@@ -365,7 +365,7 @@ in-memory quando `null`.
 
 ### Driven — `LagProbe`
 
-[LagProbe.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/port/LagProbe.kt)
+[LagProbe.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/port/LagProbe.kt)
 (Round 10 follow-up). `interface LagProbe { val sourceLabel: String; fun lagBytes(): Long? }`.
 Reporta o lag de replicação em bytes (quanto a origem está atrás
 da cabeça do WAL/binlog upstream). Retorna `null` quando a
@@ -380,7 +380,7 @@ pelo gauge a custo zero.
 
 ### `CdcProcessor`
 
-[CdcProcessor.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/CdcProcessor.kt).
+[CdcProcessor.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/application/CdcProcessor.kt).
 O orquestrador hexagonal. Loop bloqueante de única thread (a thread é
 fornecida pelo `CdcProcessorLifecycle`, daemon). Pseudocódigo:
 
@@ -429,7 +429,7 @@ Invariantes:
 
 ### `MappingCdcSource`
 
-[MappingCdcSource.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/MappingCdcSource.kt).
+[MappingCdcSource.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/application/MappingCdcSource.kt).
 Decorator que satisfaz `CdcSource` lendo de uma `RowChangeSource` e
 aplicando `MappingRules`. Mantém um buffer
 `event.sourceCheckpoint → RowChange` para que `ack(event)` possa
@@ -438,7 +438,7 @@ por contrato — o mapa não precisa de sincronização.
 
 ### `DefaultMappingRules`
 
-[DefaultMappingRules.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/application/DefaultMappingRules.kt).
+[DefaultMappingRules.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/application/DefaultMappingRules.kt).
 Implementação de referência. Para cada `RowChange`:
 
   1. Resolve por igualdade exata de `table` (case-sensitive).
@@ -458,7 +458,7 @@ Implementação de referência. Para cada `RowChange`:
 
 ### `PgLogicalReplicationCdcSource`
 
-[PgLogicalReplicationCdcSource.kt](../source-postgres/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt).
+[PgLogicalReplicationCdcSource.kt](../source-postgres/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/source/postgres/PgLogicalReplicationCdcSource.kt).
 Embrulha `PostgresConnector` (legado) com a interface `CdcSource`.
 
   * `poll()`: lê próximo `ByteBuffer` do slot lógico, faz parse via
@@ -473,7 +473,7 @@ Embrulha `PostgresConnector` (legado) com a interface `CdcSource`.
 
 ### `MySqlOutboxTableCdcSource`
 
-[MySqlOutboxTableCdcSource.kt](../source-mysql/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt).
+[MySqlOutboxTableCdcSource.kt](../source-mysql/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/source/mysql/MySqlOutboxTableCdcSource.kt).
 Variante poller — tabela `outbox_events` (schema fixo documentado no
 KDoc) consumida com `SELECT … FOR UPDATE SKIP LOCKED`. `poll()` abre
 transação, retorna a row mais antiga não publicada; `ack` faz
@@ -483,7 +483,7 @@ de SQLi).
 
 ### `MySqlBinlogRowChangeSource`
 
-[MySqlBinlogRowChangeSource.kt](../source-mysql/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt).
+[MySqlBinlogRowChangeSource.kt](../source-mysql/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/source/mysql/MySqlBinlogRowChangeSource.kt).
 Origem row-level via `mysql-binlog-connector-java`. Implementa
 `RowChangeSource`, não `CdcSource` — é o `MappingCdcSource` quem casa
 a porta com o `MappingRules` configurado.
@@ -507,7 +507,7 @@ a porta com o `MappingRules` configurado.
 
 ### `PgWalRowChangeSource`
 
-[PgWalRowChangeSource.kt](../source-postgres/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/postgres/PgWalRowChangeSource.kt)
+[PgWalRowChangeSource.kt](../source-postgres/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/source/postgres/PgWalRowChangeSource.kt)
 (Onda 5.2). Origem row-level Postgres — irmã do binlog MySQL no
 hexágono. Implementa `RowChangeSource`, reaproveita
 `PostgresConnector` + `wal2json` do `PgLogicalReplicationCdcSource`,
@@ -540,8 +540,8 @@ message-only (slots distintos; auto-config garante exclusividade).
 
 ### `SqlServerCdcSourceStub` / `OracleCdcSourceStub`
 
-[SqlServerCdcSourceStub.kt](../source-stubs/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/sqlserver/SqlServerCdcSourceStub.kt)
-e [OracleCdcSourceStub.kt](../source-stubs/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/source/oracle/OracleCdcSourceStub.kt).
+[SqlServerCdcSourceStub.kt](../source-stubs/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/source/sqlserver/SqlServerCdcSourceStub.kt)
+e [OracleCdcSourceStub.kt](../source-stubs/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/source/oracle/OracleCdcSourceStub.kt).
 Placeholders. `open`/`poll`/`ack` lançam `UnsupportedOperationException`
 deliberadamente — instalação errada falha alto e cedo, em vez de não
 emitir nada. Implementação real fica para uma onda futura.
@@ -550,12 +550,12 @@ emitir nada. Implementação real fica para uma onda futura.
 
 | Adapter                                                                                                                                                  | Scheme  | Template usado            | Versão               |
 |----------------------------------------------------------------------------------------------------------------------------------------------------------|---------|---------------------------|----------------------|
-| [SnsEventSink](../sink-aws/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sns/SnsEventSink.kt)                                                    | `sns`   | `SnsTemplate` (SCA 3)     | AWS SDK v2 (2.27.x)  |
-| [SqsEventSink](../sink-aws/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/sqs/SqsEventSink.kt)                                                    | `sqs`   | `SqsTemplate` (SCA 3)     | AWS SDK v2 (2.27.x)  |
-| [KafkaEventSink](../sink-kafka/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/kafka/KafkaEventSink.kt)                                              | `kafka` | `KafkaTemplate<String,ByteArray>` (Spring Kafka) | kafka-clients atual |
-| [RabbitMqEventSink](../sink-rabbitmq/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/rabbitmq/RabbitMqEventSink.kt)                                     | `amqp`  | `RabbitTemplate` (Spring AMQP) | Spring AMQP        |
-| [CompositeEventSink](../sink-composition/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/composite/CompositeEventSink.kt)                                  | —       | fan-out de N delegates    | —                    |
-| [SchemeRouterEventSink](../sink-composition/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/sink/router/SchemeRouterEventSink.kt)                               | —       | re-roteia via registry    | —                    |
+| [SnsEventSink](../sink-aws/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/sink/sns/SnsEventSink.kt)                                                    | `sns`   | `SnsTemplate` (SCA 3)     | AWS SDK v2 (2.27.x)  |
+| [SqsEventSink](../sink-aws/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/sink/sqs/SqsEventSink.kt)                                                    | `sqs`   | `SqsTemplate` (SCA 3)     | AWS SDK v2 (2.27.x)  |
+| [KafkaEventSink](../sink-kafka/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/sink/kafka/KafkaEventSink.kt)                                              | `kafka` | `KafkaTemplate<String,ByteArray>` (Spring Kafka) | kafka-clients atual |
+| [RabbitMqEventSink](../sink-rabbitmq/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/sink/rabbitmq/RabbitMqEventSink.kt)                                     | `amqp`  | `RabbitTemplate` (Spring AMQP) | Spring AMQP        |
+| [CompositeEventSink](../sink-composition/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/sink/composite/CompositeEventSink.kt)                                  | —       | fan-out de N delegates    | —                    |
+| [SchemeRouterEventSink](../sink-composition/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/sink/router/SchemeRouterEventSink.kt)                               | —       | re-roteia via registry    | —                    |
 
 Detalhes operacionais:
 
@@ -598,19 +598,19 @@ flowchart LR
 
 ## Adaptador de dead-letter legado
 
-[LegacyDeadLetterPortAdapter](../legacy/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/deadletter/LegacyDeadLetterPortAdapter.kt)
+[LegacyDeadLetterPortAdapter](../legacy/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/deadletter/LegacyDeadLetterPortAdapter.kt)
 implementa `DeadLetterPort` em cima de
-[DeadLetterSink](../legacy/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/deadletter/DeadLetterSink.kt)
+[DeadLetterSink](../legacy/src/main/kotlin/br/com/fltech/outbox/publisher/deadletter/DeadLetterSink.kt)
 (API legada `(lsn, MessageChange, Throwable)`). Reconstrói os dois
 parâmetros a partir do `OutboxEvent` para que a publicação em
-[SqsDeadLetterSink](../legacy/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/deadletter/SqsDeadLetterSink.kt)
+[SqsDeadLetterSink](../legacy/src/main/kotlin/br/com/fltech/outbox/publisher/deadletter/SqsDeadLetterSink.kt)
 gere o envelope SQS já documentado. Esse adaptador é exatamente o tipo
 de "tradutor" que justifica a separação domínio/adapter — ele conhece
 `LogSequenceNumber` e `MessageChange` porque vive no anel adaptador.
 
 ## Adaptador de checkpoint file-backed
 
-[FileCheckpointStore.kt](../checkpoint-file/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/checkpoint/FileCheckpointStore.kt)
+[FileCheckpointStore.kt](../checkpoint-file/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/checkpoint/FileCheckpointStore.kt)
 (Onda 5.2). Implementação default de `CheckpointStore`: um arquivo
 JSON (`{"key":"…","value":"…"}`, hand-written para não puxar Jackson
 num leaf adapter) por `key` em `<directory>/<sanitised-key>.json`.
@@ -643,13 +643,13 @@ Tres componentes formam a cadeia de exposição do lag de replicação
 como gauge Micrometer (Round 10 follow-up; resolve o item (a) do
 roadmap row 12).
 
-  * [PostgresLagProbe.kt](../lag-probes/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/lag/postgres/PostgresLagProbe.kt).
+  * [PostgresLagProbe.kt](../lag-probes/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/lag/postgres/PostgresLagProbe.kt).
     Consulta
     `SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn) FROM pg_replication_slots WHERE slot_name = ?`.
     Diferencia `confirmed_flush_lsn` SQL `NULL` (slot definido mas
     nunca streamed) de zero-byte lag via `wasNull()`. `SQLException`
     → WARN + `null`.
-  * [MysqlLagProbe.kt](../lag-probes/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/adapter/lag/mysql/MysqlLagProbe.kt).
+  * [MysqlLagProbe.kt](../lag-probes/src/main/kotlin/br/com/fltech/outbox/publisher/adapter/lag/mysql/MysqlLagProbe.kt).
     Consulta `SHOW MASTER STATUS` para o `(File, Position)` corrente
     do servidor, lê a posição persistida em `CheckpointStore` sob
     `"binlog:<serverId>"` e calcula `serverPosition − checkpointPosition`
@@ -657,7 +657,7 @@ roadmap row 12).
     além do checkpoint) → `null` + INFO uma única vez (debounce via
     `AtomicBoolean`) — branch conservador; estimar via tamanhos de
     binlog rotacionados é frágil quando o servidor já fez `PURGE`.
-  * [LagProbeScheduler.kt](../lag-probes/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/observability/LagProbeScheduler.kt).
+  * [LagProbeScheduler.kt](../lag-probes/src/main/kotlin/br/com/fltech/outbox/publisher/observability/LagProbeScheduler.kt).
     `ScheduledExecutorService` daemon (não usa `@Scheduled` para
     manter o producer agnóstico ao Spring Scheduling). Amostra
     `LagProbe.lagBytes()` no intervalo `cdc.outbox.lag.interval`,
@@ -749,7 +749,7 @@ sequenceDiagram
 
 ## Catálogo de propriedades (`cdc.outbox.*`)
 
-Fonte canônica: [CdcOutboxProperties.kt](../spring-boot-starter/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/infra/spring/CdcOutboxProperties.kt).
+Fonte canônica: [CdcOutboxProperties.kt](../spring-boot-starter/src/main/kotlin/br/com/fltech/outbox/publisher/infra/spring/CdcOutboxProperties.kt).
 
 ### Geral
 
@@ -843,7 +843,7 @@ puro — Postgres exige conexão crua para `replication=database`).
 ### `cdc.outbox.mappings`
 
 Lista de `MappingProps` (Onda 3.5 / item 7 da brief). Esquema completo
-em [TableMapping.kt](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/core/domain/TableMapping.kt)
+em [TableMapping.kt](../core/src/main/kotlin/br/com/fltech/outbox/publisher/core/domain/TableMapping.kt)
 e exemplo YAML no [README](../README.md).
 
 ## Auto-configurações e ordem de wiring
@@ -867,7 +867,7 @@ Ordem: `Auto → Sink → Hexagonal → Mapping → Health` (via
 
 ## Observabilidade
 
-[CdcOutboxMetrics](../core/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/observability/CdcOutboxMetrics.kt)
+[CdcOutboxMetrics](../core/src/main/kotlin/br/com/fltech/outbox/publisher/observability/CdcOutboxMetrics.kt)
 é uma façade Micrometer no-op-friendly (sem `MeterRegistry` na
 aplicação, todos os métodos viram no-ops).
 
@@ -942,7 +942,7 @@ devem dedup por `event.id`.
 ## Convivência com o pipeline legado
 
 O `SlotReaderMessageProducer`
-([workflow/SlotReaderMessageProducer.kt](../legacy/src/main/kotlin/br/com/fltech/cdc/outbox/publisher/workflow/SlotReaderMessageProducer.kt))
+([workflow/SlotReaderMessageProducer.kt](../legacy/src/main/kotlin/br/com/fltech/outbox/publisher/workflow/SlotReaderMessageProducer.kt))
 continua sendo o pipeline ativado por `cdc.outbox.processor.kind=legacy`.
 Os dois ciclos são mutuamente exclusivos via `@ConditionalOnProperty`,
 então não há risco de streaming-threads concorrentes. A Onda 5.2 fecha

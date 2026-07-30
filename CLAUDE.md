@@ -133,10 +133,10 @@ Per round:
 
 ## Project conventions
 
-  * **Package root:** `br.com.fltech.cdc.outbox.publisher.**`. The
+  * **Package root:** `br.com.fltech.outbox.publisher.**`. The
     legacy `shop.inventa.pg2sns4k.**` tree was migrated in commit
     `25dcf78`; no files under the old root should ever reappear.
-  * **Maven `group`:** `br.com.fltech.cdc.outbox`.
+  * **Maven `group`:** `br.com.fltech.outbox`.
   * **External identifiers** (event ids, domain ids in event
     envelopes) are ULIDs or UUIDv7. Internal database PKs are never
     exposed.

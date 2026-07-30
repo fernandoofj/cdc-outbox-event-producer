@@ -2,7 +2,7 @@
 //
 // POM-only artifact that pins versions for every published
 // `cdc-outbox-*` module. Consumers import the BOM via
-// `dependencies { implementation(platform("br.com.fltech.cdc.outbox:cdc-outbox-bom:0.1.0")) }`
+// `dependencies { implementation(platform("br.com.fltech.outbox:cdc-outbox-bom:0.1.0")) }`
 // and then declare individual modules without versions —
 // Gradle/Maven resolves the version from the BOM's `constraints`
 // section.
