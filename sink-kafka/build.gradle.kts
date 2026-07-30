@@ -4,7 +4,7 @@
 // on the classpath.
 dependencies {
     api(project(":core"))
-    compileOnly("org.springframework.kafka:spring-kafka:3.2.4")
+    compileOnly("org.springframework.kafka:spring-kafka:4.0.5")
 
-    testImplementation("org.springframework.kafka:spring-kafka:3.2.4")
+    testImplementation("org.springframework.kafka:spring-kafka:4.0.5")
 }

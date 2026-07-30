@@ -193,8 +193,9 @@ open class CdcOutboxAutoConfiguration {
 
     // CdcOutboxHealthIndicator is contributed by CdcOutboxHealthAutoConfiguration
     // — split into its own file because the class-level `import` of
-    // org.springframework.boot.actuate.health.HealthIndicator would otherwise
-    // fail to resolve when consumers run without spring-boot-actuator on the
-    // classpath. `@ConditionalOnClass` only gates per-bean evaluation, not
+    // org.springframework.boot.health.contributor.HealthIndicator would otherwise
+    // fail to resolve when consumers run without spring-boot-health on the
+    // classpath (Boot 4 split Health out of spring-boot-actuator into its
+    // own module). `@ConditionalOnClass` only gates per-bean evaluation, not
     // class-load resolution of the enclosing @Configuration class itself.
 }

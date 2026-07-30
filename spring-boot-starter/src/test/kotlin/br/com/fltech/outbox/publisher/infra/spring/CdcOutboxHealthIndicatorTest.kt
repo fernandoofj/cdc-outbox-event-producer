@@ -4,7 +4,7 @@ import br.com.fltech.outbox.publisher.workflow.SlotReaderMessageProducer
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Test
-import org.springframework.boot.actuate.health.Status
+import org.springframework.boot.health.contributor.Status
 import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

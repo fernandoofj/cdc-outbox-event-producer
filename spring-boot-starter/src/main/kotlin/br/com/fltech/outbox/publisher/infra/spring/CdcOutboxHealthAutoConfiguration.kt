@@ -2,7 +2,7 @@ package br.com.fltech.outbox.publisher.infra.spring
 
 import br.com.fltech.outbox.publisher.core.application.CdcProcessor
 import br.com.fltech.outbox.publisher.workflow.SlotReaderMessageProducer
-import org.springframework.boot.actuate.health.HealthIndicator
+import org.springframework.boot.health.contributor.HealthIndicator
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigureAfter
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
@@ -35,7 +35,8 @@ import org.springframework.context.annotation.Configuration
  *
  * The file lives outside [CdcOutboxAutoConfiguration] because class-
  * level `import`s of `HealthIndicator` would crash class loading on
- * consumers that pull the starter without `spring-boot-actuator`.
+ * consumers that pull the starter without `spring-boot-health` (Boot 4
+ * split Health out of `spring-boot-actuator` into its own module).
  */
 @AutoConfiguration
 // Must run after BOTH the legacy and hexagonal configs so the

@@ -9,6 +9,82 @@ file records the actual delivery and the Tech Lead verdict per round.
 > external release scheme. They're kept here as-is because they're
 > the actual identifiers used in the corresponding commits and PRs.
 
+## Round 22 — Spring Boot 4 migration
+
+Round 21 deliberately skipped PRs #2 (Spring Boot 3.3.5 → 4.0.6) and #3
+(coupled Spring Framework 7 / spring-kafka 4 / spring-rabbit 4 /
+spring-cloud-aws 4), matching the roadmap's own F11 item ("blocked
+externally, aguarda SCA 4 GA"). Checked before starting this round:
+Spring Boot 4 / Framework 7 went GA 2025-11-20, and Spring Cloud AWS
+4.0.2 is a real released version, not RC/M1 — the external blocker
+this roadmap item cited appears resolved. Migrated on explicit
+confirmation, including the JVM baseline bump this requires.
+
+  * **Spring Boot 3.3.5 → 4.0.6**, direct jump (no intermediate 3.5.x
+    hop — the official guidance recommends one for large apps with
+    unknown Spring surface; this library's Spring-touching code is
+    confined to `spring-boot-starter` plus a handful of
+    `@ConditionalOnClass` string references in adapters, ~20 files
+    total, so the jump was made directly and validated by full build +
+    the 5 real Testcontainers/E2E suites rather than working through
+    an intermediate step).
+  * **JVM baseline 17 → 21** (`sourceCompatibility`/`targetCompatibility`/
+    `jvmTarget` in `build.gradle.kts`): Spring Boot 4's own minimum.
+    Breaking for any consumer still on JRE 17 — explicit user
+    confirmation obtained before making this change, since it's a
+    policy decision affecting every consumer, not a technical bump.
+  * **`HealthIndicator` moved modules**: Spring Boot 4 extracted Health
+    out of `spring-boot-actuator` entirely into a new
+    `spring-boot-health` artifact, package
+    `org.springframework.boot.health.contributor` (was
+    `org.springframework.boot.actuate.health`). Added the new
+    dependency (`compileOnly`/`testImplementation` in
+    `spring-boot-starter`) and updated 8 files' imports
+    (`CdcOutboxHealthAutoConfiguration`, `CdcOutboxHealthIndicator`,
+    `CdcProcessorHealthIndicator`, `CdcOutboxAutoConfiguration`, and 4
+    test files). `@Endpoint`/`@ReadOperation`/`InfoContributor` stayed
+    in `actuate` — only `Health`/`HealthIndicator`/`Status` moved.
+  * **spring-amqp 4.x**: `MessageProperties.getMessageId()`/`getTimestamp()`
+    and their setters disagree on JSpecify nullability under Kotlin's
+    strict interop mode, so Kotlin no longer synthesizes a mutable
+    `var` property for either — `RabbitMqEventSink` switched from
+    `properties.messageId = ...` to explicit `properties.setMessageId(...)`
+    calls. Setters still exist and work; only the Kotlin property
+    sugar broke.
+  * **Version bump 0.2.0 → 0.3.0**, the largest breaking change yet —
+    both the Spring generation and the JVM baseline moved. Every
+    consumer-facing `0.2.0` reference (README quickstarts, the BOM's
+    own usage-example comment, the `/actuator/info` sample in both
+    README and `CdcOutboxInfoContributor`'s KDoc) updated in the same
+    commit this time, having been caught as a follow-up gap in Round
+    21.
+  * **Verification**: `./gradlew clean build` (compile + unit tests +
+    detekt, ktlint/`:legacy:test`'s two DB-dependent ITs excluded as in
+    Round 21) green across all 15 modules + BOM. All 5
+    Testcontainers-backed integration/E2E suites
+    (`RUN_TESTCONTAINERS=1 DOCKER_API_VERSION=1.43`) re-run against the
+    new Boot 4 classpath and passed: `MysqlRabbitMqE2EIT`,
+    `PostgresSnsE2EIT` (the two that actually load a full Spring
+    context, so the strongest signal that autoconfig/health-indicator
+    wiring survived the migration), `MySqlBinlogReplayerIT`,
+    `DlqReplayIT`, `AtLeastOnceDeliveryIT`.
+  * **Spring Security 6.3.4 → 7.0.5** (`spring-security-core`/`-web`/`-test`
+    in `dlq-replay`, `replay-source`, `spring-boot-starter`), added in a
+    second pass after Tech Lead review caught that leaving it at 6.3.4
+    left `spring-security-web:6.3.4`'s own `spring-web:6.1.14`
+    transitive dependency un-lifted next to `spring-core`/`-context` at
+    7.0.7 on the test classpath — a Framework 6/7 hybrid no real
+    consumer runs. A third Tech Lead pass then caught something worse
+    than the hybrid classpath itself: `DlqReplayActuatorEndpoint` and
+    `ReplayActuatorEndpoint`'s `requireAuthenticated()` — the only auth
+    gate this library has — had **zero test coverage**, so the Security
+    bump was closed on a false claim of being validated by tests that
+    didn't exist. Added `DlqReplayActuatorEndpointTest` and
+    `ReplayActuatorEndpointTest` (4 cases each: null auth, unauthenticated
+    principal, a real `AnonymousAuthenticationToken` from 7.0.5, and an
+    authenticated non-anonymous principal let through) against the real
+    Spring Security 7.0.5 types, not mocks of them.
+
 ## Round 21 — Dependabot batch (9 of 11 open PRs)
 
 11 Dependabot PRs had accumulated unreviewed while GitHub Actions was

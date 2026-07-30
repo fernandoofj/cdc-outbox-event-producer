@@ -13,7 +13,7 @@ import br.com.fltech.outbox.publisher.retry.ExponentialBackOff
 import br.com.fltech.outbox.publisher.workflow.SlotReaderMessageProducer
 import io.mockk.mockk
 import org.junit.jupiter.api.Test
-import org.springframework.boot.actuate.health.HealthIndicator
+import org.springframework.boot.health.contributor.HealthIndicator
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.context.annotation.Bean
