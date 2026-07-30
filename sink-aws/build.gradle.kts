@@ -5,9 +5,9 @@ dependencies {
     api(project(":core"))
     compileOnly("io.awspring.cloud:spring-cloud-aws-sns:3.2.1")
     compileOnly("io.awspring.cloud:spring-cloud-aws-sqs:3.2.1")
-    implementation("software.amazon.awssdk:sns:2.27.21")
-    implementation("software.amazon.awssdk:sqs:2.27.21")
-    implementation("software.amazon.awssdk:sts:2.27.21")
+    implementation("software.amazon.awssdk:sns:2.44.7")
+    implementation("software.amazon.awssdk:sqs:2.44.7")
+    implementation("software.amazon.awssdk:sts:2.44.7")
 
     testImplementation("io.awspring.cloud:spring-cloud-aws-sns:3.2.1")
     testImplementation("io.awspring.cloud:spring-cloud-aws-sqs:3.2.1")
