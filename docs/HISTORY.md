@@ -68,10 +68,17 @@ confirmation, including the JVM baseline bump this requires.
     context, so the strongest signal that autoconfig/health-indicator
     wiring survived the migration), `MySqlBinlogReplayerIT`,
     `DlqReplayIT`, `AtLeastOnceDeliveryIT`.
-  * **Not touched**: Spring Security stays at 6.3.4 (Spring's own
-    guidance pairs Boot 4 with Security 7, but nothing broke, so left
-    alone rather than bumping speculatively — revisit if a real need
-    comes up).
+  * **Spring Security 6.3.4 → 7.0.5** (`spring-security-core`/`-web`/`-test`
+    in `dlq-replay`, `replay-source`, `spring-boot-starter`), added in a
+    second pass after Tech Lead review caught that leaving it at 6.3.4
+    left `spring-security-web:6.3.4`'s own `spring-web:6.1.14`
+    transitive dependency un-lifted next to `spring-core`/`-context` at
+    7.0.7 on the test classpath — a Framework 6/7 hybrid that never
+    surfaced as a failure (the auth-gate tests on
+    `/actuator/cdcOutboxDlq` and `/actuator/cdcOutboxReplay` don't
+    touch the divergent surface) but meant those security-gate tests
+    were validated against a combination no real consumer runs. 7.0.5
+    is what Boot 4.0.6's own BOM pins.
 
 ## Round 21 — Dependabot batch (9 of 11 open PRs)
 

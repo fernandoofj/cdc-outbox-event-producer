@@ -39,6 +39,7 @@ class RabbitMqEventSinkTest {
         val m = captured.captured
         assertEquals("hello", String(m.body, Charsets.UTF_8))
         assertEquals("domain-1", m.messageProperties.messageId)
+        assertEquals(java.util.Date.from(event.occurredAt), m.messageProperties.timestamp)
         assertEquals("abc", m.messageProperties.headers["trace-id"])
         assertEquals("prod", m.messageProperties.headers["env"])
     }

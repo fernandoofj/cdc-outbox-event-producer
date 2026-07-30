@@ -38,7 +38,7 @@ dependencies {
 
     compileOnly("com.mysql:mysql-connector-j:8.4.0")
     compileOnly("com.zendesk:mysql-binlog-connector-java:0.29.2")
-    compileOnly("org.springframework.security:spring-security-web:6.3.4")
+    compileOnly("org.springframework.security:spring-security-web:7.0.5")
 
     testImplementation(project(":checkpoint-file"))
     testImplementation(project(":source-postgres"))
