@@ -30,6 +30,6 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-test-autoconfigure:3.3.5")
     testImplementation("org.springframework.security:spring-security-core:6.3.4")
     testImplementation("org.springframework.security:spring-security-test:6.3.4")
-    testImplementation("org.testcontainers:localstack:1.20.4")
+    testImplementation("org.testcontainers:localstack:1.21.4")
     testImplementation("org.assertj:assertj-core:3.25.3")
 }
