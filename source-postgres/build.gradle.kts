@@ -9,7 +9,7 @@
 dependencies {
     api(project(":core"))
     api("org.postgresql:postgresql:42.6.0")
-    implementation("com.zaxxer:HikariCP:5.1.0")
+    implementation("com.zaxxer:HikariCP:7.0.2")
     compileOnly("org.springframework:spring-context:6.0.13")
 
     testImplementation("org.springframework:spring-context:6.0.13")
