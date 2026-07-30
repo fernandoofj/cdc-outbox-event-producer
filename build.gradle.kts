@@ -19,7 +19,7 @@ plugins {
 apply(plugin = "docker-compose")
 
 allprojects {
-    group = "br.com.fltech.cdc.outbox"
+    group = "br.com.fltech.outbox"
     // Wave 7 — Multi-artifact Maven publish. Bump 0.0.11 → 0.1.0 is
     // a breaking change for consumers: the legacy coordinate
     // `cdc-outbox-event-producer` is no longer published; each Gradle
@@ -106,7 +106,7 @@ subprojects {
     }
 
     // Wave 7 — per-module Maven publication. Each Gradle subproject
-    // ships under the coordinate `br.com.fltech.cdc.outbox:cdc-outbox-<name>`.
+    // ships under the coordinate `br.com.fltech.outbox:cdc-outbox-<name>`.
     // The `from(components["java"])` wiring is what carries the
     // correct dependency scopes through to the published POM
     // (implementation → compile, compileOnly → provided, etc.).

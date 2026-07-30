@@ -56,9 +56,9 @@ change, verify:
   `@ConditionalOn*`) live ONLY in `spring-boot-starter/`. The core and
   adapters must compile without Spring on the classpath.
 
-Until the modular split is implemented, accept that the legacy package
-`br.com.fltech.cdc.outbox.publisher.**` is a single Gradle module, but
-flag any *new* code that deepens the coupling.
+The modular split (Wave 6 / Round 12) turned each of these into its
+own Gradle module, so the hexagonal boundary is enforced at the build
+graph — code that violates it fails to compile, not just review.
 
 ### 3. Idiomatic Kotlin, SOLID, code quality
 
