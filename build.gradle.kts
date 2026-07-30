@@ -103,7 +103,7 @@ subprojects {
     dependencies {
         "testImplementation"(kotlin("test"))
         "testImplementation"("io.mockk:mockk:1.13.13")
-        "testRuntimeOnly"("org.slf4j:slf4j-simple:2.0.16")
+        "testRuntimeOnly"("org.slf4j:slf4j-simple:2.0.18")
     }
 
     // Wave 7 — per-module Maven publication. Each Gradle subproject

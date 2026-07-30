@@ -57,7 +57,7 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-test-autoconfigure:3.3.5")
     testImplementation("org.assertj:assertj-core:3.25.3")
     testImplementation("com.zaxxer:HikariCP:5.1.0")
-    testImplementation("io.micrometer:micrometer-test:1.12.13")
+    testImplementation("io.micrometer:micrometer-test:1.16.5")
     testImplementation("com.mysql:mysql-connector-j:8.4.0")
     testImplementation("com.zendesk:mysql-binlog-connector-java:0.29.2")
 }
