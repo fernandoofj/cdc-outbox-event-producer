@@ -1,6 +1,5 @@
 # cdc-outbox-event-producer
 
-![CI](https://github.com/fernandoofj/cdc-outbox-event-producer/actions/workflows/ci.yml/badge.svg)
 ![Dependabot](https://img.shields.io/badge/dependabot-active-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 

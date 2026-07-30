@@ -32,10 +32,12 @@ toolchain (Kotlin, JVM target, Gradle wrapper versions) and
    tests, and enforces zero Detekt findings) before opening a PR.
 4. Open a pull request against `main` describing what changed and
    why. Link any related issue.
-5. CI (`.github/workflows/ci.yml`) runs the same build + Detekt gate
-   on every PR. Testcontainers-backed integration tests (`*IT.kt`)
-   are not run in CI — see the workflow file for why — so please run
-   them locally if your change touches a source/sink adapter.
+5. GitHub Actions is currently disabled on this repo, so there is no
+   automated CI check on PRs — `./gradlew build` locally (step 3) is
+   the gate. If your change touches a source/sink adapter, also run
+   the Testcontainers-backed `*IT.kt` suites locally (see
+   [README](README.md#testes-e-build-local)); they aren't covered by
+   step 3 alone.
 
 ## Code style
 
