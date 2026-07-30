@@ -31,8 +31,11 @@ class RabbitMqEventSink(
         val (exchange, routingKey) = parseTarget(routing.target)
         val merged = event.headers + routing.attributes
         val properties = MessageProperties().apply {
-            messageId = event.id
-            timestamp = java.util.Date.from(event.occurredAt)
+            // spring-amqp 4.x: getMessageId()/getTimestamp() and their
+            // setters disagree on JSpecify nullability, so Kotlin doesn't
+            // synthesize a mutable property here — plain setter calls.
+            setMessageId(event.id)
+            setTimestamp(java.util.Date.from(event.occurredAt))
             merged.forEach { (k, v) -> setHeader(k, v) }
         }
         val message: Message = MessageBuilder.withBody(event.payload).andProperties(properties).build()

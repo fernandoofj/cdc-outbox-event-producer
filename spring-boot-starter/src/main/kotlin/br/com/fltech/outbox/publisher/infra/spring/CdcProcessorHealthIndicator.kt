@@ -1,9 +1,9 @@
 package br.com.fltech.outbox.publisher.infra.spring
 
 import br.com.fltech.outbox.publisher.core.application.CdcProcessor
-import org.springframework.boot.actuate.health.Health
-import org.springframework.boot.actuate.health.HealthIndicator
-import org.springframework.boot.actuate.health.Status
+import org.springframework.boot.health.contributor.Health
+import org.springframework.boot.health.contributor.HealthIndicator
+import org.springframework.boot.health.contributor.Status
 import java.time.Duration
 
 /**

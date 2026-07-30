@@ -26,6 +26,9 @@ dependencies {
     compileOnly("org.springframework.boot:spring-boot-autoconfigure:4.0.6")
     compileOnly("org.springframework.boot:spring-boot-actuator:4.0.6")
     compileOnly("org.springframework.boot:spring-boot-actuator-autoconfigure:4.0.6")
+    // Boot 4 extracted Health from spring-boot-actuator into its own
+    // module; HealthIndicator now lives under org.springframework.boot.health.contributor.
+    compileOnly("org.springframework.boot:spring-boot-health:4.0.6")
     kapt("org.springframework.boot:spring-boot-configuration-processor:4.0.6")
 
     compileOnly("io.awspring.cloud:spring-cloud-aws-sns:4.0.2")
@@ -53,6 +56,7 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-autoconfigure:4.0.6")
     testImplementation("org.springframework.boot:spring-boot-actuator:4.0.6")
     testImplementation("org.springframework.boot:spring-boot-actuator-autoconfigure:4.0.6")
+    testImplementation("org.springframework.boot:spring-boot-health:4.0.6")
     testImplementation("org.springframework.boot:spring-boot-test:4.0.6")
     testImplementation("org.springframework.boot:spring-boot-test-autoconfigure:4.0.6")
     testImplementation("org.assertj:assertj-core:3.25.3")

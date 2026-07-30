@@ -42,7 +42,14 @@ allprojects {
     // kotlin-stdlib/micrometer-core underneath classes compiled
     // against the newer versions. Same version, two groups, would
     // have hidden that.
-    version = "0.2.0"
+    //
+    // Round 22 — Spring Boot 4: 0.2.0 → 0.3.0, the biggest breaking
+    // change yet. Spring Boot 3.3.5 -> 4.0.6 / Spring Framework 7 /
+    // spring-kafka 4 / spring-rabbit 4 / spring-cloud-aws 4, and the
+    // JVM baseline itself moved 17 -> 21 (Boot 4's own minimum).
+    // Consumers still on JRE 17 or a Boot 3.x classpath cannot use
+    // this version at all.
+    version = "0.3.0"
 
     repositories {
         mavenCentral()
@@ -67,8 +74,11 @@ subprojects {
     }
 
     extensions.configure<JavaPluginExtension> {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        // Round 22 — Spring Boot 4 requires JDK 21 as its own minimum
+        // baseline, so this library's target moved 17 -> 21 alongside it.
+        // Breaking for any consumer still on JRE 17.
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
         // Wave 7 — publish `-sources.jar` and `-javadoc.jar` alongside
         // the main jar. Sources are valuable for IDE jump-to-definition
         // for downstream consumers; the empty javadoc.jar satisfies the
@@ -87,7 +97,7 @@ subprojects {
             // DlqEnvelope) keeps targeting only the constructor parameter
             // Jackson actually binds against, not also the backing field.
             freeCompilerArgs.add("-Xannotation-default-target=first-only")
-            jvmTarget.set(JvmTarget.JVM_17)
+            jvmTarget.set(JvmTarget.JVM_21)
         }
     }
 

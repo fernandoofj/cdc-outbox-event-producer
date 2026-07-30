@@ -2,7 +2,7 @@ package br.com.fltech.outbox.publisher.infra.spring
 
 import br.com.fltech.outbox.publisher.core.application.CdcProcessor
 import br.com.fltech.outbox.publisher.workflow.SlotReaderMessageProducer
-import org.springframework.boot.actuate.health.HealthIndicator
+import org.springframework.boot.health.contributor.HealthIndicator
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigureAfter
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
