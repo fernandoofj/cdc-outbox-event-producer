@@ -6,6 +6,7 @@ import org.springframework.boot.actuate.endpoint.annotation.ReadOperation
 import org.springframework.boot.actuate.endpoint.annotation.Selector
 import org.springframework.boot.actuate.endpoint.annotation.WriteOperation
 import org.springframework.security.access.AccessDeniedException
+import org.springframework.security.authentication.AnonymousAuthenticationToken
 import org.springframework.security.core.context.SecurityContextHolder
 
 /**
@@ -74,7 +75,7 @@ class DlqReplayActuatorEndpoint(
 
     private fun org.springframework.security.core.Authentication.isAnonymous(): Boolean =
         authorities?.any { it.authority == "ROLE_ANONYMOUS" } == true ||
-            javaClass.simpleName == "AnonymousAuthenticationToken"
+            this is AnonymousAuthenticationToken
 
     /**
      * Request body for both single and bulk replay paths — fields

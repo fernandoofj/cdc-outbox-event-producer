@@ -7,6 +7,7 @@ dependencies {
     api(project(":core"))
     api(project(":source-postgres"))
     api(project(":sink-aws"))
+    implementation("org.json:json:20251224")
     compileOnly("io.awspring.cloud:spring-cloud-aws-sns:4.0.2")
     compileOnly("io.awspring.cloud:spring-cloud-aws-sqs:4.0.2")
 
