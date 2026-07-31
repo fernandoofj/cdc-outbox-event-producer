@@ -2,7 +2,7 @@ package br.com.fltech.outbox.publisher.helper
 
 import org.json.JSONObject
 
-object JsonHelper {
+internal object JsonHelper {
 
     fun fromJsonString(json: String) = JSONObject(json)
 

@@ -20,10 +20,20 @@ Lead reviews, none blocking on their own.
     HikariCP 7's keepalive disabled by default) and wired into
     `CdcOutboxAutoConfiguration.cdcOutboxConnectionProvider`. Every
     other `Pool` field was already configurable; this was the one gap
-    left after the HikariCP 5→7 bump.
+    left after the HikariCP 5→7 bump. Added to `docs/ARCHITECTURE.md`'s
+    `cdc.outbox.pool.*` reference table and the README config summary
+    (both were previously undocumented for this field — a first pass
+    at this round shipped the code without touching either). Two new
+    `CdcOutboxAutoConfigurationTest` cases assert the default binds to
+    `0` and that `cdc.outbox.pool.keepalive-time=90s` overrides it —
+    a second Tech Lead pass caught that the actual behavioral change
+    in this round had shipped with zero coverage.
   * **`core` no longer depends on `org.json`**: `JsonHelper` (and its
     test + fixture) moved to `:legacy`, its only caller
-    (`SlotReaderMessageProducer`). `core/build.gradle.kts` drops the
+    (`SlotReaderMessageProducer`), and marked `internal` there since
+    nothing outside `:legacy` calls it — matching the `implementation`
+    (not `api`) scope of the `org.json` dependency the move added to
+    `legacy/build.gradle.kts`. `core/build.gradle.kts` drops the
     `api("org.json:json:...")` line entirely — the domain module no
     longer leaks a JSON driver it doesn't otherwise use, closing the
     hexagonal-boundary smell flagged since the Round 21 review.
@@ -32,9 +42,10 @@ Lead reviews, none blocking on their own.
     from `javaClass.simpleName == "AnonymousAuthenticationToken"` to
     `this is AnonymousAuthenticationToken` — same runtime behavior,
     immune to the proxy/subclass cases a string compare would miss.
-    Added a 6th test case per endpoint (`ROLE_GUEST` authority) since
-    this is exactly the disjunct the Round 22 mutation testing found
-    under-exercised.
+    (The `ROLE_GUEST` test case covering this disjunct was added in
+    Round 22's mutation-testing pass, not this round — a first pass at
+    this HISTORY entry mis-attributed it here; both existing endpoint
+    test suites, 5 cases each, pass unmodified against the refactor.)
   * **Unused `spring-security-test:7.0.5` dropped** from
     `dlq-replay/build.gradle.kts` — the auth-gate tests added in
     Round 22 use `spring-security-core` types directly, never needed
@@ -51,10 +62,11 @@ Lead reviews, none blocking on their own.
     reachable from `main`), delete manually with `git branch -d
     <name>` when convenient.
   * **Verification**: `./gradlew clean build` green across all 15
-    modules + BOM; all 5 real Testcontainers-backed integration/E2E
-    suites re-run and green, including `AtLeastOnceDeliveryIT` (the
-    one that actually exercises the relocated `JsonHelper` via
-    `SlotReaderMessageProducer`).
+    modules + BOM (ktlint excluded from the gate as in Rounds 21–22 —
+    pre-existing, unrelated red baseline); all 5 real
+    Testcontainers-backed integration/E2E suites re-run and green,
+    including `AtLeastOnceDeliveryIT` (the one that actually exercises
+    the relocated `JsonHelper` via `SlotReaderMessageProducer`).
 
 ## Round 22 — Spring Boot 4 migration
 

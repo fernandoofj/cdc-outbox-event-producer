@@ -60,6 +60,18 @@ class CdcOutboxAutoConfigurationTest {
             assertEquals(true, props.replication.includeLsn)
             assertEquals(500L, props.retry.initial.toMillis())
             assertEquals(42, props.retry.maxReconnectAttempts)
+            // Default must be disabled (0), matching HikariCPConnectionProvider's
+            // own PoolConfig default — the pin that keeps HikariCP 7's own
+            // 2-minute keepalive default from silently re-enabling itself.
+            assertEquals(0L, props.pool.keepaliveTime.toMillis())
+        }
+    }
+
+    @Test
+    fun `pool keepalive-time property overrides the disabled default`() {
+        runner.withPropertyValues("cdc.outbox.pool.keepalive-time=90s").run { ctx ->
+            val props = ctx.getBean(CdcOutboxProperties::class.java)
+            assertEquals(90_000L, props.pool.keepaliveTime.toMillis())
         }
     }
 
