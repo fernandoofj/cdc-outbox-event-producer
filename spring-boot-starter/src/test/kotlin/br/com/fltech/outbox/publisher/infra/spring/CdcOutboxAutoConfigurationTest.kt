@@ -13,8 +13,8 @@ import br.com.fltech.outbox.publisher.retry.ExponentialBackOff
 import br.com.fltech.outbox.publisher.workflow.SlotReaderMessageProducer
 import io.mockk.mockk
 import org.junit.jupiter.api.Test
-import org.springframework.boot.health.contributor.HealthIndicator
 import org.springframework.boot.autoconfigure.AutoConfigurations
+import org.springframework.boot.health.contributor.HealthIndicator
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -30,24 +30,24 @@ import kotlin.test.assertTrue
  * binding without starting an actual Postgres replication loop.
  */
 class CdcOutboxAutoConfigurationTest {
-
-    private val runner = ApplicationContextRunner()
-        .withConfiguration(
-            AutoConfigurations.of(
-                CdcOutboxAutoConfiguration::class.java,
-                CdcOutboxHealthAutoConfiguration::class.java,
-            ),
-        )
-        .withUserConfiguration(StubSinks::class.java, NoOpLifecycle::class.java)
-        .withPropertyValues(
-            "cdc.outbox.postgres.host=db.example.com",
-            "cdc.outbox.postgres.username=replica",
-            "cdc.outbox.postgres.password=secret",
-            "cdc.outbox.postgres.database=appdb",
-            "cdc.outbox.replication.slot-name=orders_outbox_slot",
-            "cdc.outbox.retry.initial=500ms",
-            "cdc.outbox.retry.max-reconnect-attempts=42",
-        )
+    private val runner =
+        ApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(
+                    CdcOutboxAutoConfiguration::class.java,
+                    CdcOutboxHealthAutoConfiguration::class.java,
+                ),
+            )
+            .withUserConfiguration(StubSinks::class.java, NoOpLifecycle::class.java)
+            .withPropertyValues(
+                "cdc.outbox.postgres.host=db.example.com",
+                "cdc.outbox.postgres.username=replica",
+                "cdc.outbox.postgres.password=secret",
+                "cdc.outbox.postgres.database=appdb",
+                "cdc.outbox.replication.slot-name=orders_outbox_slot",
+                "cdc.outbox.retry.initial=500ms",
+                "cdc.outbox.retry.max-reconnect-attempts=42",
+            )
 
     @Test
     fun `binds all property groups under the cdc-outbox prefix`() {
@@ -71,22 +71,33 @@ class CdcOutboxAutoConfigurationTest {
     @Test
     fun `pool keepalive-time property reaches the connection provider's PoolConfig`() {
         // Reads the connection provider's private `poolConfig` via reflection
-        // because HikariCPConnectionProvider builds pools lazily inside
-        // getConnection(), not the constructor, so the bean itself never
-        // needs a live database here. This is the actual regression this
-        // property exists to catch: deleting `keepaliveTime =
+        // (see readPoolConfig below) because HikariCPConnectionProvider builds
+        // pools lazily inside getConnection(), not the constructor, so the
+        // bean itself never needs a live database here. This is the actual
+        // regression this property exists to catch: deleting `keepaliveTime =
         // properties.pool.keepaliveTime` from CdcOutboxAutoConfiguration
         // would leave PoolConfig on its own Duration.ZERO default regardless
         // of what `cdc.outbox.pool.keepalive-time` is set to, and only an
         // assertion against PoolConfig itself — not CdcOutboxProperties —
         // would notice.
         runner.withPropertyValues("cdc.outbox.pool.keepalive-time=90s").run { ctx ->
-            val provider = ctx.getBean(HikariCPConnectionProvider::class.java)
-            val poolConfigField = HikariCPConnectionProvider::class.java.getDeclaredField("poolConfig")
-            poolConfigField.isAccessible = true
-            val poolConfig = poolConfigField.get(provider) as HikariCPConnectionProvider.PoolConfig
+            val poolConfig = readPoolConfig(ctx.getBean(HikariCPConnectionProvider::class.java))
             assertEquals(90_000L, poolConfig.keepaliveTime.toMillis())
         }
+    }
+
+    @Test
+    fun `pool auto-commit property reaches the connection provider's PoolConfig`() {
+        runner.withPropertyValues("cdc.outbox.pool.auto-commit=false").run { ctx ->
+            val poolConfig = readPoolConfig(ctx.getBean(HikariCPConnectionProvider::class.java))
+            assertEquals(false, poolConfig.autoCommit)
+        }
+    }
+
+    private fun readPoolConfig(provider: HikariCPConnectionProvider): HikariCPConnectionProvider.PoolConfig {
+        val poolConfigField = HikariCPConnectionProvider::class.java.getDeclaredField("poolConfig")
+        poolConfigField.isAccessible = true
+        return poolConfigField.get(provider) as HikariCPConnectionProvider.PoolConfig
     }
 
     @Test
@@ -134,13 +145,21 @@ class CdcOutboxAutoConfigurationTest {
 
     @Configuration
     open class StubSinks {
-        @Bean open fun snsProducer(): SNSProducer = object : SNSProducer {
-            override fun <T : Any> send(topicName: String, message: SNSMessage<T>) = Unit
-        }
+        @Bean open fun snsProducer(): SNSProducer =
+            object : SNSProducer {
+                override fun <T : Any> send(
+                    topicName: String,
+                    message: SNSMessage<T>,
+                ) = Unit
+            }
 
-        @Bean open fun sqsProducer(): SQSProducer = object : SQSProducer {
-            override fun <T : Any> send(queueName: String, message: T) = Unit
-        }
+        @Bean open fun sqsProducer(): SQSProducer =
+            object : SQSProducer {
+                override fun <T : Any> send(
+                    queueName: String,
+                    message: T,
+                ) = Unit
+            }
     }
 
     @Configuration
@@ -150,8 +169,7 @@ class CdcOutboxAutoConfigurationTest {
          * application context refresh does not spawn the streaming thread.
          */
         @Bean
-        open fun cdcOutboxLifecycle(): CdcOutboxLifecycle =
-            CdcOutboxLifecycle(mockk(relaxed = true))
+        open fun cdcOutboxLifecycle(): CdcOutboxLifecycle = CdcOutboxLifecycle(mockk(relaxed = true))
     }
 
     @Configuration
@@ -160,7 +178,9 @@ class CdcOutboxAutoConfigurationTest {
     }
 
     class StubConnectionProvider : ConnectionProvider {
-        override fun getConnection(url: String, properties: Properties): Connection =
-            throw UnsupportedOperationException("test stub")
+        override fun getConnection(
+            url: String,
+            properties: Properties,
+        ): Connection = throw UnsupportedOperationException("test stub")
     }
 }

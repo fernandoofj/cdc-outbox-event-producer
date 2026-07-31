@@ -59,8 +59,10 @@ toolchain (Kotlin, JVM target, Gradle wrapper versions) and
   * No silent failure paths: a defensive branch that skips an
     operation must log at WARN/ERROR and increment a Micrometer
     counter via `CdcOutboxMetrics`.
-  * `./gradlew detekt` must be clean. Any `@Suppress` needs a one-line
-    justification comment immediately above it.
+  * `./gradlew detekt` and `./gradlew ktlintCheck` must both be clean
+    (Round 23 closed out the ktlint backlog — the whole tree passes
+    `./gradlew build` with zero exclusions now). Any `@Suppress` needs
+    a one-line justification comment immediately above it.
 
 ## Delivery guarantee
 
@@ -79,6 +81,44 @@ must preserve these invariants (see [README](README.md) and
 
 PRs that weaken these guarantees, even for a niche broker or
 database, will be asked to change.
+
+## Maven Central publish (NF11 — not started)
+
+Today every module publishes to GitHub Packages only (see
+`build.gradle.kts` § `publishing`). Maven Central needs three things
+this repo's own build config cannot provide — they require account
+setup and identity proof only the maintainer can do:
+
+  1. **A Sonatype Central account** (<https://central.sonatype.com>)
+     with a registered namespace. The group ID here is
+     `br.com.fltech.outbox` — Central requires proving ownership of
+     `fltech.com` via a DNS TXT record (`_sonatype-central` or similar,
+     the exact record name is issued per-namespace at registration
+     time), not just a GitHub account. If `fltech.com` isn't a domain
+     you control, either provision a domain-based namespace you do
+     control, or move the coordinate to `io.github.<username>`
+     (verified by proving control of the corresponding GitHub account
+     instead of DNS — the same class of check Round 22 rejected for
+     `io.github.cdc` because it wasn't this project's account; a
+     correctly-scoped `io.github.fernandoofj` would pass).
+  2. **A GPG key pair.** Central requires every published artifact
+     signed. Generate one (`gpg --full-generate-key`), publish the
+     public key to a keyserver (`gpg --keyserver keyserver.ubuntu.com
+     --send-keys <key-id>`), and keep the private key + passphrase out
+     of the repo — Gradle's `signing` plugin reads them from
+     `~/.gradle/gradle.properties` or environment variables
+     (`ORG_GRADLE_PROJECT_signingKey`,
+     `ORG_GRADLE_PROJECT_signingPassword`), never committed.
+  3. **Gradle wiring**: apply the `signing` plugin plus either
+     Sonatype's `central-publishing-gradle-plugin` or the community
+     `com.gradleup.nmcp` plugin, pointed at the verified namespace from
+     step 1 and signing with the key from step 2. Not added to
+     `build.gradle.kts` yet — wiring it against an unverified/unowned
+     namespace would produce build config nobody can actually run,
+     which is worse than no config.
+
+Once 1–2 are done, wiring 3 is a small, mechanical addition mirroring
+the existing GitHub Packages `publishing` block.
 
 ## Reporting bugs / requesting features
 

@@ -802,6 +802,7 @@ puro — Postgres exige conexão crua para `replication=database`).
 | `leakDetectionThreshold`  | `30s`                     |
 | `poolName`                | `cdc-outbox-query-pool`   |
 | `keepaliveTime`           | `0` (desligado — HikariCP 7 mudou o próprio default pra 2min; Round 21 fixou desligado, Round 23 tornou configurável) |
+| `autoCommit`              | `true`                    |
 
 ### `cdc.outbox.retry.*`
 

@@ -17,9 +17,9 @@ import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 
@@ -53,7 +53,6 @@ import org.springframework.context.annotation.Bean
 @ConditionalOnProperty(prefix = "cdc.outbox", name = ["enabled"], havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(CdcOutboxProperties::class)
 open class CdcOutboxAutoConfiguration {
-
     @Bean
     @ConditionalOnMissingBean
     open fun cdcOutboxPostgresConfiguration(properties: CdcOutboxProperties): PostgresConfiguration =
@@ -99,6 +98,7 @@ open class CdcOutboxAutoConfiguration {
                 leakDetectionThreshold = properties.pool.leakDetectionThreshold,
                 poolName = properties.pool.poolName,
                 keepaliveTime = properties.pool.keepaliveTime,
+                autoCommit = properties.pool.autoCommit,
             ),
         )
 
@@ -114,8 +114,7 @@ open class CdcOutboxAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    open fun cdcOutboxMetrics(meterRegistry: MeterRegistry?): CdcOutboxMetrics =
-        CdcOutboxMetrics(meterRegistry)
+    open fun cdcOutboxMetrics(meterRegistry: MeterRegistry?): CdcOutboxMetrics = CdcOutboxMetrics(meterRegistry)
 
     @Bean("cdcOutboxPublishBackOff")
     @ConditionalOnMissingBean(name = ["cdcOutboxPublishBackOff"])
@@ -135,9 +134,10 @@ open class CdcOutboxAutoConfiguration {
         sqsTemplate: SqsTemplate,
         properties: CdcOutboxProperties,
     ): DeadLetterSink {
-        val queue = requireNotNull(properties.deadLetter.queueName) {
-            "cdc.outbox.dead-letter.queue-name must be set when the DLQ bean is wired"
-        }
+        val queue =
+            requireNotNull(properties.deadLetter.queueName) {
+                "cdc.outbox.dead-letter.queue-name must be set when the DLQ bean is wired"
+            }
         return SqsDeadLetterSink(sqsTemplate, queue)
     }
 
@@ -189,8 +189,7 @@ open class CdcOutboxAutoConfiguration {
         name = ["kind"],
         havingValue = "legacy",
     )
-    open fun cdcOutboxLifecycle(producer: SlotReaderMessageProducer): CdcOutboxLifecycle =
-        CdcOutboxLifecycle(producer)
+    open fun cdcOutboxLifecycle(producer: SlotReaderMessageProducer): CdcOutboxLifecycle = CdcOutboxLifecycle(producer)
 
     // CdcOutboxHealthIndicator is contributed by CdcOutboxHealthAutoConfiguration
     // — split into its own file because the class-level `import` of

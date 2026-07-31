@@ -15,17 +15,18 @@ import io.mockk.junit5.MockKExtension
 import io.mockk.just
 import io.mockk.runs
 import io.mockk.verify
-import java.math.BigDecimal
-import java.util.concurrent.Executors
-import kotlin.test.assertEquals
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.junit.jupiter.api.extension.ExtendWith
+import java.math.BigDecimal
+import java.util.concurrent.Executors
+import kotlin.test.assertEquals
 
 @ExtendWith(MockKExtension::class)
+@EnabledIfEnvironmentVariable(named = "RUN_TESTCONTAINERS", matches = "1|true|yes")
 internal class SlotReaderMessageProducerIT : IntegrationBase() {
-
     private lateinit var slotReaderMessageProducer: SlotReaderMessageProducer
 
     @MockK
@@ -259,7 +260,7 @@ internal class SlotReaderMessageProducerIT : IntegrationBase() {
             postgresConfiguration,
             replicationConfiguration,
             snsProducer,
-            sqsProducer
+            sqsProducer,
         )
     }
 }

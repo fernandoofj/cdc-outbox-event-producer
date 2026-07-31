@@ -7,6 +7,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.NestedConfigurationProperty
 import java.time.Duration
 
+// MagicNumber: every numeric literal here is a tunable default for a
+// named `@ConfigurationProperties` field — the property name IS the
+// semantic name. Extracting each to a sibling constant would double the
+// file with no readability gain.
+
 /**
  * Externalised configuration for the CDC-outbox producer.
  *
@@ -21,49 +26,33 @@ import java.time.Duration
  * Set `cdc.outbox.enabled = false` (or simply omit the configuration) to
  * keep the auto-configuration dormant.
  */
-// MagicNumber: every numeric literal here is a tunable default for a
-// named `@ConfigurationProperties` field — the property name IS the
-// semantic name. Extracting each to a sibling constant would double the
-// file with no readability gain.
 @Suppress("MagicNumber")
 @ConfigurationProperties(prefix = "cdc.outbox")
 data class CdcOutboxProperties(
     /** Master switch. When false the auto-configuration registers no beans. */
     val enabled: Boolean = true,
-
     @NestedConfigurationProperty
     val postgres: Postgres = Postgres(),
-
     @NestedConfigurationProperty
     val replication: Replication = Replication(),
-
     @NestedConfigurationProperty
     val pool: Pool = Pool(),
-
     @NestedConfigurationProperty
     val retry: Retry = Retry(),
-
     @NestedConfigurationProperty
     val health: Health = Health(),
-
     @NestedConfigurationProperty
     val deadLetter: DeadLetter = DeadLetter(),
-
     @NestedConfigurationProperty
     val processor: Processor = Processor(),
-
     @NestedConfigurationProperty
     val checkpoint: Checkpoint = Checkpoint(),
-
     @NestedConfigurationProperty
     val lag: Lag = Lag(),
-
     @NestedConfigurationProperty
     val dlq: Dlq = Dlq(),
-
     @NestedConfigurationProperty
     val replay: Replay = Replay(),
-
     /**
      * Declarative table-mapping list (Wave 3.5 / item 7 of the brief).
      * Each entry binds one source-table FQ name to its outbound shape
@@ -92,7 +81,6 @@ data class CdcOutboxProperties(
      */
     val mappings: List<MappingProps> = emptyList(),
 ) {
-
     data class Postgres(
         val host: String = "localhost",
         val port: String = "5432",
@@ -138,6 +126,7 @@ data class CdcOutboxProperties(
          * enable it via `cdc.outbox.pool.keepalive-time`.
          */
         val keepaliveTime: Duration = Duration.ZERO,
+        val autoCommit: Boolean = true,
     )
 
     data class Retry(
@@ -177,18 +166,20 @@ data class CdcOutboxProperties(
         val eventType: EventTypeProps = EventTypeProps(),
         val routing: RoutingProps = RoutingProps(),
     ) {
-        fun toDomain(): TableMapping = TableMapping(
-            table = table,
-            capture = capture,
-            key = TableMapping.Key(columns = key.columns, format = key.format),
-            payload = TableMapping.Payload(
-                include = payload.include,
-                exclude = payload.exclude,
-                rename = payload.rename,
-            ),
-            eventType = TableMapping.EventType(template = eventType.template),
-            routing = TableMapping.Routing(sink = routing.sink, attributes = routing.attributes),
-        )
+        fun toDomain(): TableMapping =
+            TableMapping(
+                table = table,
+                capture = capture,
+                key = TableMapping.Key(columns = key.columns, format = key.format),
+                payload =
+                    TableMapping.Payload(
+                        include = payload.include,
+                        exclude = payload.exclude,
+                        rename = payload.rename,
+                    ),
+                eventType = TableMapping.EventType(template = eventType.template),
+                routing = TableMapping.Routing(sink = routing.sink, attributes = routing.attributes),
+            )
     }
 
     data class KeyProps(

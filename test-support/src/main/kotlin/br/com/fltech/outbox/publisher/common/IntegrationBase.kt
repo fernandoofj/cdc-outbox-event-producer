@@ -1,44 +1,58 @@
 package br.com.fltech.outbox.publisher.common
 
-import br.com.fltech.outbox.publisher.aws.common.AWSParamaters
+import br.com.fltech.outbox.publisher.e2e.support.E2EContainers
 import br.com.fltech.outbox.publisher.replication.config.PostgresConfiguration
 import br.com.fltech.outbox.publisher.replication.config.ReplicationConfiguration
 import br.com.fltech.outbox.publisher.replication.connector.DefaultConnectionProvider
-import java.io.FileInputStream
+import org.junit.jupiter.api.TestInstance
+import org.slf4j.LoggerFactory
+import org.testcontainers.containers.PostgreSQLContainer
 import java.sql.Connection
 import java.sql.SQLException
 import java.util.Properties
-import org.junit.jupiter.api.TestInstance
-import org.slf4j.LoggerFactory
-import org.testcontainers.junit.jupiter.Testcontainers
 
-@Testcontainers
+/**
+ * Base for the legacy Postgres-backed ITs. Boots its own
+ * [E2EContainers.newPostgres] instead of depending on a docker-compose
+ * Postgres already running on a fixed host port — a hard-coded
+ * `localhost:5432` breaks the moment anything else on the machine (this
+ * project's own `docker-compose.yml`, or an unrelated project) is already
+ * bound to that port, and unlike every other `*IT.kt` in this codebase it
+ * offered no dynamic-port alternative.
+ */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 abstract class IntegrationBase {
-
-    private lateinit var properties: Properties
+    private lateinit var postgres: PostgreSQLContainer<Nothing>
     private lateinit var auxiliarConnection: Connection
 
     protected lateinit var postgresConfiguration: PostgresConfiguration
     protected lateinit var replicationConfiguration: ReplicationConfiguration
-    protected lateinit var awsParamaters: AWSParamaters
 
     abstract fun setUp()
+
     abstract fun tearDown()
 
     protected fun setUpBegin() {
-        properties = loadProperties()
+        postgres = E2EContainers.newPostgres()
+        postgres.start()
 
-        postgresConfiguration = properties.buildPostgresConfiguration()
-        replicationConfiguration = properties.buildReplicationConfiguration()
-        awsParamaters = properties.buildAwsParameters()
+        postgresConfiguration =
+            PostgresConfiguration(
+                host = postgres.host,
+                port = postgres.getMappedPort(POSTGRES_PORT).toString(),
+                database = postgres.databaseName,
+                username = postgres.username,
+                password = postgres.password,
+            )
+        replicationConfiguration = ReplicationConfiguration(slotName = SLOT_NAME)
 
         auxiliarConnection =
             createConnection(postgresConfiguration.getUrl(), postgresConfiguration.getQueryConnectionProperties())
 
-        val createSlotCommand = "SELECT pg_create_logical_replication_slot(" +
-            "'${replicationConfiguration.slotName}'," +
-            "'${replicationConfiguration.outputPlugin}')"
+        val createSlotCommand =
+            "SELECT pg_create_logical_replication_slot(" +
+                "'${replicationConfiguration.slotName}'," +
+                "'${replicationConfiguration.outputPlugin}')"
 
         try {
             executeCommand(createSlotCommand)
@@ -54,8 +68,8 @@ abstract class IntegrationBase {
         val dropSlotCommand = "SELECT pg_drop_replication_slot('${replicationConfiguration.slotName}')"
         executeCommand(dropSlotCommand)
 
-        properties.clear()
         auxiliarConnection.close()
+        postgres.stop()
     }
 
     protected fun executeCommand(command: String): Boolean {
@@ -66,37 +80,14 @@ abstract class IntegrationBase {
     }
 
     companion object {
-
         private val logger = LoggerFactory.getLogger(IntegrationBase::class.java)
         private const val ALREADY_EXISTS_SQL_STATE = "42710"
+        private const val POSTGRES_PORT = 5432
+        private const val SLOT_NAME = "catalog_slot"
 
-        private fun loadProperties(): Properties {
-            val properties = Properties()
-            val inputStream = FileInputStream("src/test/resources/application.properties")
-            properties.load(inputStream)
-            return properties
-        }
-
-        private fun createConnection(url: String, properties: Properties) =
-            DefaultConnectionProvider().getConnection(url, properties)
-
-        private fun Properties.buildAwsParameters() = AWSParamaters(
-            awsAccessKey = this["cloud.aws.credentials.access-key"].toString(),
-            awsSecretKey = this["cloud.aws.credentials.secret-key"].toString(),
-            region = this["cloud.aws.region.static"].toString(),
-            localstackUrl = this["cloud.aws.localstack.url"].toString()
-        )
-
-        private fun Properties.buildPostgresConfiguration() = PostgresConfiguration(
-            host = this["datasource.host"].toString(),
-            port = this["datasource.port"].toString(),
-            database = this["datasource.database"].toString(),
-            username = this["datasource.username"].toString(),
-            password = this["datasource.password"].toString()
-        )
-
-        private fun Properties.buildReplicationConfiguration() = ReplicationConfiguration(
-            slotName = this["datasource.replication.slot"].toString()
-        )
+        private fun createConnection(
+            url: String,
+            properties: Properties,
+        ): Connection = DefaultConnectionProvider().getConnection(url, properties)
     }
 }

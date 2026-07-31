@@ -9,6 +9,81 @@ file records the actual delivery and the Tech Lead verdict per round.
 > external release scheme. They're kept here as-is because they're
 > the actual identifiers used in the corresponding commits and PRs.
 
+## Round 24 — ktlint backlog cleared, hard-coded-port IT fixed, remaining pool config
+
+Closes items 1–5 of the pending-tasks list surfaced after Round 23,
+plus item 7 (branch cleanup, done inline). Item 6 (Maven Central
+publish) is documented, not built — see below.
+
+  * **`ktlintCheck` backlog cleared** (item 1): `./gradlew ktlintFormat`
+    across all 15 modules + `checkpoint-file`, fixing ~15 violations
+    the auto-formatter couldn't correct on its own — mostly "EOL
+    comment may not be preceded by a KDoc" (detekt-suppression
+    justification comments sitting between a class/method KDoc and the
+    `@Suppress` they explain; fixed by swapping the two, comment
+    first). The reformatting itself twice pushed code over a *different*
+    threshold: `CdcProcessor.processEvent` past detekt's `LongMethod`
+    (extracted `handleTransientPublishFailure`, which then tipped the
+    class over `TooManyFunctions` — justified and suppressed, the
+    orchestrator's public surface stays small) and 3 lines past
+    `MaxLineLength` after ktlint joined them back to single-line **and
+    kept re-joining them** on every subsequent format pass. Root cause:
+    no `.editorconfig` existed, so ktlint had no line-length limit of
+    its own while detekt defaulted to 120 — added
+    `.editorconfig` (`max_line_length = 120` for `*.kt`/`*.kts`) so the
+    two tools agree, closing the whack-a-mole for good.
+    `./gradlew clean build`, no exclusions of any kind, is now green
+    across the whole tree — the ktlint/detekt gate genuinely works for
+    the first time since it was introduced.
+  * **`PostgresConnectorIT` / `SlotReaderMessageProducerIT` no longer
+    hard-code `localhost:5432`** (item 2 — the exact anti-pattern
+    `.claude/agents/tech-lead.md`'s own checklist already forbade).
+    `IntegrationBase` now boots a real `E2EContainers.newPostgres()`
+    Testcontainers instance instead of reading a static
+    `application.properties` pointed at a docker-compose Postgres that
+    may or may not be running, on a port that may or may not be free.
+    Both classes gained the `RUN_TESTCONTAINERS=1` gate every other
+    `*IT.kt` already has (they had none before — the only two ITs in
+    the tree that could fail `./gradlew test` unconditionally on a
+    clean machine). Deleted the now-unused
+    `legacy/src/test/resources/application.properties` and the dead
+    `AWSParamaters` construction neither test actually read.
+  * **`PoolConfig.autoCommit` surfaced via config** (item 3), same
+    pattern and same regression-test rigor as `keepaliveTime` in
+    Round 23: `cdc.outbox.pool.auto-commit` (default `true`), wired
+    into `CdcOutboxAutoConfiguration`, verified via a reflection-based
+    test against the connection provider's actual `PoolConfig` (not
+    just the properties layer) — confirmed by deliberately deleting
+    the wiring line and watching the test fail before restoring it.
+  * **No version bump for the `JsonHelper` removal** (item 4,
+    deliberately): Round 23 moved `JsonHelper` out of `core`'s public
+    API without bumping past `0.3.0`. Checked before deciding: `0.3.0`
+    has never been tagged (`git tag --list` empty) or published
+    anywhere, so there is no consumer who could observe the removal as
+    breaking. Bumping again would imply a shipped compatibility break
+    that never happened.
+  * **Maven Central publish documented, not wired** (item 5 /
+    backlog NF11): added a checklist to `CONTRIBUTING.md` covering the
+    three prerequisites this repo's build config cannot satisfy on its
+    own — a Sonatype Central account with the `br.com.fltech` DNS
+    namespace verified (or a namespace move to
+    `io.github.fernandoofj`, this time actually owned by the account
+    that publishes it, unlike the `io.github.cdc` mistake Round 22
+    corrected), a GPG signing key, and the Gradle `signing` +
+    Central-publish plugin wiring itself. Deliberately not adding the
+    Gradle plugin config yet — wiring a publish target against an
+    unverified namespace produces build config nobody can run.
+  * **Stale local branches deleted** (item 7): all 12 branches flagged
+    in Round 23 as blocked by session permissions — merged cleanly
+    this time.
+  * **Verification**: `./gradlew clean build` (zero exclusions, all
+    15 modules + BOM) green; `./gradlew clean build -x :legacy:test`
+    followed by `:legacy:build` alone also green, confirming the
+    Testcontainers-ified ITs don't regress the default sweep. All 7
+    real Docker-backed suites re-run and green: the 5 from prior
+    rounds plus the newly-migrated `PostgresConnectorIT` (1 test) and
+    `SlotReaderMessageProducerIT` (6 tests).
+
 ## Round 23 — Backlog polish (deferred MINOR/NIT items)
 
 Closed 5 of 6 small items deliberately deferred across Rounds 21–22
