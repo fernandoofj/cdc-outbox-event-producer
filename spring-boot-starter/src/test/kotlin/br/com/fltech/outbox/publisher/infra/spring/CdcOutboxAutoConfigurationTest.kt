@@ -60,18 +60,32 @@ class CdcOutboxAutoConfigurationTest {
             assertEquals(true, props.replication.includeLsn)
             assertEquals(500L, props.retry.initial.toMillis())
             assertEquals(42, props.retry.maxReconnectAttempts)
-            // Default must be disabled (0), matching HikariCPConnectionProvider's
-            // own PoolConfig default — the pin that keeps HikariCP 7's own
-            // 2-minute keepalive default from silently re-enabling itself.
+            // Default disabled (0) — CdcOutboxProperties.Pool's own default,
+            // independent of HikariCPConnectionProvider's PoolConfig default.
+            // See `pool keepalive-time property reaches the connection
+            // provider's PoolConfig` below for the wiring between the two.
             assertEquals(0L, props.pool.keepaliveTime.toMillis())
         }
     }
 
     @Test
-    fun `pool keepalive-time property overrides the disabled default`() {
+    fun `pool keepalive-time property reaches the connection provider's PoolConfig`() {
+        // Reads the connection provider's private `poolConfig` via reflection
+        // because HikariCPConnectionProvider builds pools lazily inside
+        // getConnection(), not the constructor, so the bean itself never
+        // needs a live database here. This is the actual regression this
+        // property exists to catch: deleting `keepaliveTime =
+        // properties.pool.keepaliveTime` from CdcOutboxAutoConfiguration
+        // would leave PoolConfig on its own Duration.ZERO default regardless
+        // of what `cdc.outbox.pool.keepalive-time` is set to, and only an
+        // assertion against PoolConfig itself — not CdcOutboxProperties —
+        // would notice.
         runner.withPropertyValues("cdc.outbox.pool.keepalive-time=90s").run { ctx ->
-            val props = ctx.getBean(CdcOutboxProperties::class.java)
-            assertEquals(90_000L, props.pool.keepaliveTime.toMillis())
+            val provider = ctx.getBean(HikariCPConnectionProvider::class.java)
+            val poolConfigField = HikariCPConnectionProvider::class.java.getDeclaredField("poolConfig")
+            poolConfigField.isAccessible = true
+            val poolConfig = poolConfigField.get(provider) as HikariCPConnectionProvider.PoolConfig
+            assertEquals(90_000L, poolConfig.keepaliveTime.toMillis())
         }
     }
 

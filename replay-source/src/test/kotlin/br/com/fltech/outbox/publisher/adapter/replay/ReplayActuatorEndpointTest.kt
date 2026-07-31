@@ -61,7 +61,7 @@ class ReplayActuatorEndpointTest {
     fun `AnonymousAuthenticationToken is rejected even with a non-standard authority`() {
         // Isolates the isAnonymous() type-check fallback: an app that
         // configures AnonymousAuthenticationFilter with a custom authority
-        // (not ROLE_ANONYMOUS) must still be caught by the class check, not
+        // (not ROLE_ANONYMOUS) must still be caught by the type check, not
         // just the authority check the other anonymous test also satisfies.
         SecurityContextHolder.getContext().authentication = AnonymousAuthenticationToken(
             "key",

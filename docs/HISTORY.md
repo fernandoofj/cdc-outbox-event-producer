@@ -11,8 +11,9 @@ file records the actual delivery and the Tech Lead verdict per round.
 
 ## Round 23 — Backlog polish (deferred MINOR/NIT items)
 
-Closed six small items deliberately deferred across Rounds 21–22 Tech
-Lead reviews, none blocking on their own.
+Closed 5 of 6 small items deliberately deferred across Rounds 21–22
+Tech Lead reviews, none blocking on their own. The 6th (stale local
+branch cleanup) is disclosed as not done below, not counted as done.
 
   * **`PoolConfig.keepaliveTime` surfaced via config**: added to
     `CdcOutboxProperties.Pool` (`cdc.outbox.pool.keepalive-time`,
@@ -23,11 +24,17 @@ Lead reviews, none blocking on their own.
     left after the HikariCP 5→7 bump. Added to `docs/ARCHITECTURE.md`'s
     `cdc.outbox.pool.*` reference table and the README config summary
     (both were previously undocumented for this field — a first pass
-    at this round shipped the code without touching either). Two new
-    `CdcOutboxAutoConfigurationTest` cases assert the default binds to
-    `0` and that `cdc.outbox.pool.keepalive-time=90s` overrides it —
-    a second Tech Lead pass caught that the actual behavioral change
-    in this round had shipped with zero coverage.
+    at this round shipped the code without touching either).
+    A first attempt at test coverage only asserted
+    `CdcOutboxProperties.Pool.keepaliveTime` bound correctly — a
+    second Tech Lead pass pointed out that deleting the actual wiring
+    line in `CdcOutboxAutoConfiguration` would leave both assertions
+    green, since neither touched `HikariCPConnectionProvider`'s
+    `PoolConfig`. Added one real regression test that reads the
+    connection provider bean's private `poolConfig` via reflection
+    (the bean is obtainable with no live database — pools build lazily
+    inside `getConnection()`, not the constructor) and asserts
+    `cdc.outbox.pool.keepalive-time=90s` actually reaches it.
   * **`core` no longer depends on `org.json`**: `JsonHelper` (and its
     test + fixture) moved to `:legacy`, its only caller
     (`SlotReaderMessageProducer`), and marked `internal` there since
@@ -42,10 +49,10 @@ Lead reviews, none blocking on their own.
     from `javaClass.simpleName == "AnonymousAuthenticationToken"` to
     `this is AnonymousAuthenticationToken` — same runtime behavior,
     immune to the proxy/subclass cases a string compare would miss.
-    (The `ROLE_GUEST` test case covering this disjunct was added in
-    Round 22's mutation-testing pass, not this round — a first pass at
-    this HISTORY entry mis-attributed it here; both existing endpoint
-    test suites, 5 cases each, pass unmodified against the refactor.)
+    The `ROLE_GUEST` test case covering this disjunct was added in
+    Round 22's mutation-testing pass, not this round; both existing
+    endpoint test suites, 5 cases each, pass unmodified against the
+    refactor.
   * **Unused `spring-security-test:7.0.5` dropped** from
     `dlq-replay/build.gradle.kts` — the auth-gate tests added in
     Round 22 use `spring-security-core` types directly, never needed
@@ -54,19 +61,19 @@ Lead reviews, none blocking on their own.
     the bottom of the table (added after the numbering was already
     settled); reordered to strict ascending `#`, matching CLAUDE.md's
     single-source-of-truth expectation for the roadmap.
-  * **Stale local branches**: 12 fully-merged branches from Rounds
-    21–22 (`test/pr-*`, `feat/package-rename-drop-cdc-segment`,
-    `feat/spring-boot-4-migration`, `chore/oss-readiness`) targeted for
-    deletion; local `git branch -d` was blocked by this session's
-    permission settings, so they remain on disk — harmless (fully
-    reachable from `main`), delete manually with `git branch -d
-    <name>` when convenient.
+  * **Not done — stale local branches**: 12 fully-merged branches from
+    Rounds 21–22 (`test/pr-*`, `feat/package-rename-drop-cdc-segment`,
+    `feat/spring-boot-4-migration`, `chore/oss-readiness`) still on
+    disk; local `git branch -d` was blocked by this session's
+    permission settings. Harmless (fully reachable from `main`),
+    delete manually with `git branch -d <name>` when convenient.
   * **Verification**: `./gradlew clean build` green across all 15
-    modules + BOM (ktlint excluded from the gate as in Rounds 21–22 —
-    pre-existing, unrelated red baseline); all 5 real
-    Testcontainers-backed integration/E2E suites re-run and green,
-    including `AtLeastOnceDeliveryIT` (the one that actually exercises
-    the relocated `JsonHelper` via `SlotReaderMessageProducer`).
+    modules + BOM (ktlint and `:legacy:test`'s two DB-dependent ITs
+    excluded, same as Rounds 21–22 — both pre-existing, unrelated);
+    all 5 real Testcontainers-backed integration/E2E suites re-run and
+    green, including `AtLeastOnceDeliveryIT` (the one that actually
+    exercises the relocated `JsonHelper` via
+    `SlotReaderMessageProducer`).
 
 ## Round 22 — Spring Boot 4 migration
 
