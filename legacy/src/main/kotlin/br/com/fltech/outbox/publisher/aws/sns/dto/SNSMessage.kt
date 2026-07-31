@@ -6,5 +6,5 @@ data class SNSMessage<T>(
     @JsonProperty("headers")
     val headers: Map<String, String>,
     @JsonProperty("body")
-    val body: SNSMessageBody<T>
+    val body: SNSMessageBody<T>,
 )

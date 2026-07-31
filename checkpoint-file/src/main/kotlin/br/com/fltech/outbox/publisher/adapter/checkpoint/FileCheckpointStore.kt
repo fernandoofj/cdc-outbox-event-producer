@@ -81,7 +81,6 @@ class FileCheckpointStore(
     private val directory: Path,
     private val metrics: CdcOutboxMetrics = CdcOutboxMetrics.noop(),
 ) : CheckpointStore {
-
     init {
         // Create the directory on construction so a misconfigured path
         // surfaces at startup, not on the first save call far down the
@@ -106,25 +105,29 @@ class FileCheckpointStore(
      * anything else in the directory are left alone.
      */
     private fun sweepOrphans() {
-        val stream = try {
-            Files.newDirectoryStream(directory, "*$TMP_SUFFIX")
-        } catch (e: NoSuchFileException) {
-            // The directory was racing with us (deleted between
-            // `createDirectories` above and here, or otherwise gone).
-            // Mirrors the `save` idiom of treating the directory as
-            // lazy: nothing to sweep, nothing to log loudly about.
-            logger.debug(
-                "FileCheckpointStore: sweep directory {} missing; nothing to do.",
-                directory, e,
-            )
-            return
-        } catch (e: IOException) {
-            logger.warn(
-                "FileCheckpointStore: could not list {} for orphan sweep ({}); skipping cleanup.",
-                directory, e.javaClass.simpleName, e,
-            )
-            return
-        }
+        val stream =
+            try {
+                Files.newDirectoryStream(directory, "*$TMP_SUFFIX")
+            } catch (e: NoSuchFileException) {
+                // The directory was racing with us (deleted between
+                // `createDirectories` above and here, or otherwise gone).
+                // Mirrors the `save` idiom of treating the directory as
+                // lazy: nothing to sweep, nothing to log loudly about.
+                logger.debug(
+                    "FileCheckpointStore: sweep directory {} missing; nothing to do.",
+                    directory,
+                    e,
+                )
+                return
+            } catch (e: IOException) {
+                logger.warn(
+                    "FileCheckpointStore: could not list {} for orphan sweep ({}); skipping cleanup.",
+                    directory,
+                    e.javaClass.simpleName,
+                    e,
+                )
+                return
+            }
         stream.use { entries ->
             for (orphan in entries) {
                 try {
@@ -137,7 +140,9 @@ class FileCheckpointStore(
                     // the failure signal even if the log is muted.
                     logger.warn(
                         "FileCheckpointStore: failed to delete orphan {} ({}); leaving it in place.",
-                        orphan, e.javaClass.simpleName, e,
+                        orphan,
+                        e.javaClass.simpleName,
+                        e,
                     )
                     metrics.recordCheckpointOrphanSwept(SWEEP_OUTCOME_FAILED)
                 }
@@ -151,27 +156,34 @@ class FileCheckpointStore(
     @Suppress("ReturnCount")
     override fun load(key: String): String? {
         val file = pathFor(key)
-        val raw = try {
-            Files.readString(file, StandardCharsets.UTF_8)
-        } catch (e: NoSuchFileException) {
-            logger.debug(
-                "FileCheckpointStore: checkpoint file {} not present; treating as missing.",
-                file, e,
-            )
-            return null
-        } catch (e: Exception) {
-            // Treat unreadable files (permissions, locked) the same as
-            // corruption — log + return null so the source can decide.
-            logger.warn(
-                "FileCheckpointStore failed to read checkpoint file {} ({}); treating as missing.",
-                file, e.javaClass.simpleName, e,
-            )
-            return null
-        }
+        val raw =
+            try {
+                Files.readString(file, StandardCharsets.UTF_8)
+            } catch (e: NoSuchFileException) {
+                logger.debug(
+                    "FileCheckpointStore: checkpoint file {} not present; treating as missing.",
+                    file,
+                    e,
+                )
+                return null
+            } catch (e: Exception) {
+                // Treat unreadable files (permissions, locked) the same as
+                // corruption — log + return null so the source can decide.
+                logger.warn(
+                    "FileCheckpointStore failed to read checkpoint file {} ({}); treating as missing.",
+                    file,
+                    e.javaClass.simpleName,
+                    e,
+                )
+                return null
+            }
         return decode(raw, key, file)
     }
 
-    override fun save(key: String, value: String) {
+    override fun save(
+        key: String,
+        value: String,
+    ) {
         val canonical = pathFor(key)
         val tmp = canonical.resolveSibling("${canonical.fileName}.tmp")
         val payload = encode(key, value).toByteArray(StandardCharsets.UTF_8)
@@ -193,7 +205,8 @@ class FileCheckpointStore(
             logger.warn(
                 "FileCheckpointStore: filesystem at {} does not support atomic moves; " +
                     "falling back to non-atomic REPLACE_EXISTING. Crash mid-move could lose checkpoint.",
-                directory, e,
+                directory,
+                e,
             )
             Files.move(tmp, canonical, StandardCopyOption.REPLACE_EXISTING)
         }
@@ -201,14 +214,20 @@ class FileCheckpointStore(
 
     private fun pathFor(key: String): Path = directory.resolve("${sanitise(key)}$JSON_SUFFIX")
 
-    private fun encode(key: String, value: String): String =
-        """{"key":"${escape(key)}","value":"${escape(value)}"}"""
+    private fun encode(
+        key: String,
+        value: String,
+    ): String = """{"key":"${escape(key)}","value":"${escape(value)}"}"""
 
     // ReturnCount: parser preflight is naturally a sequence of guards
     // (shape, required field, key match) — flattening to nested ifs
     // would make each invariant harder to read.
     @Suppress("ReturnCount")
-    private fun decode(raw: String, expectedKey: String, file: Path): String? {
+    private fun decode(
+        raw: String,
+        expectedKey: String,
+        file: Path,
+    ): String? {
         val trimmed = raw.trim()
         if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
             logger.warn(
@@ -233,12 +252,18 @@ class FileCheckpointStore(
             // checkpoint.
             logger.warn(
                 "FileCheckpointStore: file {} stores key '{}' but caller asked for '{}'; treating as missing.",
-                file, storedKey, expectedKey,
+                file,
+                storedKey,
+                expectedKey,
             )
             return null
         }
         return value
     }
+
+    // ReturnCount: a small hand-rolled JSON-string scanner naturally
+    // has multiple bail-outs (not found, closing quote, EOF) — each
+    // is a distinct case the caller does not need to disambiguate.
 
     /**
      * Extracts a JSON string field by name. Hand-rolled rather than
@@ -246,11 +271,11 @@ class FileCheckpointStore(
      * class, the shape is known, and a stray dependency in a leaf
      * adapter would muddy the hexagonal boundary.
      */
-    // ReturnCount: a small hand-rolled JSON-string scanner naturally
-    // has multiple bail-outs (not found, closing quote, EOF) — each
-    // is a distinct case the caller does not need to disambiguate.
     @Suppress("ReturnCount")
-    private fun extractField(json: String, field: String): String? {
+    private fun extractField(
+        json: String,
+        field: String,
+    ): String? {
         val needle = "\"$field\":\""
         val start = json.indexOf(needle)
         if (start < 0) return null
@@ -274,25 +299,27 @@ class FileCheckpointStore(
         return null
     }
 
-    private fun escape(s: String): String = buildString(s.length) {
-        for (c in s) {
-            when (c) {
-                '\\' -> append("\\\\")
-                '"' -> append("\\\"")
-                '\n' -> append("\\n")
-                '\r' -> append("\\r")
-                else -> append(c)
+    private fun escape(s: String): String =
+        buildString(s.length) {
+            for (c in s) {
+                when (c) {
+                    '\\' -> append("\\\\")
+                    '"' -> append("\\\"")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    else -> append(c)
+                }
             }
         }
-    }
 
-    private fun unescape(c: Char): Char = when (c) {
-        'n' -> '\n'
-        'r' -> '\r'
-        'b' -> '\b'
-        't' -> '\t'
-        else -> c
-    }
+    private fun unescape(c: Char): Char =
+        when (c) {
+            'n' -> '\n'
+            'r' -> '\r'
+            'b' -> '\b'
+            't' -> '\t'
+            else -> c
+        }
 
     /**
      * Strips characters that the file-system would refuse (slashes,

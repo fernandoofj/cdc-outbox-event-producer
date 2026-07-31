@@ -12,6 +12,7 @@ import br.com.fltech.outbox.publisher.core.port.UnsupportedReplayException
 import br.com.fltech.outbox.publisher.observability.CdcOutboxMetrics
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.awaitility.Awaitility
+import org.junit.jupiter.api.assertThrows
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -19,10 +20,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.assertThrows
 
 class ReplayServiceTest {
-
     private val meterRegistry = SimpleMeterRegistry()
     private val metrics = CdcOutboxMetrics(meterRegistry)
     private val capturedEvents = ConcurrentLinkedQueue<OutboxEvent>()
@@ -84,9 +83,10 @@ class ReplayServiceTest {
         val replayer = stubReplayer("mysql-binlog") { fakeRowChanges(1) }
         val service = newService(replayer)
 
-        val job = service.startReplay(
-            req("mysql-binlog", "f:1", "f:100", override = ReplayRequest.RoutingOverride("kafka", "topic-x")),
-        )
+        val job =
+            service.startReplay(
+                req("mysql-binlog", "f:1", "f:100", override = ReplayRequest.RoutingOverride("kafka", "topic-x")),
+            )
 
         Awaitility.await().atMost(java.time.Duration.ofSeconds(WAIT_SECONDS))
             .until { service.getJob(job.jobId)?.status == ReplayStatus.SUCCEEDED }
@@ -99,22 +99,30 @@ class ReplayServiceTest {
     @Test
     fun `publish failure does not abort the job - subsequent events still go through`() {
         val replayer = stubReplayer("mysql-binlog") { fakeRowChanges(3) }
-        val flakyRegistry = object : EventSinkRegistry {
-            private var i = 0
-            override fun publish(routing: Routing, event: OutboxEvent) {
-                i += 1
-                if (i == 2) error("broker glitch")
-                capturedEvents.add(event)
+        val flakyRegistry =
+            object : EventSinkRegistry {
+                private var i = 0
+
+                override fun publish(
+                    routing: Routing,
+                    event: OutboxEvent,
+                ) {
+                    i += 1
+                    if (i == 2) error("broker glitch")
+                    capturedEvents.add(event)
+                }
+
+                override fun knownSchemes(): Set<String> = setOf("sns")
+
+                override fun resolve(scheme: String): EventSink? = null
             }
-            override fun knownSchemes(): Set<String> = setOf("sns")
-            override fun resolve(scheme: String): EventSink? = null
-        }
-        val service = ReplayService(
-            replayers = mapOf("mysql-binlog" to replayer),
-            mappingRules = identityRules(),
-            sinkRegistry = flakyRegistry,
-            metrics = metrics,
-        )
+        val service =
+            ReplayService(
+                replayers = mapOf("mysql-binlog" to replayer),
+                mappingRules = identityRules(),
+                sinkRegistry = flakyRegistry,
+                metrics = metrics,
+            )
 
         val job = service.startReplay(req("mysql-binlog", "f:1", "f:100"))
 
@@ -131,17 +139,19 @@ class ReplayServiceTest {
         val replayer = stubReplayer("mysql-binlog") { fakeRowChanges(4) }
         // Mapping returns null for op=INSERT, mapping for op=UPDATE.
         // Fake rows alternate ops: 0=INSERT (filtered), 1=UPDATE, 2=INSERT (filtered), 3=UPDATE.
-        val rules = object : MappingRules {
-            override fun map(rowChange: RowChange): OutboxEvent? {
-                return if (rowChange.op == RowChange.Op.INSERT) null else fakeEvent(rowChange)
+        val rules =
+            object : MappingRules {
+                override fun map(rowChange: RowChange): OutboxEvent? {
+                    return if (rowChange.op == RowChange.Op.INSERT) null else fakeEvent(rowChange)
+                }
             }
-        }
-        val service = ReplayService(
-            replayers = mapOf("mysql-binlog" to replayer),
-            mappingRules = rules,
-            sinkRegistry = registry,
-            metrics = metrics,
-        )
+        val service =
+            ReplayService(
+                replayers = mapOf("mysql-binlog" to replayer),
+                mappingRules = rules,
+                sinkRegistry = registry,
+                metrics = metrics,
+            )
 
         val job = service.startReplay(req("mysql-binlog", "f:1", "f:100"))
 
@@ -154,12 +164,17 @@ class ReplayServiceTest {
 
     @Test
     fun `failed source open marks job as FAILED with error metadata`() {
-        val replayer = object : SourceReplayer {
-            override val sourceKind: String = "mysql-binlog"
-            override fun openBoundedSource(fromPosition: String, toPosition: String): RowChangeSource {
-                throw UnsupportedReplayException("synthetic open failure")
+        val replayer =
+            object : SourceReplayer {
+                override val sourceKind: String = "mysql-binlog"
+
+                override fun openBoundedSource(
+                    fromPosition: String,
+                    toPosition: String,
+                ): RowChangeSource {
+                    throw UnsupportedReplayException("synthetic open failure")
+                }
             }
-        }
         val service = newService(replayer)
 
         val job = service.startReplay(req("mysql-binlog", "f:1", "f:100"))
@@ -177,12 +192,13 @@ class ReplayServiceTest {
         assertNull(service.getJob("nope"))
     }
 
-    private fun newService(vararg replayers: SourceReplayer) = ReplayService(
-        replayers = replayers.associateBy { it.sourceKind },
-        mappingRules = identityRules(),
-        sinkRegistry = registry,
-        metrics = metrics,
-    )
+    private fun newService(vararg replayers: SourceReplayer) =
+        ReplayService(
+            replayers = replayers.associateBy { it.sourceKind },
+            mappingRules = identityRules(),
+            sinkRegistry = registry,
+            metrics = metrics,
+        )
 
     private fun req(
         kind: String,
@@ -192,65 +208,95 @@ class ReplayServiceTest {
         override: ReplayRequest.RoutingOverride? = null,
     ) = ReplayRequest(sourceKind = kind, fromPosition = from, toPosition = to, dryRun = dryRun, override = override)
 
-    private fun stubReplayer(kind: String, rowChanges: () -> List<RowChange>): SourceReplayer =
+    private fun stubReplayer(
+        kind: String,
+        rowChanges: () -> List<RowChange>,
+    ): SourceReplayer =
         object : SourceReplayer {
             override val sourceKind: String = kind
-            override fun openBoundedSource(fromPosition: String, toPosition: String): RowChangeSource =
-                listSource(rowChanges())
+
+            override fun openBoundedSource(
+                fromPosition: String,
+                toPosition: String,
+            ): RowChangeSource = listSource(rowChanges())
         }
 
-    private fun blockingStubReplayer(kind: String) = object : SourceReplayer {
-        private val released = java.util.concurrent.atomic.AtomicBoolean(false)
-        override val sourceKind: String = kind
-        override fun openBoundedSource(fromPosition: String, toPosition: String): RowChangeSource =
-            object : RowChangeSource {
-                override fun open() = Unit
-                override fun poll(): RowChange? {
-                    while (!released.get()) Thread.sleep(POLL_WAIT_MS)
-                    return null
+    private fun blockingStubReplayer(kind: String) =
+        object : SourceReplayer {
+            private val released = java.util.concurrent.atomic.AtomicBoolean(false)
+            override val sourceKind: String = kind
+
+            override fun openBoundedSource(
+                fromPosition: String,
+                toPosition: String,
+            ): RowChangeSource =
+                object : RowChangeSource {
+                    override fun open() = Unit
+
+                    override fun poll(): RowChange? {
+                        while (!released.get()) Thread.sleep(POLL_WAIT_MS)
+                        return null
+                    }
+
+                    override fun ack(rowChange: RowChange) = Unit
+
+                    override fun close() = Unit
                 }
-                override fun ack(rowChange: RowChange) = Unit
-                override fun close() = Unit
+
+            fun release() {
+                released.set(true)
             }
-        fun release() { released.set(true) }
-    }
+        }
 
-    private fun listSource(items: List<RowChange>): RowChangeSource = object : RowChangeSource {
-        private val iterator = items.iterator()
-        override fun open() = Unit
-        override fun poll(): RowChange? = if (iterator.hasNext()) iterator.next() else null
-        override fun ack(rowChange: RowChange) = Unit
-        override fun close() = Unit
-    }
+    private fun listSource(items: List<RowChange>): RowChangeSource =
+        object : RowChangeSource {
+            private val iterator = items.iterator()
 
-    private fun fakeRowChanges(count: Int): List<RowChange> = (0 until count).map { i ->
-        RowChange(
-            op = if (i % 2 == 0) RowChange.Op.INSERT else RowChange.Op.UPDATE,
-            table = "public.orders",
-            sourceCheckpoint = "mysql-bin.000001:$i",
-            occurredAt = Instant.ofEpochSecond(1_700_000_000L + i),
-            after = mapOf("id" to i, "value" to "row-$i"),
+            override fun open() = Unit
+
+            override fun poll(): RowChange? = if (iterator.hasNext()) iterator.next() else null
+
+            override fun ack(rowChange: RowChange) = Unit
+
+            override fun close() = Unit
+        }
+
+    private fun fakeRowChanges(count: Int): List<RowChange> =
+        (0 until count).map { i ->
+            RowChange(
+                op = if (i % 2 == 0) RowChange.Op.INSERT else RowChange.Op.UPDATE,
+                table = "public.orders",
+                sourceCheckpoint = "mysql-bin.000001:$i",
+                occurredAt = Instant.ofEpochSecond(1_700_000_000L + i),
+                after = mapOf("id" to i, "value" to "row-$i"),
+            )
+        }
+
+    private fun fakeEvent(rowChange: RowChange): OutboxEvent =
+        OutboxEvent(
+            id = rowChange.sourceCheckpoint,
+            routing = Routing(scheme = "sns", target = "orders-events", attributes = emptyMap()),
+            payload = """{"id":${rowChange.after?.get("id")}}""".toByteArray(),
+            occurredAt = rowChange.occurredAt,
+            sourceCheckpoint = rowChange.sourceCheckpoint,
         )
-    }
 
-    private fun fakeEvent(rowChange: RowChange): OutboxEvent = OutboxEvent(
-        id = rowChange.sourceCheckpoint,
-        routing = Routing(scheme = "sns", target = "orders-events", attributes = emptyMap()),
-        payload = """{"id":${rowChange.after?.get("id")}}""".toByteArray(),
-        occurredAt = rowChange.occurredAt,
-        sourceCheckpoint = rowChange.sourceCheckpoint,
-    )
-
-    private fun identityRules(): MappingRules = object : MappingRules {
-        override fun map(rowChange: RowChange): OutboxEvent? = fakeEvent(rowChange)
-    }
+    private fun identityRules(): MappingRules =
+        object : MappingRules {
+            override fun map(rowChange: RowChange): OutboxEvent? = fakeEvent(rowChange)
+        }
 
     private fun stubRegistry(publishFn: (Routing, OutboxEvent) -> Unit): EventSinkRegistry =
         object : EventSinkRegistry {
-            override fun publish(routing: Routing, event: OutboxEvent) {
+            override fun publish(
+                routing: Routing,
+                event: OutboxEvent,
+            ) {
                 publishFn(routing, event)
             }
+
             override fun knownSchemes(): Set<String> = setOf("sns", "kafka")
+
             override fun resolve(scheme: String): EventSink? = null
         }
 

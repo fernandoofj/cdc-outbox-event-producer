@@ -59,7 +59,6 @@ import kotlin.test.assertTrue
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @EnabledIfEnvironmentVariable(named = "RUN_TESTCONTAINERS", matches = "1|true|yes")
 class PostgresSnsE2EIT {
-
     private val postgres: PostgreSQLContainer<Nothing> = E2EContainers.newPostgres()
     private val localstack: LocalStackContainer = E2EContainers.newLocalStack()
 
@@ -74,25 +73,29 @@ class PostgresSnsE2EIT {
         postgres.start()
         localstack.start()
 
-        val creds = StaticCredentialsProvider.create(
-            AwsBasicCredentials.create(localstack.accessKey, localstack.secretKey),
-        )
-        snsClient = SnsClient.builder()
-            .endpointOverride(localstack.getEndpointOverride(SNS))
-            .region(Region.of(localstack.region))
-            .credentialsProvider(creds)
-            .build()
-        sqsClient = SqsClient.builder()
-            .endpointOverride(localstack.getEndpointOverride(SQS))
-            .region(Region.of(localstack.region))
-            .credentialsProvider(creds)
-            .build()
+        val creds =
+            StaticCredentialsProvider.create(
+                AwsBasicCredentials.create(localstack.accessKey, localstack.secretKey),
+            )
+        snsClient =
+            SnsClient.builder()
+                .endpointOverride(localstack.getEndpointOverride(SNS))
+                .region(Region.of(localstack.region))
+                .credentialsProvider(creds)
+                .build()
+        sqsClient =
+            SqsClient.builder()
+                .endpointOverride(localstack.getEndpointOverride(SQS))
+                .region(Region.of(localstack.region))
+                .credentialsProvider(creds)
+                .build()
 
         topicArn = snsClient.createTopic { it.name(TOPIC) }.topicArn()
         queueUrl = sqsClient.createQueue { it.queueName(QUEUE) }.queueUrl()
-        val queueArn = sqsClient.getQueueAttributes {
-            it.queueUrl(queueUrl).attributeNamesWithStrings("QueueArn")
-        }.attributesAsStrings()["QueueArn"]!!
+        val queueArn =
+            sqsClient.getQueueAttributes {
+                it.queueUrl(queueUrl).attributeNamesWithStrings("QueueArn")
+            }.attributesAsStrings()["QueueArn"]!!
         snsClient.subscribe(
             SubscribeRequest.builder()
                 .topicArn(topicArn)
@@ -103,10 +106,11 @@ class PostgresSnsE2EIT {
         )
 
         // Connection for emitting messages + dropping any leftover slot.
-        val driverProps = Properties().apply {
-            setProperty("user", E2EContainers.PG_USER)
-            setProperty("password", E2EContainers.PG_PASSWORD)
-        }
+        val driverProps =
+            Properties().apply {
+                setProperty("user", E2EContainers.PG_USER)
+                setProperty("password", E2EContainers.PG_PASSWORD)
+            }
         queryConnection = DefaultConnectionProvider().getConnection(postgres.jdbcUrl, driverProps)
         dropSlotIfPresent()
     }
@@ -150,49 +154,57 @@ class PostgresSnsE2EIT {
     }
 
     private fun buildProcessor(): CdcProcessor {
-        val source = PgLogicalReplicationCdcSource(
-            postgresConfiguration = PostgresConfiguration(
-                host = postgres.host,
-                port = postgres.getMappedPort(POSTGRES_PORT).toString(),
-                database = postgres.databaseName,
-                username = E2EContainers.PG_USER,
-                password = E2EContainers.PG_PASSWORD,
-            ),
-            replicationConfiguration = ReplicationConfiguration(slotName = SLOT_NAME),
-            connectionProvider = DefaultConnectionProvider(),
-            objectMapper = defaultMapper,
-        )
+        val source =
+            PgLogicalReplicationCdcSource(
+                postgresConfiguration =
+                    PostgresConfiguration(
+                        host = postgres.host,
+                        port = postgres.getMappedPort(POSTGRES_PORT).toString(),
+                        database = postgres.databaseName,
+                        username = E2EContainers.PG_USER,
+                        password = E2EContainers.PG_PASSWORD,
+                    ),
+                replicationConfiguration = ReplicationConfiguration(slotName = SLOT_NAME),
+                connectionProvider = DefaultConnectionProvider(),
+                objectMapper = defaultMapper,
+            )
         val sinks: Map<String, EventSink> = mapOf("sns" to SnsEventSink(SnsTemplate(snsClient)))
         return CdcProcessor(
             source = source,
             sinkRegistry = DefaultEventSinkRegistry(sinks),
             maxPublishAttempts = MAX_PUBLISH_ATTEMPTS,
-            publishBackOff = ExponentialBackOff(
-                initial = Duration.ofMillis(BACKOFF_INITIAL_MS),
-                max = Duration.ofMillis(BACKOFF_MAX_MS),
-            ),
+            publishBackOff =
+                ExponentialBackOff(
+                    initial = Duration.ofMillis(BACKOFF_INITIAL_MS),
+                    max = Duration.ofMillis(BACKOFF_MAX_MS),
+                ),
             slotLabel = "postgres-sns-e2e",
         )
     }
 
     /** The slot is created lazily inside the worker thread; wait for it. */
-    private fun awaitSlotExists() = Awaitility.await()
-        .atMost(STARTUP_WAIT)
-        .pollInterval(Duration.ofMillis(POLL_INTERVAL_MS))
-        .until { slotExists() }
+    private fun awaitSlotExists() =
+        Awaitility.await()
+            .atMost(STARTUP_WAIT)
+            .pollInterval(Duration.ofMillis(POLL_INTERVAL_MS))
+            .until { slotExists() }
 
-    private fun drainQueueUntilAllPresent(expected: List<String>, into: MutableSet<String>) {
+    private fun drainQueueUntilAllPresent(
+        expected: List<String>,
+        into: MutableSet<String>,
+    ) {
         Awaitility.await()
             .atMost(ASSERT_WAIT)
             .pollInterval(Duration.ofMillis(POLL_INTERVAL_MS))
             .until {
-                val response = sqsClient.receiveMessage(
-                    ReceiveMessageRequest.builder()
-                        .queueUrl(queueUrl)
-                        .maxNumberOfMessages(MAX_MESSAGES_PER_POLL)
-                        .waitTimeSeconds(1)
-                        .build(),
-                )
+                val response =
+                    sqsClient.receiveMessage(
+                        ReceiveMessageRequest.builder()
+                            .queueUrl(queueUrl)
+                            .maxNumberOfMessages(MAX_MESSAGES_PER_POLL)
+                            .waitTimeSeconds(1)
+                            .build(),
+                    )
                 response.messages().forEach { into.add(it.body()) }
                 into.size >= expected.size
             }
@@ -209,11 +221,12 @@ class PostgresSnsE2EIT {
         }
     }
 
-    private fun slotExists(): Boolean = queryConnection.createStatement().use { s ->
-        s.executeQuery("SELECT 1 FROM pg_replication_slots WHERE slot_name = '$SLOT_NAME'").use { rs ->
-            rs.next()
+    private fun slotExists(): Boolean =
+        queryConnection.createStatement().use { s ->
+            s.executeQuery("SELECT 1 FROM pg_replication_slots WHERE slot_name = '$SLOT_NAME'").use { rs ->
+                rs.next()
+            }
         }
-    }
 
     private fun dropSlotIfPresent() {
         runCatching {

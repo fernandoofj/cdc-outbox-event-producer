@@ -4,6 +4,11 @@ import com.fasterxml.jackson.annotation.JsonCreator
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 
+// LongParameterList: wal2json format-version=1 row record carries 10
+// optional fields (I/U/D/M action shapes share one DTO + an additional
+// pg_logical_emit_message payload pair). Same rationale as
+// SlotMessageV2 — single Jackson dispatch keeps the parser simple.
+
 /**
  * Raw wal2json `format-version=1` record. The same wrapper holds two
  * very different shapes — row records (`insert` / `update` / `delete`)
@@ -32,37 +37,35 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * subtype so consumers downstream see the same in-memory
  * representation as V2.
  */
-// LongParameterList: wal2json format-version=1 row record carries 10
-// optional fields (I/U/D/M action shapes share one DTO + an additional
-// pg_logical_emit_message payload pair). Same rationale as
-// SlotMessageV2 — single Jackson dispatch keeps the parser simple.
 @Suppress("LongParameterList")
 @JsonIgnoreProperties(ignoreUnknown = true)
-class V1RowRecord @JsonCreator constructor(
-    @param:JsonProperty(value = "kind", required = true)
-    val kind: String,
-    @param:JsonProperty(value = "schema", required = false)
-    val schema: String? = null,
-    @param:JsonProperty(value = "table", required = false)
-    val table: String? = null,
-    @param:JsonProperty(value = "columnnames", required = false)
-    val columnNames: List<String>? = null,
-    @param:JsonProperty(value = "columntypes", required = false)
-    val columnTypes: List<String?>? = null,
-    @param:JsonProperty(value = "columnvalues", required = false)
-    val columnValues: List<Any?>? = null,
-    @param:JsonProperty(value = "oldkeys", required = false)
-    val oldKeys: V1OldKeys? = null,
-    /** `pg_logical_emit_message` transactional flag (message records only). */
-    @param:JsonProperty(value = "transactional", required = false)
-    val transactional: Boolean? = null,
-    /** `pg_logical_emit_message` user-supplied prefix (message records only). */
-    @param:JsonProperty(value = "prefix", required = false)
-    val prefix: String? = null,
-    /** `pg_logical_emit_message` user-supplied content (message records only). */
-    @param:JsonProperty(value = "content", required = false)
-    val content: String? = null,
-)
+class V1RowRecord
+    @JsonCreator
+    constructor(
+        @param:JsonProperty(value = "kind", required = true)
+        val kind: String,
+        @param:JsonProperty(value = "schema", required = false)
+        val schema: String? = null,
+        @param:JsonProperty(value = "table", required = false)
+        val table: String? = null,
+        @param:JsonProperty(value = "columnnames", required = false)
+        val columnNames: List<String>? = null,
+        @param:JsonProperty(value = "columntypes", required = false)
+        val columnTypes: List<String?>? = null,
+        @param:JsonProperty(value = "columnvalues", required = false)
+        val columnValues: List<Any?>? = null,
+        @param:JsonProperty(value = "oldkeys", required = false)
+        val oldKeys: V1OldKeys? = null,
+        /** `pg_logical_emit_message` transactional flag (message records only). */
+        @param:JsonProperty(value = "transactional", required = false)
+        val transactional: Boolean? = null,
+        /** `pg_logical_emit_message` user-supplied prefix (message records only). */
+        @param:JsonProperty(value = "prefix", required = false)
+        val prefix: String? = null,
+        /** `pg_logical_emit_message` user-supplied content (message records only). */
+        @param:JsonProperty(value = "content", required = false)
+        val content: String? = null,
+    )
 
 /**
  * V1 replica-identity projection nested under each `UPDATE` / `DELETE`
@@ -73,11 +76,13 @@ class V1RowRecord @JsonCreator constructor(
  * the parser.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-class V1OldKeys @JsonCreator constructor(
-    @param:JsonProperty(value = "keynames", required = false)
-    val keyNames: List<String>? = null,
-    @param:JsonProperty(value = "keytypes", required = false)
-    val keyTypes: List<String?>? = null,
-    @param:JsonProperty(value = "keyvalues", required = false)
-    val keyValues: List<Any?>? = null,
-)
+class V1OldKeys
+    @JsonCreator
+    constructor(
+        @param:JsonProperty(value = "keynames", required = false)
+        val keyNames: List<String>? = null,
+        @param:JsonProperty(value = "keytypes", required = false)
+        val keyTypes: List<String?>? = null,
+        @param:JsonProperty(value = "keyvalues", required = false)
+        val keyValues: List<Any?>? = null,
+    )

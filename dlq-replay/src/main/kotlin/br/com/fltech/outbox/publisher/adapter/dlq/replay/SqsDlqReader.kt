@@ -32,21 +32,21 @@ class SqsDlqReader(
     private val peekVisibilityTimeoutSeconds: Int = DEFAULT_PEEK_VISIBILITY_SECONDS,
     private val objectMapper: ObjectMapper = jacksonObjectMapper(),
 ) : DlqReader {
-
     private val queueUrl: String by lazy {
         sqs.getQueueUrl(GetQueueUrlRequest.builder().queueName(queueName).build()).queueUrl()
     }
 
     override fun peek(max: Int): List<DlqReader.Message> {
         val bounded = max.coerceIn(1, MAX_RECEIVE_BATCH)
-        val response = sqs.receiveMessage(
-            ReceiveMessageRequest.builder()
-                .queueUrl(queueUrl)
-                .maxNumberOfMessages(bounded)
-                .visibilityTimeout(peekVisibilityTimeoutSeconds)
-                .waitTimeSeconds(0)
-                .build(),
-        )
+        val response =
+            sqs.receiveMessage(
+                ReceiveMessageRequest.builder()
+                    .queueUrl(queueUrl)
+                    .maxNumberOfMessages(bounded)
+                    .visibilityTimeout(peekVisibilityTimeoutSeconds)
+                    .waitTimeSeconds(0)
+                    .build(),
+            )
         return response.messages().mapNotNull { sqsMessage ->
             try {
                 val envelope = objectMapper.readValue(sqsMessage.body(), DlqEnvelope::class.java)
@@ -54,7 +54,10 @@ class SqsDlqReader(
             } catch (e: Exception) {
                 logger.warn(
                     "SqsDlqReader: dropped malformed DLQ message (queue={}, messageId={}, cause={}); leaving on queue.",
-                    queueName, sqsMessage.messageId(), e.javaClass.simpleName, e,
+                    queueName,
+                    sqsMessage.messageId(),
+                    e.javaClass.simpleName,
+                    e,
                 )
                 null
             }
@@ -73,22 +76,25 @@ class SqsDlqReader(
             logger.warn(
                 "SqsDlqReader: deleteMessage failed for queue={} (cause={}); " +
                     "message may resurface after visibility timeout.",
-                queueName, e.javaClass.simpleName, e,
+                queueName,
+                e.javaClass.simpleName,
+                e,
             )
             throw e
         }
     }
 
     override fun stats(): DlqReader.Stats {
-        val response = sqs.getQueueAttributes(
-            GetQueueAttributesRequest.builder()
-                .queueUrl(queueUrl)
-                .attributeNames(
-                    QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES,
-                    QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_NOT_VISIBLE,
-                )
-                .build(),
-        )
+        val response =
+            sqs.getQueueAttributes(
+                GetQueueAttributesRequest.builder()
+                    .queueUrl(queueUrl)
+                    .attributeNames(
+                        QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES,
+                        QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_NOT_VISIBLE,
+                    )
+                    .build(),
+            )
         val attrs = response.attributesAsStrings()
         return DlqReader.Stats(
             approximateMessageCount =

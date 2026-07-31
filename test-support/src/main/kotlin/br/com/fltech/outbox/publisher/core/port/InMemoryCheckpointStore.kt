@@ -11,7 +11,6 @@ import java.util.concurrent.ConcurrentHashMap
 class InMemoryCheckpointStore(
     initial: Map<String, String> = emptyMap(),
 ) : CheckpointStore {
-
     private val store = ConcurrentHashMap<String, String>().apply { putAll(initial) }
 
     /** Total `save` calls observed — handy for asserting per-ack persistence. */
@@ -29,7 +28,10 @@ class InMemoryCheckpointStore(
         return store[key]
     }
 
-    override fun save(key: String, value: String) {
+    override fun save(
+        key: String,
+        value: String,
+    ) {
         saveCount += 1
         store[key] = value
     }

@@ -30,7 +30,6 @@ import kotlin.test.assertTrue
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @EnabledIfEnvironmentVariable(named = "RUN_TESTCONTAINERS", matches = "1|true|yes")
 class MySqlBinlogReplayerIT {
-
     private val mysql: MySQLContainer<Nothing> = E2EContainers.newMysql()
     private lateinit var jdbc: Connection
     private lateinit var binlogDataSource: HikariDataSource
@@ -63,15 +62,16 @@ class MySqlBinlogReplayerIT {
             )
         }
 
-        binlogDataSource = HikariDataSource(
-            HikariConfig().apply {
-                jdbcUrl = mysql.jdbcUrl
-                username = mysql.username
-                password = mysql.password
-                maximumPoolSize = 2
-                poolName = "replay-it-info-schema"
-            },
-        )
+        binlogDataSource =
+            HikariDataSource(
+                HikariConfig().apply {
+                    jdbcUrl = mysql.jdbcUrl
+                    username = mysql.username
+                    password = mysql.password
+                    maximumPoolSize = 2
+                    poolName = "replay-it-info-schema"
+                },
+            )
     }
 
     @AfterAll
@@ -92,14 +92,15 @@ class MySqlBinlogReplayerIT {
 
         val (stopFile, stopPosition) = currentBinlogPosition()
 
-        val replayer = MySqlBinlogReplayer(
-            host = mysql.host,
-            port = mysql.getMappedPort(MYSQL_PORT),
-            username = mysql.username,
-            password = mysql.password,
-            serverId = REPLAY_SERVER_ID,
-            dataSource = binlogDataSource,
-        )
+        val replayer =
+            MySqlBinlogReplayer(
+                host = mysql.host,
+                port = mysql.getMappedPort(MYSQL_PORT),
+                username = mysql.username,
+                password = mysql.password,
+                serverId = REPLAY_SERVER_ID,
+                dataSource = binlogDataSource,
+            )
 
         val source = replayer.openBoundedSource("$startFile:$startPosition", "$stopFile:$stopPosition")
         val captured = CopyOnWriteArrayList<RowChange>()

@@ -12,7 +12,10 @@ import java.util.Properties
  * (e.g. [DefaultConnectionProvider]).
  */
 interface ConnectionProvider : AutoCloseable {
-    fun getConnection(url: String, properties: Properties): Connection
+    fun getConnection(
+        url: String,
+        properties: Properties,
+    ): Connection
 
     override fun close() {
         // no-op default — providers that own pools must override.

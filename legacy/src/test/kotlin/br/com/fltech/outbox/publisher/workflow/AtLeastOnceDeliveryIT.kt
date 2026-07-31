@@ -5,7 +5,6 @@ import br.com.fltech.outbox.publisher.aws.sns.SNSTransactionalProducer
 import br.com.fltech.outbox.publisher.aws.sns.dto.SNSMessage
 import br.com.fltech.outbox.publisher.aws.sns.dto.SNSMessageBody
 import br.com.fltech.outbox.publisher.aws.sqs.SQSTransactionalProducer
-import br.com.fltech.outbox.publisher.deadletter.SqsDeadLetterSink
 import br.com.fltech.outbox.publisher.jackson.ObjectMapperSingleton.defaultMapper
 import br.com.fltech.outbox.publisher.replication.config.PostgresConfiguration
 import br.com.fltech.outbox.publisher.replication.config.ReplicationConfiguration
@@ -62,7 +61,6 @@ import kotlin.test.assertTrue
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @EnabledIfEnvironmentVariable(named = "RUN_TESTCONTAINERS", matches = "1|true|yes")
 class AtLeastOnceDeliveryIT {
-
     companion object {
         private const val TOPIC = "orders-events"
         private const val QUEUE = "orders-events-subscriber"
@@ -71,23 +69,28 @@ class AtLeastOnceDeliveryIT {
         private const val PG_USER = "postgres"
         private const val PG_PASSWORD = "postgres"
 
-        private val postgres = PostgreSQLContainer<Nothing>(
-            DockerImageName.parse("debezium/postgres:14-alpine").asCompatibleSubstituteFor("postgres"),
-        ).apply {
-            withDatabaseName("cdc")
-            withUsername(PG_USER)
-            withPassword(PG_PASSWORD)
-            withCommand(
-                "postgres",
-                "-c", "wal_level=logical",
-                "-c", "max_replication_slots=4",
-                "-c", "max_wal_senders=4",
-            )
-        }
+        private val postgres =
+            PostgreSQLContainer<Nothing>(
+                DockerImageName.parse("debezium/postgres:14-alpine").asCompatibleSubstituteFor("postgres"),
+            ).apply {
+                withDatabaseName("cdc")
+                withUsername(PG_USER)
+                withPassword(PG_PASSWORD)
+                withCommand(
+                    "postgres",
+                    "-c",
+                    "wal_level=logical",
+                    "-c",
+                    "max_replication_slots=4",
+                    "-c",
+                    "max_wal_senders=4",
+                )
+            }
 
-        private val localstack = LocalStackContainer(
-            DockerImageName.parse("localstack/localstack:3.8.1"),
-        ).withServices(SNS, SQS)
+        private val localstack =
+            LocalStackContainer(
+                DockerImageName.parse("localstack/localstack:3.8.1"),
+            ).withServices(SNS, SQS)
     }
 
     private lateinit var snsClient: SnsClient
@@ -113,35 +116,41 @@ class AtLeastOnceDeliveryIT {
 
     @BeforeTest
     fun setUp() {
-        val creds = StaticCredentialsProvider.create(
-            AwsBasicCredentials.create(localstack.accessKey, localstack.secretKey),
-        )
-        snsClient = SnsClient.builder()
-            .endpointOverride(localstack.getEndpointOverride(SNS))
-            .region(Region.of(localstack.region))
-            .credentialsProvider(creds)
-            .build()
-        sqsClient = SqsClient.builder()
-            .endpointOverride(localstack.getEndpointOverride(SQS))
-            .region(Region.of(localstack.region))
-            .credentialsProvider(creds)
-            .build()
-        sqsAsyncClient = SqsAsyncClient.builder()
-            .endpointOverride(localstack.getEndpointOverride(SQS))
-            .region(Region.of(localstack.region))
-            .credentialsProvider(creds)
-            .build()
+        val creds =
+            StaticCredentialsProvider.create(
+                AwsBasicCredentials.create(localstack.accessKey, localstack.secretKey),
+            )
+        snsClient =
+            SnsClient.builder()
+                .endpointOverride(localstack.getEndpointOverride(SNS))
+                .region(Region.of(localstack.region))
+                .credentialsProvider(creds)
+                .build()
+        sqsClient =
+            SqsClient.builder()
+                .endpointOverride(localstack.getEndpointOverride(SQS))
+                .region(Region.of(localstack.region))
+                .credentialsProvider(creds)
+                .build()
+        sqsAsyncClient =
+            SqsAsyncClient.builder()
+                .endpointOverride(localstack.getEndpointOverride(SQS))
+                .region(Region.of(localstack.region))
+                .credentialsProvider(creds)
+                .build()
 
         topicArn = snsClient.createTopic { it.name(TOPIC) }.topicArn()
         queueUrl = sqsClient.createQueue { it.queueName(QUEUE) }.queueUrl()
         dlqUrl = sqsClient.createQueue { it.queueName(DLQ) }.queueUrl()
-        dlqArn = sqsClient.getQueueAttributes {
-            it.queueUrl(dlqUrl).attributeNamesWithStrings("QueueArn")
-        }.attributesAsStrings()["QueueArn"]!!
+        dlqArn =
+            sqsClient.getQueueAttributes {
+                it.queueUrl(dlqUrl).attributeNamesWithStrings("QueueArn")
+            }.attributesAsStrings()["QueueArn"]!!
 
-        val queueArn = sqsClient.getQueueAttributes {
-            it.queueUrl(queueUrl).attributeNamesWithStrings("QueueArn")
-        }.attributesAsStrings()["QueueArn"]!!
+        val queueArn =
+            sqsClient.getQueueAttributes {
+                it.queueUrl(queueUrl).attributeNamesWithStrings("QueueArn")
+            }.attributesAsStrings()["QueueArn"]!!
         snsClient.subscribe(
             SubscribeRequest.builder()
                 .topicArn(topicArn)
@@ -154,10 +163,11 @@ class AtLeastOnceDeliveryIT {
         // Open a query connection for emitting messages + dropping the slot
         // between tests. The slot itself is created by PostgresConnector when
         // the producer starts.
-        val driverProps = java.util.Properties().apply {
-            setProperty("user", PG_USER)
-            setProperty("password", PG_PASSWORD)
-        }
+        val driverProps =
+            java.util.Properties().apply {
+                setProperty("user", PG_USER)
+                setProperty("password", PG_PASSWORD)
+            }
         queryConnection = DefaultConnectionProvider().getConnection(postgres.jdbcUrl, driverProps)
         runCatching {
             queryConnection.createStatement().use { s ->
@@ -199,13 +209,15 @@ class AtLeastOnceDeliveryIT {
      * onward — exercises the retry path on a transient broker error
      * without faking the SDK.
      */
-    private fun buildFailingSnsProducer(
-        publishAttempts: java.util.concurrent.atomic.AtomicInteger,
-    ): SNSProducer {
+    private fun buildFailingSnsProducer(publishAttempts: java.util.concurrent.atomic.AtomicInteger): SNSProducer {
         val realSnsTemplate = SnsTemplate(snsClient)
         return object : SNSProducer {
             private val delegate = SNSTransactionalProducer(realSnsTemplate)
-            override fun <T : Any> send(topicName: String, message: SNSMessage<T>) {
+
+            override fun <T : Any> send(
+                topicName: String,
+                message: SNSMessage<T>,
+            ) {
                 val count = publishAttempts.incrementAndGet()
                 if (count == 1) {
                     error("simulated transient broker failure on attempt #1")
@@ -218,27 +230,30 @@ class AtLeastOnceDeliveryIT {
     private fun buildProducer(snsProducer: SNSProducer): SlotReaderMessageProducer {
         val sqsTemplate = SqsTemplate.builder().sqsAsyncClient(sqsAsyncClient).build()
         return SlotReaderMessageProducer(
-            postgresConfiguration = PostgresConfiguration(
-                host = postgres.host,
-                port = postgres.getMappedPort(5432).toString(),
-                database = postgres.databaseName,
-                username = PG_USER,
-                password = PG_PASSWORD,
-            ),
+            postgresConfiguration =
+                PostgresConfiguration(
+                    host = postgres.host,
+                    port = postgres.getMappedPort(5432).toString(),
+                    database = postgres.databaseName,
+                    username = PG_USER,
+                    password = PG_PASSWORD,
+                ),
             replicationConfiguration = ReplicationConfiguration(slotName = SLOT_NAME),
             snsProducer = snsProducer,
             sqsProducer = SQSTransactionalProducer(sqsTemplate),
             connectionProvider = DefaultConnectionProvider(),
-            reconnectBackOff = ExponentialBackOff(
-                initial = Duration.ofMillis(50),
-                max = Duration.ofMillis(200),
-            ),
+            reconnectBackOff =
+                ExponentialBackOff(
+                    initial = Duration.ofMillis(50),
+                    max = Duration.ofMillis(200),
+                ),
             maxReconnectAttempts = 3,
             maxPublishAttempts = 3,
-            publishBackOff = ExponentialBackOff(
-                initial = Duration.ofMillis(50),
-                max = Duration.ofMillis(200),
-            ),
+            publishBackOff =
+                ExponentialBackOff(
+                    initial = Duration.ofMillis(50),
+                    max = Duration.ofMillis(200),
+                ),
         )
     }
 
@@ -252,14 +267,22 @@ class AtLeastOnceDeliveryIT {
         }
     }
 
-    private fun awaitMessagesReceived(received: MutableSet<String>, expected: Int) {
+    private fun awaitMessagesReceived(
+        received: MutableSet<String>,
+        expected: Int,
+    ) {
         // Consume the SQS queue. Even though attempt #1 of message #1 failed,
         // the in-place retry must redeliver message #1 successfully, AND
         // messages #2 and #3 must still arrive — no skip due to LSN drift.
         Awaitility.await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofMillis(250)).until {
-            val response = sqsClient.receiveMessage(
-                ReceiveMessageRequest.builder().queueUrl(queueUrl).maxNumberOfMessages(10).waitTimeSeconds(1).build(),
-            )
+            val response =
+                sqsClient.receiveMessage(
+                    ReceiveMessageRequest.builder()
+                        .queueUrl(queueUrl)
+                        .maxNumberOfMessages(10)
+                        .waitTimeSeconds(1)
+                        .build(),
+                )
             response.messages().forEach { received.add(it.body()) }
             received.size >= expected
         }
@@ -284,14 +307,15 @@ class AtLeastOnceDeliveryIT {
     }
 
     private fun emitMessage(eventId: String): String {
-        val body = SNSMessageBody(
-            eventUUID = UUID.randomUUID(),
-            eventType = "TestEvent",
-            domainId = eventId,
-            domain = "tests",
-            eventTimestamp = java.time.LocalDateTime.now(),
-            payload = mapOf("id" to eventId),
-        )
+        val body =
+            SNSMessageBody(
+                eventUUID = UUID.randomUUID(),
+                eventType = "TestEvent",
+                domainId = eventId,
+                domain = "tests",
+                eventTimestamp = java.time.LocalDateTime.now(),
+                payload = mapOf("id" to eventId),
+            )
         val envelope = SNSMessage(headers = mapOf("eventType" to "TestEvent"), body = body)
         val content = defaultMapper.writeValueAsString(envelope)
         queryConnection.createStatement().use { s ->

@@ -44,11 +44,11 @@ class PgLogicalReplicationCdcSource(
     private val connectionProvider: ConnectionProvider,
     objectMapper: ObjectMapper,
 ) : CdcSource {
-
-    private val parser = ByteToClassParserStrategy(
-        ByteToClassParserImplV1(objectMapper),
-        ByteToClassParserImplV2(objectMapper),
-    ).selectParser(replicationConfiguration)
+    private val parser =
+        ByteToClassParserStrategy(
+            ByteToClassParserImplV1(objectMapper),
+            ByteToClassParserImplV2(objectMapper),
+        ).selectParser(replicationConfiguration)
 
     private val opened = AtomicBoolean(false)
     private var connector: PostgresConnector? = null
@@ -97,16 +97,21 @@ class PgLogicalReplicationCdcSource(
         logger.info("PgLogicalReplicationCdcSource closed for slot '{}'", replicationConfiguration.slotName)
     }
 
-    private fun checkOpen(): PostgresConnector = connector
-        ?: error("PgLogicalReplicationCdcSource must be opened before use")
+    private fun checkOpen(): PostgresConnector =
+        connector
+            ?: error("PgLogicalReplicationCdcSource must be opened before use")
 
-    private fun resolveLsn(embedded: String?, fallback: LogSequenceNumber): LogSequenceNumber {
+    private fun resolveLsn(
+        embedded: String?,
+        fallback: LogSequenceNumber,
+    ): LogSequenceNumber {
         if (embedded.isNullOrBlank()) return fallback
         val parsed = LogSequenceNumber.valueOf(embedded)
         return if (parsed == LogSequenceNumber.INVALID_LSN) {
             logger.warn(
                 "Embedded wal2json lsn '{}' parsed as INVALID_LSN; falling back to stream LSN {}",
-                embedded, fallback,
+                embedded,
+                fallback,
             )
             fallback
         } else {

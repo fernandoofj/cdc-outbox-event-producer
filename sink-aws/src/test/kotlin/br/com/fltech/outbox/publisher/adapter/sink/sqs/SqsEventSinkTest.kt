@@ -14,7 +14,6 @@ import java.time.Instant
 import java.util.function.Consumer
 
 class SqsEventSinkTest {
-
     @Test
     fun `publish builds SqsSendOptions with queue, payload, and merged attributes`() {
         val sqsTemplate = mockk<SqsTemplate>()
@@ -23,14 +22,15 @@ class SqsEventSinkTest {
         val sink = SqsEventSink(sqsTemplate)
 
         val routing = Routing("sqs", "orders-queue", mapOf("tenant" to "acme"))
-        val event = OutboxEvent(
-            id = "e1",
-            routing = routing,
-            payload = """{"order":1}""".toByteArray(Charsets.UTF_8),
-            occurredAt = Instant.EPOCH,
-            sourceCheckpoint = "0/1",
-            headers = mapOf("trace-id" to "abc"),
-        )
+        val event =
+            OutboxEvent(
+                id = "e1",
+                routing = routing,
+                payload = """{"order":1}""".toByteArray(Charsets.UTF_8),
+                occurredAt = Instant.EPOCH,
+                sourceCheckpoint = "0/1",
+                headers = mapOf("trace-id" to "abc"),
+            )
 
         sink.publish(routing, event)
 

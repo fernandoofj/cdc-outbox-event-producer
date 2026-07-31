@@ -33,7 +33,6 @@ data class TableMapping(
     val eventType: EventType = EventType(),
     val routing: Routing,
 ) {
-
     init {
         require(table.isNotBlank()) { "table cannot be blank" }
     }

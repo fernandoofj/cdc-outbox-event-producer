@@ -17,7 +17,10 @@ import br.com.fltech.outbox.publisher.core.domain.RowChange
  */
 interface RowChangeSource : AutoCloseable {
     fun open()
+
     fun poll(): RowChange?
+
     fun ack(rowChange: RowChange)
+
     override fun close()
 }

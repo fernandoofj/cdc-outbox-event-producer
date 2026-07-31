@@ -14,7 +14,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class CdcOutboxLifecycleTest {
-
     @Test
     fun `start launches the streaming loop on a daemon thread and stop signals it`() {
         val producer = mockk<SlotReaderMessageProducer>()

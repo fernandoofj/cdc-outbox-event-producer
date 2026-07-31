@@ -2,24 +2,24 @@ package br.com.fltech.outbox.publisher.replication.connector
 
 import br.com.fltech.outbox.publisher.replication.config.PostgresConfiguration
 import br.com.fltech.outbox.publisher.replication.config.ReplicationConfiguration
-import java.nio.ByteBuffer
-import java.sql.Connection
-import java.sql.SQLException
-import java.util.Properties
-import java.util.concurrent.TimeUnit
-import kotlin.math.pow
 import org.postgresql.PGConnection
 import org.postgresql.replication.LogSequenceNumber
 import org.postgresql.replication.PGReplicationConnection
 import org.postgresql.replication.PGReplicationStream
 import org.postgresql.util.PSQLException
 import org.slf4j.LoggerFactory
+import java.nio.ByteBuffer
+import java.sql.Connection
+import java.sql.SQLException
+import java.util.Properties
+import java.util.concurrent.TimeUnit
+import kotlin.math.pow
 
 @Suppress("TooManyFunctions")
 open class PostgresConnector(
     private val postgresConfiguration: PostgresConfiguration,
     private val replicationConfiguration: ReplicationConfiguration,
-    private val connectionProvider: ConnectionProvider
+    private val connectionProvider: ConnectionProvider,
 ) : AutoCloseable {
     private val queryConnection: Connection?
     private val streamingConnection: Connection?
@@ -102,13 +102,16 @@ open class PostgresConnector(
         }
     }
 
-    private fun createConnection(url: String, properties: Properties): Connection {
+    private fun createConnection(
+        url: String,
+        properties: Properties,
+    ): Connection {
         return connectionProvider.getConnection(url, properties)
     }
 
     private fun getPgReplicationStream(
         replicationConfiguration: ReplicationConfiguration,
-        pgReplicationConnection: PGReplicationConnection
+        pgReplicationConnection: PGReplicationConnection,
     ): PGReplicationStream? {
         val maxRetries = replicationConfiguration.existingProcessRetryLimit
         var listening = false
@@ -133,11 +136,15 @@ open class PostgresConnector(
 
     private fun Int.canContinue(maxRetries: Int?) = maxRetries == null || this <= maxRetries
 
-    private fun handleCurrentlyRunningProcessOnSlotException(tries: Int, maxRetries: Int?): Int {
+    private fun handleCurrentlyRunningProcessOnSlotException(
+        tries: Int,
+        maxRetries: Int?,
+    ): Int {
         logger.info("Replication slot currently has another process consuming from it")
 
-        val delayTime = replicationConfiguration.existingProcessRetrySleepSeconds
-            ?: calculateExponentialDelay(tries - 1)
+        val delayTime =
+            replicationConfiguration.existingProcessRetrySleepSeconds
+                ?: calculateExponentialDelay(tries - 1)
 
         logger.info("Sleeping for $delayTime seconds before retry $tries/${maxRetries ?: "∞"}")
 
@@ -153,19 +160,19 @@ open class PostgresConnector(
     private fun calculateExponentialDelay(tries: Int) =
         minOf(
             (EXPONENTIAL_BASE_DELAY_SECONDS * EXPONENTIAL_BINARY_BASE.pow(tries)).toLong(),
-            EXPONENTIAL_MAX_DELAY_SECONDS
+            EXPONENTIAL_MAX_DELAY_SECONDS,
         )
 
     private fun getPgReplicationStreamHelper(
         replicationConfiguration: ReplicationConfiguration,
-        pgReplicationConnection: PGReplicationConnection
+        pgReplicationConnection: PGReplicationConnection,
     ): PGReplicationStream {
         return pgReplicationConnection
             .replicationStream()
             .logical()
             .withStatusInterval(
                 replicationConfiguration.statusIntervalValue,
-                replicationConfiguration.statusIntervalTimeUnit
+                replicationConfiguration.statusIntervalTimeUnit,
             )
             .withSlotOptions(replicationConfiguration.getSlotOptions())
             .withSlotName(replicationConfiguration.slotName).start()

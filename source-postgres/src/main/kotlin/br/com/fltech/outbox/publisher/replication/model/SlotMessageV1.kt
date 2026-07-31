@@ -23,11 +23,13 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * falls back to the stream's high-water mark.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-class SlotMessageV1 @JsonCreator constructor(
-    @param:JsonProperty(value = "xid", required = true)
-    val xid: Long,
-    @param:JsonProperty(value = "change", required = true)
-    val changes: List<V1RowRecord>,
-    @param:JsonProperty(value = "nextlsn", required = false)
-    val nextLsn: String? = null,
-)
+class SlotMessageV1
+    @JsonCreator
+    constructor(
+        @param:JsonProperty(value = "xid", required = true)
+        val xid: Long,
+        @param:JsonProperty(value = "change", required = true)
+        val changes: List<V1RowRecord>,
+        @param:JsonProperty(value = "nextlsn", required = false)
+        val nextLsn: String? = null,
+    )

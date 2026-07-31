@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test
 import java.time.Instant
 
 class SchemeRouterEventSinkTest {
-
     @Test
     fun `publish delegates to the registry's publish`() {
         val registry = mockk<EventSinkRegistry>()

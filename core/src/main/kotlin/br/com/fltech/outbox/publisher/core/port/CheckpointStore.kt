@@ -29,7 +29,6 @@ package br.com.fltech.outbox.publisher.core.port
  * convenience for that case.
  */
 interface CheckpointStore : AutoCloseable {
-
     /**
      * Return the last value persisted under [key], or `null` if no
      * value was stored — or if the persisted value was found to be
@@ -49,7 +48,10 @@ interface CheckpointStore : AutoCloseable {
      * `(key, value)` pair twice is a no-op from a correctness
      * standpoint.
      */
-    fun save(key: String, value: String)
+    fun save(
+        key: String,
+        value: String,
+    )
 
     override fun close() = Unit
 }

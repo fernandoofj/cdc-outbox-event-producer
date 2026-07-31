@@ -2,7 +2,6 @@ package br.com.fltech.outbox.publisher.infra.spring
 
 import br.com.fltech.outbox.publisher.core.application.CdcProcessor
 import br.com.fltech.outbox.publisher.workflow.SlotReaderMessageProducer
-import org.springframework.boot.health.contributor.HealthIndicator
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigureAfter
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
@@ -10,6 +9,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.boot.context.properties.EnableConfigurationProperties
+import org.springframework.boot.health.contributor.HealthIndicator
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 
@@ -47,7 +47,6 @@ import org.springframework.context.annotation.Configuration
 @ConditionalOnProperty(prefix = "cdc.outbox", name = ["enabled"], havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(CdcOutboxProperties::class)
 open class CdcOutboxHealthAutoConfiguration {
-
     /** Legacy chain (`processor.kind=legacy`). */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnBean(value = [SlotReaderMessageProducer::class, CdcOutboxLifecycle::class])
@@ -58,8 +57,7 @@ open class CdcOutboxHealthAutoConfiguration {
             producer: SlotReaderMessageProducer,
             lifecycle: CdcOutboxLifecycle,
             properties: CdcOutboxProperties,
-        ): CdcOutboxHealthIndicator =
-            CdcOutboxHealthIndicator(producer, lifecycle, properties.health.maxIdle)
+        ): CdcOutboxHealthIndicator = CdcOutboxHealthIndicator(producer, lifecycle, properties.health.maxIdle)
     }
 
     /** Hexagonal chain (`processor.kind=hexagonal`, the Wave 5 default). */
@@ -72,7 +70,6 @@ open class CdcOutboxHealthAutoConfiguration {
             processor: CdcProcessor,
             lifecycle: CdcProcessorLifecycle,
             properties: CdcOutboxProperties,
-        ): CdcProcessorHealthIndicator =
-            CdcProcessorHealthIndicator(processor, lifecycle, properties.health.maxIdle)
+        ): CdcProcessorHealthIndicator = CdcProcessorHealthIndicator(processor, lifecycle, properties.health.maxIdle)
     }
 }

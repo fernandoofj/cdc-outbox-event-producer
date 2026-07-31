@@ -23,7 +23,6 @@ import kotlin.test.assertFailsWith
  * this endpoint's only auth gate with zero test coverage.
  */
 class ReplayActuatorEndpointTest {
-
     private val endpoint = ReplayActuatorEndpoint(emptyReplayService())
 
     @AfterTest
@@ -48,11 +47,12 @@ class ReplayActuatorEndpointTest {
 
     @Test
     fun `real AnonymousAuthenticationToken is rejected even when marked authenticated`() {
-        SecurityContextHolder.getContext().authentication = AnonymousAuthenticationToken(
-            "key",
-            "anonymousUser",
-            listOf(SimpleGrantedAuthority("ROLE_ANONYMOUS")),
-        )
+        SecurityContextHolder.getContext().authentication =
+            AnonymousAuthenticationToken(
+                "key",
+                "anonymousUser",
+                listOf(SimpleGrantedAuthority("ROLE_ANONYMOUS")),
+            )
 
         assertFailsWith<AccessDeniedException> { endpoint.snapshot() }
     }
@@ -63,22 +63,24 @@ class ReplayActuatorEndpointTest {
         // configures AnonymousAuthenticationFilter with a custom authority
         // (not ROLE_ANONYMOUS) must still be caught by the type check, not
         // just the authority check the other anonymous test also satisfies.
-        SecurityContextHolder.getContext().authentication = AnonymousAuthenticationToken(
-            "key",
-            "anonymousUser",
-            listOf(SimpleGrantedAuthority("ROLE_GUEST")),
-        )
+        SecurityContextHolder.getContext().authentication =
+            AnonymousAuthenticationToken(
+                "key",
+                "anonymousUser",
+                listOf(SimpleGrantedAuthority("ROLE_GUEST")),
+            )
 
         assertFailsWith<AccessDeniedException> { endpoint.snapshot() }
     }
 
     @Test
     fun `authenticated non-anonymous principal is let through`() {
-        SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken.authenticated(
-            "operator",
-            null,
-            listOf(SimpleGrantedAuthority("ROLE_OPERATOR")),
-        )
+        SecurityContextHolder.getContext().authentication =
+            UsernamePasswordAuthenticationToken.authenticated(
+                "operator",
+                null,
+                listOf(SimpleGrantedAuthority("ROLE_OPERATOR")),
+            )
 
         val result = endpoint.snapshot() as Map<*, *>
 
@@ -88,14 +90,21 @@ class ReplayActuatorEndpointTest {
     private fun emptyReplayService(): ReplayService {
         val meterRegistry = SimpleMeterRegistry()
         val metrics = CdcOutboxMetrics(meterRegistry)
-        val registry = object : EventSinkRegistry {
-            override fun publish(routing: br.com.fltech.outbox.publisher.core.domain.Routing, event: OutboxEvent) = Unit
-            override fun knownSchemes(): Set<String> = emptySet()
-            override fun resolve(scheme: String): EventSink? = null
-        }
-        val rules = object : MappingRules {
-            override fun map(rowChange: RowChange): OutboxEvent? = null
-        }
+        val registry =
+            object : EventSinkRegistry {
+                override fun publish(
+                    routing: br.com.fltech.outbox.publisher.core.domain.Routing,
+                    event: OutboxEvent,
+                ) = Unit
+
+                override fun knownSchemes(): Set<String> = emptySet()
+
+                override fun resolve(scheme: String): EventSink? = null
+            }
+        val rules =
+            object : MappingRules {
+                override fun map(rowChange: RowChange): OutboxEvent? = null
+            }
         return ReplayService(replayers = emptyMap(), mappingRules = rules, sinkRegistry = registry, metrics = metrics)
     }
 }

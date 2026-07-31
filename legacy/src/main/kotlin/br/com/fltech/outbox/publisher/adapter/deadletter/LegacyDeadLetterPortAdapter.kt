@@ -26,17 +26,21 @@ import org.postgresql.replication.LogSequenceNumber
 class LegacyDeadLetterPortAdapter(
     private val legacy: DeadLetterSink,
 ) : DeadLetterPort {
-
-    override fun send(event: OutboxEvent, cause: Throwable) {
-        val lsn = runCatching { LogSequenceNumber.valueOf(event.sourceCheckpoint) }
-            .getOrDefault(LogSequenceNumber.INVALID_LSN)
-        val messageChange = MessageChange(
-            kindInput = "message",
-            transactional = true,
-            prefix = event.routing.asUri(),
-            content = event.payloadAsString,
-            lsn = event.sourceCheckpoint,
-        )
+    override fun send(
+        event: OutboxEvent,
+        cause: Throwable,
+    ) {
+        val lsn =
+            runCatching { LogSequenceNumber.valueOf(event.sourceCheckpoint) }
+                .getOrDefault(LogSequenceNumber.INVALID_LSN)
+        val messageChange =
+            MessageChange(
+                kindInput = "message",
+                transactional = true,
+                prefix = event.routing.asUri(),
+                content = event.payloadAsString,
+                lsn = event.sourceCheckpoint,
+            )
         legacy.send(lsn = lsn, messageChange = messageChange, lastException = cause)
     }
 }

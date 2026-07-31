@@ -27,7 +27,6 @@ class DlqReplayService(
     private val sinkRegistry: EventSinkRegistry,
     private val metrics: CdcOutboxMetrics,
 ) {
-
     /** Lists up to [max] messages without removing them from the DLQ. */
     fun peek(max: Int): List<PeekedMessage> {
         val messages = reader.peek(max.coerceIn(1, PEEK_CAP))
@@ -49,21 +48,30 @@ class DlqReplayService(
      * replay to a different scheme/target when the original sink
      * has been migrated.
      */
-    fun replay(handle: String, envelope: DlqEnvelope, override: RoutingOverride? = null): ReplayOutcome {
+    fun replay(
+        handle: String,
+        envelope: DlqEnvelope,
+        override: RoutingOverride? = null,
+    ): ReplayOutcome {
         val routing = resolveRouting(envelope, override)
         val event = buildEvent(envelope, routing)
         return try {
             sinkRegistry.publish(routing, event)
             val deleteOutcome = tryDelete(handle, routing)
-            val outcome = if (deleteOutcome) {
-                ReplayOutcome.Success(routing.scheme)
-            } else {
-                ReplayOutcome.SuccessButDeleteFailed(routing.scheme)
-            }
+            val outcome =
+                if (deleteOutcome) {
+                    ReplayOutcome.Success(routing.scheme)
+                } else {
+                    ReplayOutcome.SuccessButDeleteFailed(routing.scheme)
+                }
             metrics.recordDlqReplay(outcome.metricLabel, envelope.failureType, routing.scheme)
             logger.info(
                 "DlqReplayService: replay action=replay handle={} lsn={} source_scheme={} target_scheme={} outcome={}",
-                handle, envelope.lsn, parseOriginalScheme(envelope), routing.scheme, outcome.metricLabel,
+                handle,
+                envelope.lsn,
+                parseOriginalScheme(envelope),
+                routing.scheme,
+                outcome.metricLabel,
             )
             outcome
         } catch (e: Exception) {
@@ -73,7 +81,11 @@ class DlqReplayService(
             logger.error(
                 "DlqReplayService: replay action=replay handle={} lsn={} target_scheme={} " +
                     "outcome=publish_failed cause={}",
-                handle, envelope.lsn, routing.scheme, e.javaClass.simpleName, e,
+                handle,
+                envelope.lsn,
+                routing.scheme,
+                e.javaClass.simpleName,
+                e,
             )
             ReplayOutcome.PublishFailed(routing.scheme, e.javaClass.simpleName, e.message)
         }
@@ -85,7 +97,10 @@ class DlqReplayService(
      * deleted — useful to preview what a replay would do without
      * touching downstream sinks.
      */
-    fun replayBulk(max: Int, dryRun: Boolean): BulkReplayResult {
+    fun replayBulk(
+        max: Int,
+        dryRun: Boolean,
+    ): BulkReplayResult {
         val messages = reader.peek(max.coerceIn(1, PEEK_CAP))
         if (dryRun) {
             logger.info(
@@ -111,7 +126,9 @@ class DlqReplayService(
         }
         logger.info(
             "DlqReplayService: bulk replay count={} success={} failed={} dry_run=false",
-            messages.size, succeeded, failed,
+            messages.size,
+            succeeded,
+            failed,
         )
         return BulkReplayResult(
             requested = max,
@@ -134,13 +151,18 @@ class DlqReplayService(
             metrics.recordDlqReplay("abandon_failed", "manual", "none")
             logger.error(
                 "DlqReplayService: replay action=abandon handle={} outcome=failed cause={}",
-                handle, e.javaClass.simpleName, e,
+                handle,
+                e.javaClass.simpleName,
+                e,
             )
             AbandonOutcome.Failed(e.javaClass.simpleName, e.message)
         }
     }
 
-    private fun resolveRouting(envelope: DlqEnvelope, override: RoutingOverride?): Routing {
+    private fun resolveRouting(
+        envelope: DlqEnvelope,
+        override: RoutingOverride?,
+    ): Routing {
         val original = Routing.parsePrefix(envelope.originalPrefix)
         return if (override == null) {
             original
@@ -149,19 +171,25 @@ class DlqReplayService(
         }
     }
 
-    private fun buildEvent(envelope: DlqEnvelope, routing: Routing): OutboxEvent {
-        val occurredAt = try {
-            Instant.parse(envelope.deadLetteredAt)
-        } catch (e: DateTimeParseException) {
-            // Fall back to now() rather than rejecting the replay —
-            // the dead-lettered-at field is diagnostic, not part of
-            // the published payload's identity.
-            logger.warn(
-                "DlqReplayService: deadLetteredAt='{}' did not parse; using current time. Cause={}",
-                envelope.deadLetteredAt, e.javaClass.simpleName, e,
-            )
-            Instant.now()
-        }
+    private fun buildEvent(
+        envelope: DlqEnvelope,
+        routing: Routing,
+    ): OutboxEvent {
+        val occurredAt =
+            try {
+                Instant.parse(envelope.deadLetteredAt)
+            } catch (e: DateTimeParseException) {
+                // Fall back to now() rather than rejecting the replay —
+                // the dead-lettered-at field is diagnostic, not part of
+                // the published payload's identity.
+                logger.warn(
+                    "DlqReplayService: deadLetteredAt='{}' did not parse; using current time. Cause={}",
+                    envelope.deadLetteredAt,
+                    e.javaClass.simpleName,
+                    e,
+                )
+                Instant.now()
+            }
         return OutboxEvent(
             id = envelope.lsn,
             routing = routing,
@@ -171,17 +199,24 @@ class DlqReplayService(
         )
     }
 
-    private fun tryDelete(handle: String, routing: Routing): Boolean = try {
-        reader.delete(DlqReader.Handle(handle))
-        true
-    } catch (e: Exception) {
-        logger.warn(
-            "DlqReplayService: publish succeeded but delete failed handle={} target_scheme={} cause={}. " +
-                "Message will become visible again; manual cleanup required to avoid double-publish.",
-            handle, routing.scheme, e.javaClass.simpleName, e,
-        )
-        false
-    }
+    private fun tryDelete(
+        handle: String,
+        routing: Routing,
+    ): Boolean =
+        try {
+            reader.delete(DlqReader.Handle(handle))
+            true
+        } catch (e: Exception) {
+            logger.warn(
+                "DlqReplayService: publish succeeded but delete failed handle={} target_scheme={} cause={}. " +
+                    "Message will become visible again; manual cleanup required to avoid double-publish.",
+                handle,
+                routing.scheme,
+                e.javaClass.simpleName,
+                e,
+            )
+            false
+        }
 
     private fun parseOriginalScheme(envelope: DlqEnvelope): String =
         try {
@@ -197,13 +232,16 @@ class DlqReplayService(
 
     sealed class ReplayOutcome(val metricLabel: String) {
         data class Success(val scheme: String) : ReplayOutcome("success")
+
         data class SuccessButDeleteFailed(val scheme: String) : ReplayOutcome("success_delete_failed")
+
         data class PublishFailed(val scheme: String, val cause: String, val message: String?) :
             ReplayOutcome("publish_failed")
     }
 
     sealed class AbandonOutcome {
         data object Success : AbandonOutcome()
+
         data class Failed(val cause: String, val message: String?) : AbandonOutcome()
     }
 

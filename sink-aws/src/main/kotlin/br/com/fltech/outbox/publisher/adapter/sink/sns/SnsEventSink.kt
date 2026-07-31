@@ -17,8 +17,10 @@ import io.awspring.cloud.sns.core.SnsTemplate
 class SnsEventSink(
     private val snsTemplate: SnsTemplate,
 ) : EventSink {
-
-    override fun publish(routing: Routing, event: OutboxEvent) {
+    override fun publish(
+        routing: Routing,
+        event: OutboxEvent,
+    ) {
         val attributes: Map<String, Any> = event.headers + routing.attributes
         snsTemplate.convertAndSend(routing.target, event.payloadAsString, attributes)
     }

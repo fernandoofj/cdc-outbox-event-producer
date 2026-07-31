@@ -75,7 +75,6 @@ import javax.sql.DataSource
     matchIfMissing = true,
 )
 open class CdcOutboxHexagonalAutoConfiguration {
-
     /**
      * Default [CheckpointStore] backed by [FileCheckpointStore], wired
      * only when `cdc.outbox.checkpoint.enabled=true`. Adapters that
@@ -101,8 +100,7 @@ open class CdcOutboxHexagonalAutoConfiguration {
     open fun cdcOutboxCheckpointStore(
         properties: CdcOutboxProperties,
         metrics: CdcOutboxMetrics,
-    ): CheckpointStore =
-        FileCheckpointStore(Paths.get(properties.checkpoint.directory), metrics)
+    ): CheckpointStore = FileCheckpointStore(Paths.get(properties.checkpoint.directory), metrics)
 
     /**
      * Picks the right [CdcSource] given the consumer's wiring:
@@ -153,8 +151,7 @@ open class CdcOutboxHexagonalAutoConfiguration {
     @Bean
     @ConditionalOnBean(DeadLetterSink::class)
     @ConditionalOnMissingBean(DeadLetterPort::class)
-    open fun cdcOutboxDeadLetterPort(legacy: DeadLetterSink): DeadLetterPort =
-        LegacyDeadLetterPortAdapter(legacy)
+    open fun cdcOutboxDeadLetterPort(legacy: DeadLetterSink): DeadLetterPort = LegacyDeadLetterPortAdapter(legacy)
 
     // LongParameterList: same rationale as the legacy factory — Spring
     // wires collaborators by type, not by aggregate; a wrapper object
@@ -170,15 +167,16 @@ open class CdcOutboxHexagonalAutoConfiguration {
         @Qualifier("cdcOutboxPublishBackOff") publishBackOff: BackOff,
         deadLetterPort: DeadLetterPort?,
         properties: CdcOutboxProperties,
-    ): CdcProcessor = CdcProcessor(
-        source = cdcOutboxSource,
-        sinkRegistry = sinkRegistry,
-        metrics = metrics,
-        deadLetterPort = deadLetterPort,
-        maxPublishAttempts = properties.retry.maxPublishAttempts,
-        publishBackOff = publishBackOff,
-        slotLabel = properties.replication.slotName,
-    )
+    ): CdcProcessor =
+        CdcProcessor(
+            source = cdcOutboxSource,
+            sinkRegistry = sinkRegistry,
+            metrics = metrics,
+            deadLetterPort = deadLetterPort,
+            maxPublishAttempts = properties.retry.maxPublishAttempts,
+            publishBackOff = publishBackOff,
+            slotLabel = properties.replication.slotName,
+        )
 
     @Bean("cdcOutboxProcessorLifecycle")
     @ConditionalOnBean(CdcProcessor::class)
@@ -210,11 +208,12 @@ open class CdcOutboxHexagonalAutoConfiguration {
         postgresConfiguration: PostgresConfiguration,
         connectionProvider: ConnectionProvider,
         properties: CdcOutboxProperties,
-    ): LagProbe = PostgresLagProbe(
-        postgresConfiguration = postgresConfiguration,
-        connectionProvider = connectionProvider,
-        slotName = properties.replication.slotName,
-    )
+    ): LagProbe =
+        PostgresLagProbe(
+            postgresConfiguration = postgresConfiguration,
+            connectionProvider = connectionProvider,
+            slotName = properties.replication.slotName,
+        )
 
     /**
      * MySQL [LagProbe] — wired only when the consumer registered a
@@ -238,14 +237,15 @@ open class CdcOutboxHexagonalAutoConfiguration {
         dataSource: DataSource,
         checkpointStore: CheckpointStore,
         mySqlBinlogRowChangeSource: MySqlBinlogRowChangeSource,
-    ): LagProbe = MysqlLagProbe(
-        dataSource = dataSource,
-        checkpointStore = checkpointStore,
-        // The binlog source's serverId is the source of truth for
-        // the checkpoint key; reading it back here keeps the two
-        // sides aligned without a second property knob.
-        serverId = mySqlBinlogRowChangeSource.serverId,
-    )
+    ): LagProbe =
+        MysqlLagProbe(
+            dataSource = dataSource,
+            checkpointStore = checkpointStore,
+            // The binlog source's serverId is the source of truth for
+            // the checkpoint key; reading it back here keeps the two
+            // sides aligned without a second property knob.
+            serverId = mySqlBinlogRowChangeSource.serverId,
+        )
 
     /**
      * Background sampler that feeds the `cdc.outbox.source.lag_bytes`
@@ -268,9 +268,10 @@ open class CdcOutboxHexagonalAutoConfiguration {
         lagProbe: LagProbe,
         metrics: CdcOutboxMetrics,
         properties: CdcOutboxProperties,
-    ): LagProbeScheduler = LagProbeScheduler(
-        probe = lagProbe,
-        metrics = metrics,
-        interval = properties.lag.interval,
-    )
+    ): LagProbeScheduler =
+        LagProbeScheduler(
+            probe = lagProbe,
+            metrics = metrics,
+            interval = properties.lag.interval,
+        )
 }

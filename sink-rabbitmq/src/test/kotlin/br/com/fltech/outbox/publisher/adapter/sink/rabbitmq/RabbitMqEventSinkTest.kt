@@ -15,7 +15,6 @@ import java.time.Instant
 import kotlin.test.assertEquals
 
 class RabbitMqEventSinkTest {
-
     @Test
     fun `target with slash splits into exchange and routing key`() {
         val template = mockk<RabbitTemplate>()
@@ -24,14 +23,15 @@ class RabbitMqEventSinkTest {
         val sink = RabbitMqEventSink(template)
 
         val routing = Routing("amqp", "orders-exchange/orders.created", mapOf("env" to "prod"))
-        val event = OutboxEvent(
-            id = "domain-1",
-            routing = routing,
-            payload = "hello".toByteArray(),
-            occurredAt = Instant.parse("2026-05-14T00:00:00Z"),
-            sourceCheckpoint = "ck",
-            headers = mapOf("trace-id" to "abc"),
-        )
+        val event =
+            OutboxEvent(
+                id = "domain-1",
+                routing = routing,
+                payload = "hello".toByteArray(),
+                occurredAt = Instant.parse("2026-05-14T00:00:00Z"),
+                sourceCheckpoint = "ck",
+                headers = mapOf("trace-id" to "abc"),
+            )
 
         sink.publish(routing, event)
 

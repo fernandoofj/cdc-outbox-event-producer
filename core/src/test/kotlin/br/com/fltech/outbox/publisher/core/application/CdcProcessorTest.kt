@@ -42,14 +42,18 @@ import kotlin.test.assertFalse
  *    and retries the poll.
  */
 class CdcProcessorTest {
-
-    private val zeroBackOff = mockk<BackOff>().also {
-        every { it.nextDelay(any()) } returns Duration.ZERO
-    }
+    private val zeroBackOff =
+        mockk<BackOff>().also {
+            every { it.nextDelay(any()) } returns Duration.ZERO
+        }
     private val registry = SimpleMeterRegistry()
     private val metrics = CdcOutboxMetrics(registry)
 
-    private fun event(id: String, scheme: String = "sns", target: String = "topic-a"): OutboxEvent =
+    private fun event(
+        id: String,
+        scheme: String = "sns",
+        target: String = "topic-a",
+    ): OutboxEvent =
         OutboxEvent(
             id = id,
             routing = Routing(scheme, target),
@@ -74,7 +78,11 @@ class CdcProcessorTest {
         slotLabel = "test",
     )
 
-    private fun runUntilProcessed(processor: CdcProcessor, source: CdcSource, expectedEvents: Int) {
+    private fun runUntilProcessed(
+        processor: CdcProcessor,
+        source: CdcSource,
+        expectedEvents: Int,
+    ) {
         val t = thread(start = true, isDaemon = true) { processor.start() }
         // Spin until source.poll has been called enough times.
         val deadline = System.currentTimeMillis() + 2_000L
@@ -104,11 +112,16 @@ class CdcProcessorTest {
 
         verify(exactly = 1) { sink.publish(ev.routing, ev) }
         verify(exactly = 1) { source.ack(ev) }
-        assertEquals(1.0, registry.counter(
-            CdcOutboxMetrics.MESSAGES_PUBLISHED,
-            CdcOutboxMetrics.TAG_SINK, "sns",
-            CdcOutboxMetrics.TAG_TOPIC, "topic-a",
-        ).count())
+        assertEquals(
+            1.0,
+            registry.counter(
+                CdcOutboxMetrics.MESSAGES_PUBLISHED,
+                CdcOutboxMetrics.TAG_SINK,
+                "sns",
+                CdcOutboxMetrics.TAG_TOPIC,
+                "topic-a",
+            ).count(),
+        )
     }
 
     @Test
@@ -138,7 +151,8 @@ class CdcProcessorTest {
         every { source.poll() } returns ev andThen null
         val sink = mockk<EventSinkRegistry>(relaxed = true)
         every { sink.publish(any(), any()) } throws IllegalStateException("permafail")
-        val dlq = mockk<DeadLetterPort>(); every { dlq.send(any(), any()) } just Runs
+        val dlq = mockk<DeadLetterPort>()
+        every { dlq.send(any(), any()) } just Runs
 
         val processor = buildProcessor(sink, source, dlq = dlq, maxAttempts = 2)
         runUntilProcessed(processor, source, expectedEvents = 2)
@@ -146,12 +160,18 @@ class CdcProcessorTest {
         verify(exactly = 2) { sink.publish(any(), any()) }
         verify(exactly = 1) { dlq.send(any(), any<IllegalStateException>()) }
         verify(exactly = 1) { source.ack(ev) }
-        assertEquals(1.0, registry.counter(
-            CdcOutboxMetrics.DEAD_LETTERED,
-            CdcOutboxMetrics.TAG_SINK, "sns",
-            CdcOutboxMetrics.TAG_TOPIC, "topic-a",
-            CdcOutboxMetrics.TAG_CAUSE, "IllegalStateException",
-        ).count())
+        assertEquals(
+            1.0,
+            registry.counter(
+                CdcOutboxMetrics.DEAD_LETTERED,
+                CdcOutboxMetrics.TAG_SINK,
+                "sns",
+                CdcOutboxMetrics.TAG_TOPIC,
+                "topic-a",
+                CdcOutboxMetrics.TAG_CAUSE,
+                "IllegalStateException",
+            ).count(),
+        )
     }
 
     @Test
@@ -177,7 +197,8 @@ class CdcProcessorTest {
         every { source.poll() } returns ev andThen null
         val sink = mockk<EventSinkRegistry>(relaxed = true)
         every { sink.publish(any(), any()) } throws NoSinkForSchemeException("nats", setOf("sns"))
-        val dlq = mockk<DeadLetterPort>(); every { dlq.send(any(), any()) } just Runs
+        val dlq = mockk<DeadLetterPort>()
+        every { dlq.send(any(), any()) } just Runs
 
         val processor = buildProcessor(sink, source, dlq = dlq, maxAttempts = 5)
         runUntilProcessed(processor, source, expectedEvents = 2)
@@ -230,7 +251,8 @@ class CdcProcessorTest {
         every { source.poll() } returns ev andThen null
         val sink = mockk<EventSinkRegistry>(relaxed = true)
         every { sink.publish(any(), any()) } throws IllegalStateException("permafail")
-        val dlq = mockk<DeadLetterPort>(); every { dlq.send(any(), any()) } just Runs
+        val dlq = mockk<DeadLetterPort>()
+        every { dlq.send(any(), any()) } just Runs
 
         val processor = buildProcessor(sink, source, dlq = dlq, maxAttempts = 2)
         runUntilProcessed(processor, source, expectedEvents = 2)
@@ -251,9 +273,13 @@ class CdcProcessorTest {
         runUntilProcessed(processor, source, expectedEvents = 2)
 
         // Reconnect metric recorded with poll_failure reason.
-        assertEquals(1.0, registry.counter(
-            CdcOutboxMetrics.RECONNECTS,
-            CdcOutboxMetrics.TAG_REASON, "poll_failure",
-        ).count())
+        assertEquals(
+            1.0,
+            registry.counter(
+                CdcOutboxMetrics.RECONNECTS,
+                CdcOutboxMetrics.TAG_REASON,
+                "poll_failure",
+            ).count(),
+        )
     }
 }

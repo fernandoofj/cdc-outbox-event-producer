@@ -13,8 +13,10 @@ import io.awspring.cloud.sqs.operations.SqsTemplate
 class SQSTransactionalProducer(
     private val sqsTemplate: SqsTemplate,
 ) : SQSProducer {
-
-    override fun <T : Any> send(queueName: String, message: T) {
+    override fun <T : Any> send(
+        queueName: String,
+        message: T,
+    ) {
         sqsTemplate.send { it.queue(queueName).payload(message) }
     }
 }

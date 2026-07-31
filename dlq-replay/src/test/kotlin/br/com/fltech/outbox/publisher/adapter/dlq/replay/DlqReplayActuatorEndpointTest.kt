@@ -18,7 +18,6 @@ import kotlin.test.assertFailsWith
  * this endpoint's only auth gate with zero test coverage.
  */
 class DlqReplayActuatorEndpointTest {
-
     private val service = mockk<DlqReplayService>(relaxed = true)
     private val endpoint = DlqReplayActuatorEndpoint(service)
 
@@ -46,11 +45,12 @@ class DlqReplayActuatorEndpointTest {
 
     @Test
     fun `real AnonymousAuthenticationToken is rejected even when marked authenticated`() {
-        val anonymous = AnonymousAuthenticationToken(
-            "key",
-            "anonymousUser",
-            listOf(SimpleGrantedAuthority("ROLE_ANONYMOUS")),
-        )
+        val anonymous =
+            AnonymousAuthenticationToken(
+                "key",
+                "anonymousUser",
+                listOf(SimpleGrantedAuthority("ROLE_ANONYMOUS")),
+            )
         SecurityContextHolder.getContext().authentication = anonymous
 
         assertFailsWith<AccessDeniedException> { endpoint.abandon("h1") }
@@ -63,11 +63,12 @@ class DlqReplayActuatorEndpointTest {
         // configures AnonymousAuthenticationFilter with a custom authority
         // (not ROLE_ANONYMOUS) must still be caught by the type check, not
         // just the authority check the other anonymous test also satisfies.
-        val anonymous = AnonymousAuthenticationToken(
-            "key",
-            "anonymousUser",
-            listOf(SimpleGrantedAuthority("ROLE_GUEST")),
-        )
+        val anonymous =
+            AnonymousAuthenticationToken(
+                "key",
+                "anonymousUser",
+                listOf(SimpleGrantedAuthority("ROLE_GUEST")),
+            )
         SecurityContextHolder.getContext().authentication = anonymous
 
         assertFailsWith<AccessDeniedException> { endpoint.abandon("h1") }
@@ -76,11 +77,12 @@ class DlqReplayActuatorEndpointTest {
 
     @Test
     fun `authenticated non-anonymous principal is let through`() {
-        val auth = UsernamePasswordAuthenticationToken.authenticated(
-            "operator",
-            null,
-            listOf(SimpleGrantedAuthority("ROLE_OPERATOR")),
-        )
+        val auth =
+            UsernamePasswordAuthenticationToken.authenticated(
+                "operator",
+                null,
+                listOf(SimpleGrantedAuthority("ROLE_OPERATOR")),
+            )
         SecurityContextHolder.getContext().authentication = auth
         every { service.peek(any()) } returns emptyList()
 

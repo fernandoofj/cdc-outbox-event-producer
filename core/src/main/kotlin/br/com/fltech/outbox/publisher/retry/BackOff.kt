@@ -36,7 +36,6 @@ data class ExponentialBackOff(
     val jitter: Double = DEFAULT_JITTER,
     private val random: Random = Random.Default,
 ) : BackOff {
-
     init {
         require(!initial.isNegative && !initial.isZero) { "initial must be > 0" }
         require(max >= initial) { "max ($max) must be >= initial ($initial)" }
@@ -49,11 +48,12 @@ data class ExponentialBackOff(
         val exponent = (safeAttempt - 1).toDouble()
         val raw = initial.toMillis() * multiplier.pow(exponent)
         val capped = min(raw, max.toMillis().toDouble())
-        val jitterFactor = if (jitter == 0.0) {
-            1.0
-        } else {
-            1.0 + jitter * (random.nextDouble() * 2.0 - 1.0)
-        }
+        val jitterFactor =
+            if (jitter == 0.0) {
+                1.0
+            } else {
+                1.0 + jitter * (random.nextDouble() * 2.0 - 1.0)
+            }
         val finalMs = (capped * jitterFactor).coerceAtLeast(0.0).toLong()
         return Duration.ofMillis(finalMs)
     }

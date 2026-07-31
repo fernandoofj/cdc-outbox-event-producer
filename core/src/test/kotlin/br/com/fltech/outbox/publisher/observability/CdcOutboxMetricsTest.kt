@@ -7,7 +7,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
 class CdcOutboxMetricsTest {
-
     @Test
     fun `null registry yields a no-op facade that does not throw`() {
         val metrics = CdcOutboxMetrics.noop()
@@ -34,31 +33,38 @@ class CdcOutboxMetricsTest {
             2.0,
             registry.counter(
                 CdcOutboxMetrics.MESSAGES_READ,
-                CdcOutboxMetrics.TAG_SLOT, "orders_outbox_slot",
+                CdcOutboxMetrics.TAG_SLOT,
+                "orders_outbox_slot",
             ).count(),
         )
         assertEquals(
             1.0,
             registry.counter(
                 CdcOutboxMetrics.MESSAGES_PUBLISHED,
-                CdcOutboxMetrics.TAG_SINK, "sns",
-                CdcOutboxMetrics.TAG_TOPIC, "orders.events",
+                CdcOutboxMetrics.TAG_SINK,
+                "sns",
+                CdcOutboxMetrics.TAG_TOPIC,
+                "orders.events",
             ).count(),
         )
         assertEquals(
             1.0,
             registry.counter(
                 CdcOutboxMetrics.MESSAGES_FAILED,
-                CdcOutboxMetrics.TAG_SINK, "sqs",
-                CdcOutboxMetrics.TAG_TOPIC, "orders.events.dlq",
-                CdcOutboxMetrics.TAG_CAUSE, "TimeoutException",
+                CdcOutboxMetrics.TAG_SINK,
+                "sqs",
+                CdcOutboxMetrics.TAG_TOPIC,
+                "orders.events.dlq",
+                CdcOutboxMetrics.TAG_CAUSE,
+                "TimeoutException",
             ).count(),
         )
         assertEquals(
             1.0,
             registry.counter(
                 CdcOutboxMetrics.MESSAGES_DISCARDED,
-                CdcOutboxMetrics.TAG_REASON, "insert",
+                CdcOutboxMetrics.TAG_REASON,
+                "insert",
             ).count(),
         )
     }
@@ -89,14 +95,16 @@ class CdcOutboxMetricsTest {
             2.0,
             registry.counter(
                 CdcOutboxMetrics.BINLOG_PARSE_ERRORS,
-                CdcOutboxMetrics.TAG_CAUSE, "IllegalStateException",
+                CdcOutboxMetrics.TAG_CAUSE,
+                "IllegalStateException",
             ).count(),
         )
         assertEquals(
             1.0,
             registry.counter(
                 CdcOutboxMetrics.BINLOG_PARSE_ERRORS,
-                CdcOutboxMetrics.TAG_CAUSE, "NullPointerException",
+                CdcOutboxMetrics.TAG_CAUSE,
+                "NullPointerException",
             ).count(),
         )
     }
@@ -114,14 +122,16 @@ class CdcOutboxMetricsTest {
             2.0,
             registry.counter(
                 CdcOutboxMetrics.BINLOG_COLUMN_RESOLUTION_FALLBACKS,
-                CdcOutboxMetrics.TAG_TABLE, "public.orders",
+                CdcOutboxMetrics.TAG_TABLE,
+                "public.orders",
             ).count(),
         )
         assertEquals(
             1.0,
             registry.counter(
                 CdcOutboxMetrics.BINLOG_COLUMN_RESOLUTION_FALLBACKS,
-                CdcOutboxMetrics.TAG_TABLE, "public.customers",
+                CdcOutboxMetrics.TAG_TABLE,
+                "public.customers",
             ).count(),
         )
     }
@@ -146,14 +156,16 @@ class CdcOutboxMetricsTest {
             2.0,
             registry.counter(
                 CdcOutboxMetrics.CHECKPOINT_ORPHANS_SWEPT,
-                CdcOutboxMetrics.TAG_OUTCOME, "deleted",
+                CdcOutboxMetrics.TAG_OUTCOME,
+                "deleted",
             ).count(),
         )
         assertEquals(
             1.0,
             registry.counter(
                 CdcOutboxMetrics.CHECKPOINT_ORPHANS_SWEPT,
-                CdcOutboxMetrics.TAG_OUTCOME, "failed",
+                CdcOutboxMetrics.TAG_OUTCOME,
+                "failed",
             ).count(),
         )
     }
@@ -172,9 +184,10 @@ class CdcOutboxMetricsTest {
         var current: Long = 1024
         metrics.registerLagGauge("postgres") { current }
 
-        val gauge = registry.find(CdcOutboxMetrics.SOURCE_LAG_BYTES)
-            .tag(CdcOutboxMetrics.TAG_SOURCE, "postgres")
-            .gauge()
+        val gauge =
+            registry.find(CdcOutboxMetrics.SOURCE_LAG_BYTES)
+                .tag(CdcOutboxMetrics.TAG_SOURCE, "postgres")
+                .gauge()
         assertNotNull(gauge)
         assertEquals(1024.0, gauge.value())
 

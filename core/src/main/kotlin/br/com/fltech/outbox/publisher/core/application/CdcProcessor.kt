@@ -11,6 +11,15 @@ import br.com.fltech.outbox.publisher.retry.ExponentialBackOff
 import org.slf4j.LoggerFactory
 import java.time.Duration
 
+// LongParameterList: 6 collaborators (source, sinkRegistry, deadLetterPort,
+// metrics, backoff, maxPublishAttempts) are all genuinely independent
+// concerns the consumer can override individually.
+// TooManyFunctions: the orchestrator's public surface is small
+// (start/stop/isRunning/snapshotState); the rest are private steps of
+// the publish/retry state machine, kept as named functions rather than
+// inlined for readability — collapsing them back into processEvent
+// would trade this finding for a LongMethod one instead.
+
 /**
  * Hexagonal-architecture orchestrator: pulls [OutboxEvent]s from a
  * [CdcSource], hands each event to the [EventSinkRegistry] for
@@ -38,21 +47,21 @@ import java.time.Duration
  *  - `running` is `@Volatile` so `stop()` from another thread is
  *    observed promptly.
  */
-@Suppress("LongParameterList")
+@Suppress("LongParameterList", "TooManyFunctions")
 class CdcProcessor(
     private val source: CdcSource,
     private val sinkRegistry: EventSinkRegistry,
     private val metrics: CdcOutboxMetrics = CdcOutboxMetrics.noop(),
     private val deadLetterPort: DeadLetterPort? = null,
     private val maxPublishAttempts: Int = DEFAULT_MAX_PUBLISH_ATTEMPTS,
-    private val publishBackOff: BackOff = ExponentialBackOff(
-        initial = Duration.ofMillis(DEFAULT_BACKOFF_INITIAL_MS),
-        max = Duration.ofSeconds(DEFAULT_BACKOFF_MAX_SECONDS),
-    ),
+    private val publishBackOff: BackOff =
+        ExponentialBackOff(
+            initial = Duration.ofMillis(DEFAULT_BACKOFF_INITIAL_MS),
+            max = Duration.ofSeconds(DEFAULT_BACKOFF_MAX_SECONDS),
+        ),
     private val idleSleep: Duration = Duration.ofMillis(DEFAULT_IDLE_SLEEP_MS),
     private val slotLabel: String = "cdc-processor",
 ) {
-
     @Volatile
     private var running = false
 
@@ -108,12 +117,13 @@ class CdcProcessor(
      * Read-only snapshot of orchestrator state for health checks. Safe
      * to call from a different thread (relies on `@Volatile` fields).
      */
-    fun snapshotState(): ProcessorState = ProcessorState(
-        slot = slotLabel,
-        running = running,
-        msSinceLastActivity = msSinceLastActivity(),
-        pendingFailureCheckpoint = pendingFailureCheckpoint,
-    )
+    fun snapshotState(): ProcessorState =
+        ProcessorState(
+            slot = slotLabel,
+            running = running,
+            msSinceLastActivity = msSinceLastActivity(),
+            pendingFailureCheckpoint = pendingFailureCheckpoint,
+        )
 
     private fun msSinceLastActivity(): Long {
         val ts = lastActivityMs
@@ -150,7 +160,8 @@ class CdcProcessor(
                 is PollResult.Failure -> {
                     logger.error(
                         "CdcSource.poll() threw; sleeping {} ms before retrying",
-                        idleSleep.toMillis(), result.cause,
+                        idleSleep.toMillis(),
+                        result.cause,
                     )
                     metrics.recordReconnect(REASON_POLL_FAILURE)
                     sleepInterruptibly(idleSleep.toMillis())
@@ -175,7 +186,9 @@ class CdcProcessor(
     /** Tri-state result of a single source.poll() — drives runLoop's dispatch. */
     private sealed class PollResult {
         object Empty : PollResult()
+
         data class Event(val event: OutboxEvent) : PollResult()
+
         data class Failure(val cause: Exception) : PollResult()
     }
 
@@ -201,7 +214,10 @@ class CdcProcessor(
                 // Configuration error — retries are pointless.
                 logger.error(
                     "No sink for scheme '{}' (event id={}, target={}). Known: {}",
-                    e.scheme, event.id, event.routing.target, e.knownSchemes,
+                    e.scheme,
+                    event.id,
+                    event.routing.target,
+                    e.knownSchemes,
                 )
                 metrics.recordFailure(
                     sink = e.scheme,
@@ -212,32 +228,7 @@ class CdcProcessor(
                 return
             } catch (e: Exception) {
                 lastException = e
-                // Surface the in-flight checkpoint to the health
-                // indicator the moment the first attempt fails; we
-                // clear it on success or dead-letter, so a transient
-                // blip that resolves on retry briefly toggles
-                // /actuator/health DOWN — same precedence the legacy
-                // indicator already exposes.
-                pendingFailureCheckpoint = event.sourceCheckpoint
-                metrics.recordFailure(
-                    sink = event.routing.scheme,
-                    topic = event.routing.target,
-                    cause = e.javaClass.simpleName,
-                )
-                if (attempt < maxPublishAttempts) {
-                    metrics.recordRetry(
-                        sink = event.routing.scheme,
-                        topic = event.routing.target,
-                        attempt = attempt,
-                    )
-                    val delay = publishBackOff.nextDelay(attempt)
-                    logger.warn(
-                        "Publish attempt #{}/{} for {} (id={}) failed: {}. Sleeping {} ms before retry.",
-                        attempt, maxPublishAttempts, event.routing.asUri(), event.id,
-                        e.javaClass.simpleName, delay.toMillis(),
-                    )
-                    sleepInterruptibly(delay.toMillis())
-                }
+                handleTransientPublishFailure(event, e, attempt)
             }
         }
         if (!running) {
@@ -250,7 +241,8 @@ class CdcProcessor(
             // slot.
             logger.info(
                 "Shutdown requested mid-retry for event id={} routing={}; source will not be acked.",
-                event.id, event.routing.asUri(),
+                event.id,
+                event.routing.asUri(),
             )
             return
         }
@@ -258,13 +250,62 @@ class CdcProcessor(
         handleExhausted(event, cause)
     }
 
-    private fun handleExhausted(event: OutboxEvent, cause: Throwable) {
+    /**
+     * Records a transient publish failure and sleeps the backoff delay
+     * before the next attempt, when attempts remain. Pulled out of
+     * [processEvent] purely to keep that method under detekt's
+     * `LongMethod` threshold — behavior is unchanged.
+     */
+    private fun handleTransientPublishFailure(
+        event: OutboxEvent,
+        e: Exception,
+        attempt: Int,
+    ) {
+        // Surface the in-flight checkpoint to the health
+        // indicator the moment the first attempt fails; we
+        // clear it on success or dead-letter, so a transient
+        // blip that resolves on retry briefly toggles
+        // /actuator/health DOWN — same precedence the legacy
+        // indicator already exposes.
+        pendingFailureCheckpoint = event.sourceCheckpoint
+        metrics.recordFailure(
+            sink = event.routing.scheme,
+            topic = event.routing.target,
+            cause = e.javaClass.simpleName,
+        )
+        if (attempt < maxPublishAttempts) {
+            metrics.recordRetry(
+                sink = event.routing.scheme,
+                topic = event.routing.target,
+                attempt = attempt,
+            )
+            val delay = publishBackOff.nextDelay(attempt)
+            logger.warn(
+                "Publish attempt #{}/{} for {} (id={}) failed: {}. Sleeping {} ms before retry.",
+                attempt,
+                maxPublishAttempts,
+                event.routing.asUri(),
+                event.id,
+                e.javaClass.simpleName,
+                delay.toMillis(),
+            )
+            sleepInterruptibly(delay.toMillis())
+        }
+    }
+
+    private fun handleExhausted(
+        event: OutboxEvent,
+        cause: Throwable,
+    ) {
         val dlq = deadLetterPort
         if (dlq == null) {
             logger.error(
                 "Publish exhausted {} attempts for {} (id={}) and no dead-letter port is configured — " +
                     "source will not be acked. Operator intervention required.",
-                maxPublishAttempts, event.routing.asUri(), event.id, cause,
+                maxPublishAttempts,
+                event.routing.asUri(),
+                event.id,
+                cause,
             )
             return
         }
@@ -281,15 +322,21 @@ class CdcProcessor(
             pendingFailureCheckpoint = null
             logger.warn(
                 "Dead-lettered event id={} routing={} after {} attempts ({})",
-                event.id, event.routing.asUri(), maxPublishAttempts, cause.javaClass.simpleName,
+                event.id,
+                event.routing.asUri(),
+                maxPublishAttempts,
+                cause.javaClass.simpleName,
             )
         } catch (dlqException: Exception) {
             metrics.recordDeadLetterFailure(cause = dlqException.javaClass.simpleName)
             logger.error(
                 "Dead-letter publish failed for event id={} routing={}; source will not be acked. " +
                     "Original cause: {}; DLQ cause: {}",
-                event.id, event.routing.asUri(),
-                cause.javaClass.simpleName, dlqException.javaClass.simpleName, dlqException,
+                event.id,
+                event.routing.asUri(),
+                cause.javaClass.simpleName,
+                dlqException.javaClass.simpleName,
+                dlqException,
             )
         }
     }

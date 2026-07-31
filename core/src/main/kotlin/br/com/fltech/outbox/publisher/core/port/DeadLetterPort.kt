@@ -31,5 +31,8 @@ import br.com.fltech.outbox.publisher.core.domain.OutboxEvent
  * `DeadLetterSink` bean.
  */
 fun interface DeadLetterPort {
-    fun send(event: OutboxEvent, cause: Throwable)
+    fun send(
+        event: OutboxEvent,
+        cause: Throwable,
+    )
 }

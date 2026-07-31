@@ -1,7 +1,7 @@
 package br.com.fltech.outbox.publisher.replication.config
 
-import java.util.Properties
 import org.postgresql.PGProperty
+import java.util.Properties
 
 data class PostgresConfiguration(
     val host: String,
@@ -13,7 +13,7 @@ data class PostgresConfiguration(
     val pathToRootCert: String? = null,
     val sslPassword: String? = null,
     val pathToSslKey: String? = null,
-    val pathToSslCert: String? = null
+    val pathToSslCert: String? = null,
 ) {
     fun getReplicationProperties(): Properties {
         val properties: Properties = getQueryConnectionProperties()
@@ -21,6 +21,7 @@ data class PostgresConfiguration(
         PGProperty.REPLICATION.set(properties, DEFAULT_REPLICATION)
         return properties
     }
+
     fun getQueryConnectionProperties(): Properties {
         val properties: Properties = Properties()
         PGProperty.USER.set(properties, username)

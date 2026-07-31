@@ -27,18 +27,18 @@ class CdcOutboxHealthIndicator(
     private val lifecycle: CdcOutboxLifecycle,
     private val maxIdle: Duration,
 ) : HealthIndicator {
-
     override fun health(): Health {
         val state = producer.snapshotState()
         val idleForMs = state.msSinceLastActivity
         val idleDisplay = if (idleForMs == Long.MAX_VALUE) "never" else "${idleForMs}ms"
-        val builder = Health.Builder()
-            .withDetail("slot", state.slot)
-            .withDetail("running", state.running)
-            .withDetail("lifecycleRunning", lifecycle.isRunning)
-            .withDetail("pendingFailureLsn", state.pendingFailureLsn ?: "none")
-            .withDetail("idleFor", idleDisplay)
-            .withDetail("maxIdle", "${maxIdle.toMillis()}ms")
+        val builder =
+            Health.Builder()
+                .withDetail("slot", state.slot)
+                .withDetail("running", state.running)
+                .withDetail("lifecycleRunning", lifecycle.isRunning)
+                .withDetail("pendingFailureLsn", state.pendingFailureLsn ?: "none")
+                .withDetail("idleFor", idleDisplay)
+                .withDetail("maxIdle", "${maxIdle.toMillis()}ms")
 
         return when {
             state.pendingFailureLsn != null ->

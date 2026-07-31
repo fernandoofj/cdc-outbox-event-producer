@@ -9,7 +9,6 @@ import kotlin.test.assertEquals
  * closes the at-least-once race.
  */
 class ReplicationConfigurationTest {
-
     @Test
     fun `default slot options enable include-lsn so wal2json emits per-record LSNs`() {
         val options = ReplicationConfiguration(slotName = "any_slot").getSlotOptions()
@@ -21,10 +20,11 @@ class ReplicationConfigurationTest {
 
     @Test
     fun `explicit includeLsn false is forwarded to the plugin`() {
-        val options = ReplicationConfiguration(
-            slotName = "any_slot",
-            includeLsn = false,
-        ).getSlotOptions()
+        val options =
+            ReplicationConfiguration(
+                slotName = "any_slot",
+                includeLsn = false,
+            ).getSlotOptions()
 
         assertEquals("false", options.getProperty("include-lsn"))
     }

@@ -29,7 +29,6 @@ import org.springframework.context.annotation.Bean
 @ConditionalOnProperty(prefix = "cdc.outbox", name = ["enabled"], havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(CdcOutboxProperties::class)
 open class CdcOutboxMappingAutoConfiguration {
-
     @Bean
     @ConditionalOnMissingBean
     open fun cdcOutboxMappingRules(
@@ -44,11 +43,12 @@ open class CdcOutboxMappingAutoConfiguration {
         if (properties.mappings.isEmpty()) return MappingRules.EMPTY
         val tableMappings = properties.mappings.map { it.toDomain() }
         val objectMapper: ObjectMapper? = objectMapperProvider.getIfAvailable()
-        val serializer: (Map<String, Any?>) -> ByteArray = if (objectMapper != null) {
-            { payload -> objectMapper.writeValueAsBytes(payload) }
-        } else {
-            DefaultMappingRules.DEFAULT_SERIALIZER
-        }
+        val serializer: (Map<String, Any?>) -> ByteArray =
+            if (objectMapper != null) {
+                { payload -> objectMapper.writeValueAsBytes(payload) }
+            } else {
+                DefaultMappingRules.DEFAULT_SERIALIZER
+            }
         return DefaultMappingRules(tableMappings, serializer)
     }
 }

@@ -53,7 +53,6 @@ import software.amazon.awssdk.services.sqs.SqsClient
 )
 @ConditionalOnBean(EventSinkRegistry::class)
 open class CdcOutboxDlqReplayAutoConfiguration {
-
     /**
      * Default [DlqReader] backed by SQS. Reads the same queue the
      * `SqsDeadLetterSink` writes to. Consumers can replace this

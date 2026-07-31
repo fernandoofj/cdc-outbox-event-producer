@@ -7,8 +7,8 @@ import br.com.fltech.outbox.publisher.replication.model.MessageChange
 import br.com.fltech.outbox.publisher.replication.model.SlotMessageV2
 import br.com.fltech.outbox.publisher.replication.model.UpdateChange
 import com.fasterxml.jackson.databind.ObjectMapper
-import java.nio.ByteBuffer
 import org.springframework.stereotype.Component
+import java.nio.ByteBuffer
 
 /**
  * Decodes a wal2json `format-version=2` record. One record per
@@ -26,7 +26,7 @@ import org.springframework.stereotype.Component
  */
 @Component
 class ByteToClassParserImplV2(
-    private val defaultMapper: ObjectMapper
+    private val defaultMapper: ObjectMapper,
 ) : ByteToClassParser {
     override fun parse(byteBufferMessage: ByteBuffer): List<Change> {
         val byteArray = ByteArray(byteBufferMessage.remaining())
@@ -34,45 +34,50 @@ class ByteToClassParserImplV2(
         val jsonString = String(byteArray, Charsets.UTF_8)
         val slotMessageV2 = defaultMapper.readValue(jsonString, SlotMessageV2::class.java)
 
-        val change: Change = when {
-            slotMessageV2.action == MESSAGE_TYPE_V2 -> MessageChange(
-                kindInput = MESSAGE_TYPE_V1,
-                transactional = IS_TRANSACTIONAL,
-                prefix = slotMessageV2.prefix!!,
-                content = slotMessageV2.content!!,
-                lsn = slotMessageV2.lsn,
-            )
+        val change: Change =
+            when {
+                slotMessageV2.action == MESSAGE_TYPE_V2 ->
+                    MessageChange(
+                        kindInput = MESSAGE_TYPE_V1,
+                        transactional = IS_TRANSACTIONAL,
+                        prefix = slotMessageV2.prefix!!,
+                        content = slotMessageV2.content!!,
+                        lsn = slotMessageV2.lsn,
+                    )
 
-            else -> buildOtherChange(slotMessageV2)
-        }
+                else -> buildOtherChange(slotMessageV2)
+            }
 
         return listOf(change)
     }
 
     private fun buildOtherChange(message: SlotMessageV2): Change {
         return when (message.action.uppercase()) {
-            "I" -> InsertChange(
-                kindInput = INSERT_TYPE_V1,
-                schema = message.schema,
-                table = message.table,
-                lsn = message.lsn,
-                columns = message.columns,
-            )
-            "U" -> UpdateChange(
-                kindInput = UPDATE_TYPE_V1,
-                schema = message.schema,
-                table = message.table,
-                lsn = message.lsn,
-                columns = message.columns,
-                identity = message.identity,
-            )
-            "D" -> DeleteChange(
-                kindInput = DELETE_TYPE_V1,
-                schema = message.schema,
-                table = message.table,
-                lsn = message.lsn,
-                identity = message.identity,
-            )
+            "I" ->
+                InsertChange(
+                    kindInput = INSERT_TYPE_V1,
+                    schema = message.schema,
+                    table = message.table,
+                    lsn = message.lsn,
+                    columns = message.columns,
+                )
+            "U" ->
+                UpdateChange(
+                    kindInput = UPDATE_TYPE_V1,
+                    schema = message.schema,
+                    table = message.table,
+                    lsn = message.lsn,
+                    columns = message.columns,
+                    identity = message.identity,
+                )
+            "D" ->
+                DeleteChange(
+                    kindInput = DELETE_TYPE_V1,
+                    schema = message.schema,
+                    table = message.table,
+                    lsn = message.lsn,
+                    identity = message.identity,
+                )
             else -> Change(OTHER_TYPE_V1)
         }
     }

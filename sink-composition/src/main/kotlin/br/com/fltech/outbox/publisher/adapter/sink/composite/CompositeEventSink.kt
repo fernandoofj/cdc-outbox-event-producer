@@ -28,12 +28,14 @@ class CompositeEventSink(
     private val delegates: List<EventSink>,
     private val failFast: Boolean = true,
 ) : EventSink {
-
     init {
         require(delegates.isNotEmpty()) { "CompositeEventSink requires at least one delegate" }
     }
 
-    override fun publish(routing: Routing, event: OutboxEvent) {
+    override fun publish(
+        routing: Routing,
+        event: OutboxEvent,
+    ) {
         if (failFast) {
             delegates.forEach { it.publish(routing, event) }
             return

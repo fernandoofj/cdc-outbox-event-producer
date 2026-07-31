@@ -18,7 +18,10 @@ import br.com.fltech.outbox.publisher.core.port.EventSinkRegistry
 class SchemeRouterEventSink(
     private val registry: EventSinkRegistry,
 ) : EventSink {
-    override fun publish(routing: Routing, event: OutboxEvent) {
+    override fun publish(
+        routing: Routing,
+        event: OutboxEvent,
+    ) {
         registry.publish(routing, event)
     }
 }

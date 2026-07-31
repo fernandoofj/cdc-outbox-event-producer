@@ -28,7 +28,6 @@ class DefaultMappingRules(
     private val mappings: List<TableMapping>,
     private val serializer: (Map<String, Any?>) -> ByteArray = DEFAULT_SERIALIZER,
 ) : MappingRules {
-
     private val byTable: Map<String, TableMapping> = mappings.associateBy { it.table }
 
     init {
@@ -47,16 +46,18 @@ class DefaultMappingRules(
         val mapping = byTable[rowChange.table] ?: return null
         if (rowChange.op !in mapping.capture) return null
 
-        val operationSnapshot = when (rowChange.op) {
-            RowChange.Op.INSERT, RowChange.Op.UPDATE -> rowChange.after
-            RowChange.Op.DELETE -> rowChange.before
-        }
+        val operationSnapshot =
+            when (rowChange.op) {
+                RowChange.Op.INSERT, RowChange.Op.UPDATE -> rowChange.after
+                RowChange.Op.DELETE -> rowChange.before
+            }
         val id = deriveKey(mapping.key, operationSnapshot, rowChange.sourceCheckpoint)
         val payload = projectPayload(mapping.payload, operationSnapshot)
         val eventType = formatEventType(mapping.eventType.template, rowChange)
-        val attributes = mapping.routing.attributes.mapValues { (_, v) ->
-            substitute(v, operationSnapshot)
-        }
+        val attributes =
+            mapping.routing.attributes.mapValues { (_, v) ->
+                substitute(v, operationSnapshot)
+            }
         val routing = Routing.parse(mapping.routing.sink).copy(attributes = attributes)
 
         return OutboxEvent(
@@ -88,21 +89,26 @@ class DefaultMappingRules(
         spec: TableMapping.Payload,
         snapshot: Map<String, Any?>,
     ): Map<String, Any?> {
-        val filtered = when {
-            spec.include.isNotEmpty() -> snapshot.filterKeys { it in spec.include }
-            spec.exclude.isNotEmpty() -> snapshot.filterKeys { it !in spec.exclude }
-            else -> snapshot
-        }
+        val filtered =
+            when {
+                spec.include.isNotEmpty() -> snapshot.filterKeys { it in spec.include }
+                spec.exclude.isNotEmpty() -> snapshot.filterKeys { it !in spec.exclude }
+                else -> snapshot
+            }
         if (spec.rename.isEmpty()) return filtered
         return filtered.mapKeys { (k, _) -> spec.rename[k] ?: k }
     }
 
-    private fun formatEventType(template: String, rowChange: RowChange): String {
-        val op = when (rowChange.op) {
-            RowChange.Op.INSERT -> "created"
-            RowChange.Op.UPDATE -> "updated"
-            RowChange.Op.DELETE -> "deleted"
-        }
+    private fun formatEventType(
+        template: String,
+        rowChange: RowChange,
+    ): String {
+        val op =
+            when (rowChange.op) {
+                RowChange.Op.INSERT -> "created"
+                RowChange.Op.UPDATE -> "updated"
+                RowChange.Op.DELETE -> "deleted"
+            }
         return template
             .replace("{table}", rowChange.table)
             .replace("{op}", op)
@@ -113,7 +119,10 @@ class DefaultMappingRules(
      * `toString()`. Missing columns render as an empty string; the
      * mapping caller is responsible for not relying on absent columns.
      */
-    private fun substitute(template: String, snapshot: Map<String, Any?>): String {
+    private fun substitute(
+        template: String,
+        snapshot: Map<String, Any?>,
+    ): String {
         if ('{' !in template) return template
         return PLACEHOLDER_REGEX.replace(template) { match ->
             snapshot[match.groupValues[1]]?.toString().orEmpty()

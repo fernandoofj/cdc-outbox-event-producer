@@ -20,5 +20,9 @@ interface DeadLetterSink {
      * [lastException]. Throwing means the dead-letter itself failed;
      * the producer will react accordingly.
      */
-    fun send(lsn: LogSequenceNumber, messageChange: MessageChange, lastException: Throwable)
+    fun send(
+        lsn: LogSequenceNumber,
+        messageChange: MessageChange,
+        lastException: Throwable,
+    )
 }

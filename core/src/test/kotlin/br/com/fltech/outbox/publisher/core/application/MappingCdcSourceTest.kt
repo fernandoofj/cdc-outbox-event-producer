@@ -16,23 +16,26 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class MappingCdcSourceTest {
-
     private val now = Instant.parse("2026-05-15T00:00:00Z")
     private val rowSource = mockk<RowChangeSource>(relaxed = true)
 
-    private fun event(checkpoint: String) = OutboxEvent(
-        id = "e1",
-        routing = Routing("sns", "topic"),
-        payload = ByteArray(0),
-        occurredAt = now,
-        sourceCheckpoint = checkpoint,
-    )
+    private fun event(checkpoint: String) =
+        OutboxEvent(
+            id = "e1",
+            routing = Routing("sns", "topic"),
+            payload = ByteArray(0),
+            occurredAt = now,
+            sourceCheckpoint = checkpoint,
+        )
 
-    private fun rowAt(checkpoint: String) = RowChange(
-        op = RowChange.Op.INSERT, table = "public.orders",
-        sourceCheckpoint = checkpoint, occurredAt = now,
-        after = mapOf("id" to 1),
-    )
+    private fun rowAt(checkpoint: String) =
+        RowChange(
+            op = RowChange.Op.INSERT,
+            table = "public.orders",
+            sourceCheckpoint = checkpoint,
+            occurredAt = now,
+            after = mapOf("id" to 1),
+        )
 
     @Test
     fun `poll returns null when the underlying row source is idle`() {

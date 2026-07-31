@@ -8,6 +8,10 @@ import io.micrometer.core.instrument.Timer
 import java.time.Duration
 import java.util.function.Supplier
 
+// TooManyFunctions: the facade intentionally carries one method per
+// metric so consumers never see the registry directly. Splitting it
+// would scatter the metric inventory across files.
+
 /**
  * Thin Micrometer facade for the CDC-outbox pipeline.
  *
@@ -20,12 +24,8 @@ import java.util.function.Supplier
  * (`cdc.outbox.<subject>.<action>`) — Micrometer adds the `_total` suffix to
  * counters and the `_seconds` family to timers on export.
  */
-// TooManyFunctions: the facade intentionally carries one method per
-// metric so consumers never see the registry directly. Splitting it
-// would scatter the metric inventory across files.
 @Suppress("TooManyFunctions")
 class CdcOutboxMetrics(private val registry: MeterRegistry?) {
-
     fun recordMessageRead(slot: String) {
         registry?.let {
             Counter.builder(MESSAGES_READ)
@@ -36,7 +36,10 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         }
     }
 
-    fun recordPublished(sink: String, topic: String) {
+    fun recordPublished(
+        sink: String,
+        topic: String,
+    ) {
         registry?.let {
             Counter.builder(MESSAGES_PUBLISHED)
                 .description("Events successfully published to a sink")
@@ -46,7 +49,11 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         }
     }
 
-    fun recordFailure(sink: String, topic: String, cause: String) {
+    fun recordFailure(
+        sink: String,
+        topic: String,
+        cause: String,
+    ) {
         registry?.let {
             Counter.builder(MESSAGES_FAILED)
                 .description("Publish attempts that raised an exception")
@@ -66,7 +73,10 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         }
     }
 
-    fun recordPublishDuration(sink: String, duration: Duration) {
+    fun recordPublishDuration(
+        sink: String,
+        duration: Duration,
+    ) {
         registry?.let {
             Timer.builder(PUBLISH_DURATION)
                 .description("End-to-end publish latency from WAL message to sink ack")
@@ -86,7 +96,11 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         }
     }
 
-    fun recordRetry(sink: String, topic: String, attempt: Int) {
+    fun recordRetry(
+        sink: String,
+        topic: String,
+        attempt: Int,
+    ) {
         registry?.let {
             Counter.builder(PUBLISH_RETRIES)
                 .description("Publish-retry attempts (does not include the initial try)")
@@ -96,7 +110,11 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
         }
     }
 
-    fun recordDeadLettered(sink: String, topic: String, cause: String) {
+    fun recordDeadLettered(
+        sink: String,
+        topic: String,
+        cause: String,
+    ) {
         registry?.let {
             Counter.builder(DEAD_LETTERED)
                 .description("Messages forwarded to the dead-letter sink after exhausting retries")
@@ -197,7 +215,10 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
      * twice with the same `sourceLabel` returns the same meter rather
      * than failing.
      */
-    fun registerLagGauge(sourceLabel: String, supplier: () -> Number) {
+    fun registerLagGauge(
+        sourceLabel: String,
+        supplier: () -> Number,
+    ) {
         registry?.let {
             Gauge.builder(SOURCE_LAG_BYTES, Supplier<Number> { supplier() })
                 .description("Replication lag (bytes) between the source's persisted checkpoint and the upstream head")
@@ -217,15 +238,22 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
      * is the sink scheme the replay was directed at (which may
      * differ from the original via an operator override).
      */
-    fun recordDlqReplay(outcome: String, sourceCause: String, targetScheme: String) {
+    fun recordDlqReplay(
+        outcome: String,
+        sourceCause: String,
+        targetScheme: String,
+    ) {
         registry?.let {
             Counter.builder(DLQ_REPLAYS)
                 .description("DLQ messages replayed back into the sink registry by operator action")
                 .tags(
                     Tags.of(
-                        TAG_OUTCOME, outcome,
-                        TAG_SOURCE_CAUSE, sourceCause,
-                        TAG_TARGET_SCHEME, targetScheme,
+                        TAG_OUTCOME,
+                        outcome,
+                        TAG_SOURCE_CAUSE,
+                        sourceCause,
+                        TAG_TARGET_SCHEME,
+                        targetScheme,
                     ),
                 )
                 .register(it)
@@ -241,15 +269,22 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
      * original via override); `outcome` is `success` or
      * `publish_failed`.
      */
-    fun recordReplayEvent(sourceKind: String, targetScheme: String, outcome: String) {
+    fun recordReplayEvent(
+        sourceKind: String,
+        targetScheme: String,
+        outcome: String,
+    ) {
         registry?.let {
             Counter.builder(REPLAY_EVENTS)
                 .description("Events re-emitted by an operator-driven source-side replay job")
                 .tags(
                     Tags.of(
-                        TAG_SOURCE_KIND, sourceKind,
-                        TAG_TARGET_SCHEME, targetScheme,
-                        TAG_OUTCOME, outcome,
+                        TAG_SOURCE_KIND,
+                        sourceKind,
+                        TAG_TARGET_SCHEME,
+                        targetScheme,
+                        TAG_OUTCOME,
+                        outcome,
                     ),
                 )
                 .register(it)
@@ -262,7 +297,10 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
      * failure). Tagged by `sourceKind` so operators can compare
      * MySQL replay throughput against a future Postgres replay.
      */
-    fun recordReplayDuration(sourceKind: String, duration: Duration) {
+    fun recordReplayDuration(
+        sourceKind: String,
+        duration: Duration,
+    ) {
         registry?.let {
             Timer.builder(REPLAY_DURATION)
                 .description("Wall-clock duration of an operator-driven source replay job")

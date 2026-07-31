@@ -26,18 +26,18 @@ import kotlin.test.assertTrue
  * loop turn.
  */
 class CdcProcessorHealthIndicatorTest {
-
     private val processor = mockk<CdcProcessor>()
     private val lifecycle = mockk<CdcProcessorLifecycle>()
     private val indicator = CdcProcessorHealthIndicator(processor, lifecycle, Duration.ofMinutes(10))
 
     @Test
     fun `UP when both lifecycle and processor are running and idle is within threshold`() {
-        every { processor.snapshotState() } returns CdcProcessor.ProcessorState(
-            slot = "orders_outbox_slot",
-            running = true,
-            msSinceLastActivity = 1_000L,
-        )
+        every { processor.snapshotState() } returns
+            CdcProcessor.ProcessorState(
+                slot = "orders_outbox_slot",
+                running = true,
+                msSinceLastActivity = 1_000L,
+            )
         every { lifecycle.isRunning } returns true
 
         val health = indicator.health()
@@ -51,11 +51,12 @@ class CdcProcessorHealthIndicatorTest {
 
     @Test
     fun `DOWN when the lifecycle is up but the processor loop is not iterating`() {
-        every { processor.snapshotState() } returns CdcProcessor.ProcessorState(
-            slot = "orders_outbox_slot",
-            running = false,
-            msSinceLastActivity = 100L,
-        )
+        every { processor.snapshotState() } returns
+            CdcProcessor.ProcessorState(
+                slot = "orders_outbox_slot",
+                running = false,
+                msSinceLastActivity = 100L,
+            )
         every { lifecycle.isRunning } returns true
 
         val health = indicator.health()
@@ -71,11 +72,12 @@ class CdcProcessorHealthIndicatorTest {
         // Even if the processor flag says true, the lifecycle gate
         // wins: Spring has not yet driven `start()`, so nothing is
         // streaming yet from the Actuator probe's perspective.
-        every { processor.snapshotState() } returns CdcProcessor.ProcessorState(
-            slot = "orders_outbox_slot",
-            running = true,
-            msSinceLastActivity = 100L,
-        )
+        every { processor.snapshotState() } returns
+            CdcProcessor.ProcessorState(
+                slot = "orders_outbox_slot",
+                running = true,
+                msSinceLastActivity = 100L,
+            )
         every { lifecycle.isRunning } returns false
 
         val health = indicator.health()
@@ -87,11 +89,12 @@ class CdcProcessorHealthIndicatorTest {
 
     @Test
     fun `OUT_OF_SERVICE when idle exceeds maxIdle`() {
-        every { processor.snapshotState() } returns CdcProcessor.ProcessorState(
-            slot = "orders_outbox_slot",
-            running = true,
-            msSinceLastActivity = Duration.ofMinutes(20).toMillis(),
-        )
+        every { processor.snapshotState() } returns
+            CdcProcessor.ProcessorState(
+                slot = "orders_outbox_slot",
+                running = true,
+                msSinceLastActivity = Duration.ofMinutes(20).toMillis(),
+            )
         every { lifecycle.isRunning } returns true
 
         val health = indicator.health()
@@ -105,11 +108,12 @@ class CdcProcessorHealthIndicatorTest {
         // The grace window between context refresh and the first
         // `source.poll()` MUST NOT degrade /actuator/health — running
         // wins.
-        every { processor.snapshotState() } returns CdcProcessor.ProcessorState(
-            slot = "orders_outbox_slot",
-            running = true,
-            msSinceLastActivity = Long.MAX_VALUE,
-        )
+        every { processor.snapshotState() } returns
+            CdcProcessor.ProcessorState(
+                slot = "orders_outbox_slot",
+                running = true,
+                msSinceLastActivity = Long.MAX_VALUE,
+            )
         every { lifecycle.isRunning } returns true
 
         val health = indicator.health()
@@ -125,12 +129,13 @@ class CdcProcessorHealthIndicatorTest {
         // troubled event. That's an operator signal, not an idle
         // condition. Matches the legacy indicator's
         // pendingFailureLsn precedence.
-        every { processor.snapshotState() } returns CdcProcessor.ProcessorState(
-            slot = "orders_outbox_slot",
-            running = true,
-            msSinceLastActivity = 100L,
-            pendingFailureCheckpoint = "mysql-bin.000001:240",
-        )
+        every { processor.snapshotState() } returns
+            CdcProcessor.ProcessorState(
+                slot = "orders_outbox_slot",
+                running = true,
+                msSinceLastActivity = 100L,
+                pendingFailureCheckpoint = "mysql-bin.000001:240",
+            )
         every { lifecycle.isRunning } returns true
 
         val health = indicator.health()

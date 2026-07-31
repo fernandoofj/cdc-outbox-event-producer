@@ -20,6 +20,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import javax.sql.DataSource
 
+// LongParameterList: the binlog client needs JDBC handle + checkpoint
+// store + metrics + the host/port/credentials surface; collapsing into
+// a config object would scatter the wiring across files.
+// TooManyFunctions: one method per binlog event type (TABLE_MAP,
+// WRITE_ROWS, UPDATE_ROWS, DELETE_ROWS, QUERY) plus the lifecycle
+// methods is intentionally on the class — splitting hurts
+// discoverability for adapter readers.
+
 /**
  * MySQL [RowChangeSource] backed by Stanley Shyiko's
  * `mysql-binlog-connector-java`. Streams `WRITE_ROWS` / `UPDATE_ROWS`
@@ -86,13 +94,6 @@ import javax.sql.DataSource
  * KDoc still applies — the binlog-client's internal thread is not the
  * orchestrator thread.
  */
-// LongParameterList: the binlog client needs JDBC handle + checkpoint
-// store + metrics + the host/port/credentials surface; collapsing into
-// a config object would scatter the wiring across files.
-// TooManyFunctions: one method per binlog event type (TABLE_MAP,
-// WRITE_ROWS, UPDATE_ROWS, DELETE_ROWS, QUERY) plus the lifecycle
-// methods is intentionally on the class — splitting hurts
-// discoverability for adapter readers.
 @Suppress("LongParameterList", "TooManyFunctions")
 class MySqlBinlogRowChangeSource(
     private val host: String,
@@ -138,7 +139,6 @@ class MySqlBinlogRowChangeSource(
      */
     private val checkpointStore: CheckpointStore? = null,
 ) : RowChangeSource {
-
     private val opened = AtomicBoolean(false)
     private val client = AtomicReference<BinaryLogClient?>()
 
@@ -222,9 +222,10 @@ class MySqlBinlogRowChangeSource(
             }
         }, "cdc-outbox-mysql-binlog").apply {
             isDaemon = true
-            uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, t ->
-                logger.error("MySqlBinlogRowChangeSource daemon died with unrecoverable error", t)
-            }
+            uncaughtExceptionHandler =
+                Thread.UncaughtExceptionHandler { _, t ->
+                    logger.error("MySqlBinlogRowChangeSource daemon died with unrecoverable error", t)
+                }
         }.start()
         logger.info("MySqlBinlogRowChangeSource connecting to {}:{} as serverId={}", host, port, serverId)
     }
@@ -245,11 +246,18 @@ class MySqlBinlogRowChangeSource(
                 // loudly but don't take the loop down.
                 logger.warn(
                     "CheckpointStore.save failed for key={} value={} ({}); restart will rewind.",
-                    checkpointKey(), rowChange.sourceCheckpoint, e.javaClass.simpleName, e,
+                    checkpointKey(),
+                    rowChange.sourceCheckpoint,
+                    e.javaClass.simpleName,
+                    e,
                 )
             }
         }
     }
+
+    // ReturnCount: guard-clause sequence (no store → no persisted →
+    // load failed → unparseable). Flattening to nested ifs hurts
+    // readability; each guard is a distinct outcome.
 
     /**
      * Reads the previously-persisted checkpoint (if any) and seeds the
@@ -258,26 +266,25 @@ class MySqlBinlogRowChangeSource(
      * wired, when the store is empty, or when the persisted value
      * cannot be parsed back into `<filename>:<position>`.
      */
-    // ReturnCount: guard-clause sequence (no store → no persisted →
-    // load failed → unparseable). Flattening to nested ifs hurts
-    // readability; each guard is a distinct outcome.
     @Suppress("ReturnCount")
     private fun resumeFromCheckpoint(c: BinaryLogClient) {
         val store = checkpointStore ?: return
-        val persisted = try {
-            store.load(checkpointKey())
-        } catch (e: Exception) {
-            logger.warn(
-                "CheckpointStore.load failed for key={} ({}); falling back to binlog head.",
-                checkpointKey(), e.javaClass.simpleName, e,
-            )
-            return
-        } ?: return
+        val persisted =
+            try {
+                store.load(checkpointKey())
+            } catch (e: Exception) {
+                logger.warn(
+                    "CheckpointStore.load failed for key={} ({}); falling back to binlog head.",
+                    checkpointKey(), e.javaClass.simpleName, e,
+                )
+                return
+            } ?: return
         val parsed = parseCheckpoint(persisted)
         if (parsed == null) {
             logger.warn(
                 "Persisted checkpoint '{}' for key={} did not parse as <filename>:<position>; ignoring.",
-                persisted, checkpointKey(),
+                persisted,
+                checkpointKey(),
             )
             return
         }
@@ -288,7 +295,9 @@ class MySqlBinlogRowChangeSource(
         lastAckedCheckpoint = persisted
         logger.info(
             "MySqlBinlogRowChangeSource resuming from persisted checkpoint key={} file={} position={}",
-            checkpointKey(), file, position,
+            checkpointKey(),
+            file,
+            position,
         )
     }
 
@@ -342,7 +351,7 @@ class MySqlBinlogRowChangeSource(
                 EventType.EXT_WRITE_ROWS, EventType.WRITE_ROWS -> handleWriteRows(event.getData(), header)
                 EventType.EXT_UPDATE_ROWS, EventType.UPDATE_ROWS -> handleUpdateRows(event.getData(), header)
                 EventType.EXT_DELETE_ROWS, EventType.DELETE_ROWS -> handleDeleteRows(event.getData(), header)
-                else -> Unit  // ignore other event types
+                else -> Unit // ignore other event types
             }
         } catch (e: Exception) {
             logger.warn("MySqlBinlogRowChangeSource failed to handle event {} ({})", event, e.javaClass.simpleName)
@@ -427,14 +436,23 @@ class MySqlBinlogRowChangeSource(
      * path, not a failure. The fallback counter remains reserved for
      * genuine resolution failures.
      */
-    private fun invalidateOnColumnCountChange(tableId: Long, newCount: Int, schema: String, table: String) {
+    private fun invalidateOnColumnCountChange(
+        tableId: Long,
+        newCount: Int,
+        schema: String,
+        table: String,
+    ) {
         val previous = columnCountByTableId.put(tableId, newCount)
         if (previous != null && previous != newCount) {
             columnNamesByTableId.remove(tableId)
             logger.info(
                 "MySqlBinlogRowChangeSource: column count for {}.{} (tableId={}) changed {} -> {}; " +
                     "invalidating cached column names.",
-                schema, table, tableId, previous, newCount,
+                schema,
+                table,
+                tableId,
+                previous,
+                newCount,
             )
         }
     }
@@ -459,7 +477,12 @@ class MySqlBinlogRowChangeSource(
      * — drift is only reported on the second-or-later TABLE_MAP
      * with a differing type vector.
      */
-    private fun detectTypeDrift(tableId: Long, newTypes: ByteArray, schema: String, table: String) {
+    private fun detectTypeDrift(
+        tableId: Long,
+        newTypes: ByteArray,
+        schema: String,
+        table: String,
+    ) {
         val previous = columnTypesByTableId.put(tableId, newTypes.copyOf())
         if (previous == null) return
         if (previous.contentEquals(newTypes)) return
@@ -468,11 +491,18 @@ class MySqlBinlogRowChangeSource(
             "MySqlBinlogRowChangeSource: column-type vector for {} (tableId={}) changed " +
                 "from {} to {}; downstream consumers may see truncated/cast values until the " +
                 "next deploy that picks up the schema-evolved row shape.",
-            qualified, tableId, previous.toList(), newTypes.toList(),
+            qualified,
+            tableId,
+            previous.toList(),
+            newTypes.toList(),
         )
         columnNamesByTableId.remove(tableId)
         metrics.recordBinlogSchemaDrift(qualified)
     }
+
+    // ReturnCount: 4 distinct early-exits (already cached, no DataSource,
+    // lookup raised, empty result). Each is a different operational
+    // signal and emits a different log/metric; nesting would obscure them.
 
     /**
      * Resolves and caches column names for [tableId]. Called exactly
@@ -483,36 +513,44 @@ class MySqlBinlogRowChangeSource(
      * metric per *row event*, but we WARN-log only at resolution time
      * (not per row) to avoid log spam.
      */
-    // ReturnCount: 4 distinct early-exits (already cached, no DataSource,
-    // lookup raised, empty result). Each is a different operational
-    // signal and emits a different log/metric; nesting would obscure them.
     @Suppress("ReturnCount")
-    private fun resolveColumnNames(tableId: Long, schema: String, table: String) {
+    private fun resolveColumnNames(
+        tableId: Long,
+        schema: String,
+        table: String,
+    ) {
         if (columnNamesByTableId.containsKey(tableId)) return
         val ds = dataSource
         if (ds == null) {
             logger.warn(
                 "No DataSource configured for MySqlBinlogRowChangeSource; falling back to indexed column names " +
                     "for {}.{} (tableId={}).",
-                schema, table, tableId,
+                schema,
+                table,
+                tableId,
             )
             metrics.recordBinlogColumnResolutionFallback("$schema.$table")
             return
         }
-        val names = try {
-            columnLookup(ds, schema, table)
-        } catch (t: Exception) {
-            logger.warn(
-                "INFORMATION_SCHEMA lookup failed for {}.{} ({}); falling back to indexed column names.",
-                schema, table, t.javaClass.simpleName, t,
-            )
-            metrics.recordBinlogColumnResolutionFallback("$schema.$table")
-            return
-        }
+        val names =
+            try {
+                columnLookup(ds, schema, table)
+            } catch (t: Exception) {
+                logger.warn(
+                    "INFORMATION_SCHEMA lookup failed for {}.{} ({}); falling back to indexed column names.",
+                    schema,
+                    table,
+                    t.javaClass.simpleName,
+                    t,
+                )
+                metrics.recordBinlogColumnResolutionFallback("$schema.$table")
+                return
+            }
         if (names.isNullOrEmpty()) {
             logger.warn(
                 "INFORMATION_SCHEMA returned no columns for {}.{}; falling back to indexed column names.",
-                schema, table,
+                schema,
+                table,
             )
             metrics.recordBinlogColumnResolutionFallback("$schema.$table")
             return
@@ -520,7 +558,11 @@ class MySqlBinlogRowChangeSource(
         columnNamesByTableId[tableId] = names
         logger.debug(
             "Resolved {} columns for {}.{} (tableId={}) via INFORMATION_SCHEMA: {}",
-            names.size, schema, table, tableId, names,
+            names.size,
+            schema,
+            table,
+            tableId,
+            names,
         )
     }
 
@@ -567,13 +609,14 @@ class MySqlBinlogRowChangeSource(
             dataSource: DataSource,
             schema: String,
             table: String,
-        ): List<String>? = dataSource.connection.use { conn ->
-            conn.prepareStatement(COLUMN_LOOKUP_SQL).use { stmt ->
-                stmt.setString(1, schema)
-                stmt.setString(2, table)
-                readColumnNames(stmt)
+        ): List<String>? =
+            dataSource.connection.use { conn ->
+                conn.prepareStatement(COLUMN_LOOKUP_SQL).use { stmt ->
+                    stmt.setString(1, schema)
+                    stmt.setString(2, table)
+                    readColumnNames(stmt)
+                }
             }
-        }
 
         private fun readColumnNames(stmt: java.sql.PreparedStatement): List<String>? =
             stmt.executeQuery().use { rs ->

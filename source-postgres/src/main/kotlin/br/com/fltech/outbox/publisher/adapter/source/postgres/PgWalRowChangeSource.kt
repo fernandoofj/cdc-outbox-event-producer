@@ -22,6 +22,12 @@ import java.time.Instant
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 
+// TooManyFunctions: one method per wal2json change type (Insert,
+// Update, Delete, Message) plus lifecycle (open/poll/ack/close) plus
+// internal helpers (toRowChange, parseLsnOrNull, checkOpen, buffer
+// management). Splitting hurts the adapter-reader's ability to
+// follow the dispatch — the class IS the adapter for one wire format.
+
 /**
  * Postgres row-level [RowChangeSource] backed by the same
  * [PostgresConnector] / wal2json machinery as
@@ -60,11 +66,6 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Single-threaded contract per [RowChangeSource] holds.
  */
-// TooManyFunctions: one method per wal2json change type (Insert,
-// Update, Delete, Message) plus lifecycle (open/poll/ack/close) plus
-// internal helpers (toRowChange, parseLsnOrNull, checkOpen, buffer
-// management). Splitting hurts the adapter-reader's ability to
-// follow the dispatch — the class IS the adapter for one wire format.
 @Suppress("TooManyFunctions")
 class PgWalRowChangeSource(
     private val postgresConfiguration: PostgresConfiguration,
@@ -78,15 +79,17 @@ class PgWalRowChangeSource(
      * connections — same pattern as the MySQL binlog adapter's
      * `clientFactory`.
      */
-    private val connectorFactory:
-        (PostgresConfiguration, ReplicationConfiguration, ConnectionProvider) -> PostgresConnector =
-            { p, r, c -> PostgresConnector(p, r, c) },
+    private val connectorFactory: (
+        PostgresConfiguration,
+        ReplicationConfiguration,
+        ConnectionProvider,
+    ) -> PostgresConnector = { p, r, c -> PostgresConnector(p, r, c) },
 ) : RowChangeSource {
-
-    private val parser = ByteToClassParserStrategy(
-        ByteToClassParserImplV1(objectMapper),
-        ByteToClassParserImplV2(objectMapper),
-    ).selectParser(replicationConfiguration)
+    private val parser =
+        ByteToClassParserStrategy(
+            ByteToClassParserImplV1(objectMapper),
+            ByteToClassParserImplV2(objectMapper),
+        ).selectParser(replicationConfiguration)
 
     private val opened = AtomicBoolean(false)
     private var connector: PostgresConnector? = null
@@ -114,14 +117,17 @@ class PgWalRowChangeSource(
                 .onFailure {
                     logger.warn(
                         "CheckpointStore.load failed for key={} ({}); slot LSN authoritative on Postgres.",
-                        checkpointKey(), it.javaClass.simpleName, it,
+                        checkpointKey(),
+                        it.javaClass.simpleName,
+                        it,
                     )
                 }
                 .onSuccess { persisted ->
                     if (persisted != null) {
                         logger.info(
                             "PgWalRowChangeSource: persisted checkpoint key={} value={} (slot LSN authoritative)",
-                            checkpointKey(), persisted,
+                            checkpointKey(),
+                            persisted,
                         )
                     }
                 }
@@ -165,7 +171,10 @@ class PgWalRowChangeSource(
             } catch (e: Exception) {
                 logger.warn(
                     "CheckpointStore.save failed for key={} value={} ({}); slot LSN still advanced.",
-                    checkpointKey(), rowChange.sourceCheckpoint, e.javaClass.simpleName, e,
+                    checkpointKey(),
+                    rowChange.sourceCheckpoint,
+                    e.javaClass.simpleName,
+                    e,
                 )
             }
         }
@@ -179,10 +188,14 @@ class PgWalRowChangeSource(
         logger.info("PgWalRowChangeSource closed for slot '{}'", replicationConfiguration.slotName)
     }
 
-    private fun checkOpen(): PostgresConnector = connector
-        ?: error("PgWalRowChangeSource must be opened before use")
+    private fun checkOpen(): PostgresConnector =
+        connector
+            ?: error("PgWalRowChangeSource must be opened before use")
 
-    private fun toRowChange(change: InsertChange, fallbackLsn: LogSequenceNumber): RowChange? {
+    private fun toRowChange(
+        change: InsertChange,
+        fallbackLsn: LogSequenceNumber,
+    ): RowChange? {
         val table = qualifiedTable(change.schema, change.table) ?: return null
         val lsn = resolveLsn(change.lsn, fallbackLsn).asString()
         return RowChange(
@@ -194,7 +207,10 @@ class PgWalRowChangeSource(
         )
     }
 
-    private fun toRowChange(change: UpdateChange, fallbackLsn: LogSequenceNumber): RowChange? {
+    private fun toRowChange(
+        change: UpdateChange,
+        fallbackLsn: LogSequenceNumber,
+    ): RowChange? {
         val table = qualifiedTable(change.schema, change.table) ?: return null
         val lsn = resolveLsn(change.lsn, fallbackLsn).asString()
         return RowChange(
@@ -207,7 +223,10 @@ class PgWalRowChangeSource(
         )
     }
 
-    private fun toRowChange(change: DeleteChange, fallbackLsn: LogSequenceNumber): RowChange? {
+    private fun toRowChange(
+        change: DeleteChange,
+        fallbackLsn: LogSequenceNumber,
+    ): RowChange? {
         val table = qualifiedTable(change.schema, change.table) ?: return null
         val lsn = resolveLsn(change.lsn, fallbackLsn).asString()
         return RowChange(
@@ -219,7 +238,10 @@ class PgWalRowChangeSource(
         )
     }
 
-    private fun qualifiedTable(schema: String?, table: String?): String? {
+    private fun qualifiedTable(
+        schema: String?,
+        table: String?,
+    ): String? {
         if (table.isNullOrBlank()) {
             // wal2json V2 should always carry schema+table on I/U/D.
             // A missing value means either the plugin is misconfigured
@@ -242,13 +264,17 @@ class PgWalRowChangeSource(
         return out
     }
 
-    private fun resolveLsn(embedded: String?, fallback: LogSequenceNumber): LogSequenceNumber {
+    private fun resolveLsn(
+        embedded: String?,
+        fallback: LogSequenceNumber,
+    ): LogSequenceNumber {
         if (embedded.isNullOrBlank()) return fallback
         val parsed = LogSequenceNumber.valueOf(embedded)
         return if (parsed == LogSequenceNumber.INVALID_LSN) {
             logger.warn(
                 "Embedded wal2json lsn '{}' parsed as INVALID_LSN; falling back to stream LSN {}",
-                embedded, fallback,
+                embedded,
+                fallback,
             )
             fallback
         } else {

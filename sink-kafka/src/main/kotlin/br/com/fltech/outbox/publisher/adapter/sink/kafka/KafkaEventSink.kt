@@ -25,8 +25,10 @@ import org.springframework.kafka.core.KafkaTemplate
 class KafkaEventSink(
     private val kafkaTemplate: KafkaTemplate<String, ByteArray>,
 ) : EventSink {
-
-    override fun publish(routing: Routing, event: OutboxEvent) {
+    override fun publish(
+        routing: Routing,
+        event: OutboxEvent,
+    ) {
         val record = ProducerRecord<String, ByteArray>(routing.target, event.id, event.payload)
         val merged = event.headers + routing.attributes
         merged.forEach { (k, v) ->

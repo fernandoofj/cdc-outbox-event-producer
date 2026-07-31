@@ -37,19 +37,19 @@ class CdcProcessorHealthIndicator(
     private val lifecycle: CdcProcessorLifecycle,
     private val maxIdle: Duration,
 ) : HealthIndicator {
-
     override fun health(): Health {
         val state = processor.snapshotState()
         val lifecycleRunning = lifecycle.isRunning
         val idleForMs = state.msSinceLastActivity
         val idleDisplay = if (idleForMs == Long.MAX_VALUE) "never" else "${idleForMs}ms"
-        val builder = Health.Builder()
-            .withDetail("slot", state.slot)
-            .withDetail("processorRunning", state.running)
-            .withDetail("lifecycleRunning", lifecycleRunning)
-            .withDetail("pendingFailureCheckpoint", state.pendingFailureCheckpoint ?: "none")
-            .withDetail("idleFor", idleDisplay)
-            .withDetail("maxIdle", "${maxIdle.toMillis()}ms")
+        val builder =
+            Health.Builder()
+                .withDetail("slot", state.slot)
+                .withDetail("processorRunning", state.running)
+                .withDetail("lifecycleRunning", lifecycleRunning)
+                .withDetail("pendingFailureCheckpoint", state.pendingFailureCheckpoint ?: "none")
+                .withDetail("idleFor", idleDisplay)
+                .withDetail("maxIdle", "${maxIdle.toMillis()}ms")
 
         return when {
             state.pendingFailureCheckpoint != null ->

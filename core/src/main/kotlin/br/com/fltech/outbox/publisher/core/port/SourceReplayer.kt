@@ -16,7 +16,6 @@ package br.com.fltech.outbox.publisher.core.port
  * dispatch a replay request to the right adapter.
  */
 interface SourceReplayer {
-
     /** Symbolic source label used by the dispatcher to pick the right adapter. */
     val sourceKind: String
 
@@ -30,7 +29,10 @@ interface SourceReplayer {
      * the request cannot be honoured (e.g., the Postgres stub) so
      * the dispatcher fails fast rather than silently emitting nothing.
      */
-    fun openBoundedSource(fromPosition: String, toPosition: String): RowChangeSource
+    fun openBoundedSource(
+        fromPosition: String,
+        toPosition: String,
+    ): RowChangeSource
 }
 
 /**

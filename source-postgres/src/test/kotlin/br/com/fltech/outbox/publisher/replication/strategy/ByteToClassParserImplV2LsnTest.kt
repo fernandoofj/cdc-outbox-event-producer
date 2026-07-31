@@ -15,15 +15,15 @@ import kotlin.test.assertNull
  * high-water mark.
  */
 class ByteToClassParserImplV2LsnTest {
-
     private val parser = ByteToClassParserImplV2(defaultMapper)
 
     @Test
     fun `parses lsn when wal2json include-lsn is enabled`() {
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"action":"M","prefix":"orders.events",
              "content":"{\"event\":1}","lsn":"0/16E8198"}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val change = parser.parse(payload).single()
 
@@ -35,9 +35,10 @@ class ByteToClassParserImplV2LsnTest {
 
     @Test
     fun `null lsn is tolerated when wal2json include-lsn is disabled`() {
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"action":"M","prefix":"orders.events","content":"{\"event\":1}"}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val change = parser.parse(payload).single() as MessageChange
 
@@ -46,9 +47,10 @@ class ByteToClassParserImplV2LsnTest {
 
     @Test
     fun `non-message records do not carry an lsn on the parsed Change`() {
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"action":"I","lsn":"0/16E8198"}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val change = parser.parse(payload).single()
 

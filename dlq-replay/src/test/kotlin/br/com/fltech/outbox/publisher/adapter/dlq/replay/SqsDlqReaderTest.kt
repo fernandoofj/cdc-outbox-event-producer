@@ -4,9 +4,6 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 import org.junit.jupiter.api.assertThrows
 import software.amazon.awssdk.services.sqs.SqsClient
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest
@@ -19,9 +16,11 @@ import software.amazon.awssdk.services.sqs.model.QueueAttributeName
 import software.amazon.awssdk.services.sqs.model.QueueDoesNotExistException
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageResponse
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class SqsDlqReaderTest {
-
     private val sqs = mockk<SqsClient>(relaxed = true)
     private val queueName = "cdc-outbox-dlq"
     private val queueUrl = "https://sqs.local/$queueName"
@@ -102,7 +101,8 @@ class SqsDlqReaderTest {
     fun `peek tolerates extra unknown fields in the envelope JSON`() {
         // @JsonIgnoreProperties guarantees forward-compat when
         // the writer adds fields the reader does not know about.
-        val withExtras = """
+        val withExtras =
+            """
             {
               "originalPrefix": "sns://orders-events",
               "lsn": "0/16E8198",
@@ -112,7 +112,7 @@ class SqsDlqReaderTest {
               "deadLetteredAt": "2026-05-15T10:00:00Z",
               "newFieldFromFuture": "ignored"
             }
-        """.trimIndent()
+            """.trimIndent()
         every { sqs.receiveMessage(any<ReceiveMessageRequest>()) } returns
             ReceiveMessageResponse.builder()
                 .messages(Message.builder().receiptHandle("h").body(withExtras).build())

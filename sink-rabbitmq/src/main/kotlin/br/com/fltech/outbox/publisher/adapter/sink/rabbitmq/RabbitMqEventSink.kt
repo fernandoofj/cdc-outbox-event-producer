@@ -26,18 +26,21 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate
 class RabbitMqEventSink(
     private val rabbitTemplate: RabbitTemplate,
 ) : EventSink {
-
-    override fun publish(routing: Routing, event: OutboxEvent) {
+    override fun publish(
+        routing: Routing,
+        event: OutboxEvent,
+    ) {
         val (exchange, routingKey) = parseTarget(routing.target)
         val merged = event.headers + routing.attributes
-        val properties = MessageProperties().apply {
-            // spring-amqp 4.x: getMessageId()/getTimestamp() and their
-            // setters disagree on JSpecify nullability, so Kotlin doesn't
-            // synthesize a mutable property here — plain setter calls.
-            setMessageId(event.id)
-            setTimestamp(java.util.Date.from(event.occurredAt))
-            merged.forEach { (k, v) -> setHeader(k, v) }
-        }
+        val properties =
+            MessageProperties().apply {
+                // spring-amqp 4.x: getMessageId()/getTimestamp() and their
+                // setters disagree on JSpecify nullability, so Kotlin doesn't
+                // synthesize a mutable property here — plain setter calls.
+                setMessageId(event.id)
+                setTimestamp(java.util.Date.from(event.occurredAt))
+                merged.forEach { (k, v) -> setHeader(k, v) }
+            }
         val message: Message = MessageBuilder.withBody(event.payload).andProperties(properties).build()
         rabbitTemplate.send(exchange, routingKey, message)
     }

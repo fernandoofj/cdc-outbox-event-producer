@@ -15,7 +15,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DlqReplayServiceTest {
-
     private val reader = mockk<DlqReader>(relaxed = true)
     private val registry = mockk<EventSinkRegistry>(relaxed = true)
     private val meterRegistry = SimpleMeterRegistry()
@@ -47,9 +46,10 @@ class DlqReplayServiceTest {
         assertEquals(envelope.lsn, capturedEvent.captured.sourceCheckpoint)
         verify { reader.delete(DlqReader.Handle("AQEB-handle")) }
 
-        val counter = meterRegistry.find(CdcOutboxMetrics.DLQ_REPLAYS)
-            .tag(CdcOutboxMetrics.TAG_OUTCOME, "success")
-            .counter()
+        val counter =
+            meterRegistry.find(CdcOutboxMetrics.DLQ_REPLAYS)
+                .tag(CdcOutboxMetrics.TAG_OUTCOME, "success")
+                .counter()
         assertEquals(1.0, counter?.count())
     }
 
@@ -63,9 +63,10 @@ class DlqReplayServiceTest {
         assertTrue(outcome is DlqReplayService.ReplayOutcome.PublishFailed)
         verify(exactly = 0) { reader.delete(any()) }
 
-        val counter = meterRegistry.find(CdcOutboxMetrics.DLQ_REPLAYS)
-            .tag(CdcOutboxMetrics.TAG_OUTCOME, "publish_failed")
-            .counter()
+        val counter =
+            meterRegistry.find(CdcOutboxMetrics.DLQ_REPLAYS)
+                .tag(CdcOutboxMetrics.TAG_OUTCOME, "publish_failed")
+                .counter()
         assertEquals(1.0, counter?.count())
     }
 
@@ -79,9 +80,10 @@ class DlqReplayServiceTest {
 
         assertTrue(outcome is DlqReplayService.ReplayOutcome.SuccessButDeleteFailed)
 
-        val counter = meterRegistry.find(CdcOutboxMetrics.DLQ_REPLAYS)
-            .tag(CdcOutboxMetrics.TAG_OUTCOME, "success_delete_failed")
-            .counter()
+        val counter =
+            meterRegistry.find(CdcOutboxMetrics.DLQ_REPLAYS)
+                .tag(CdcOutboxMetrics.TAG_OUTCOME, "success_delete_failed")
+                .counter()
         assertEquals(1.0, counter?.count())
     }
 
@@ -146,9 +148,10 @@ class DlqReplayServiceTest {
         assertTrue(outcome is DlqReplayService.AbandonOutcome.Success)
         verify { reader.delete(DlqReader.Handle("AQEB-handle")) }
 
-        val counter = meterRegistry.find(CdcOutboxMetrics.DLQ_REPLAYS)
-            .tag(CdcOutboxMetrics.TAG_OUTCOME, "abandoned")
-            .counter()
+        val counter =
+            meterRegistry.find(CdcOutboxMetrics.DLQ_REPLAYS)
+                .tag(CdcOutboxMetrics.TAG_OUTCOME, "abandoned")
+                .counter()
         assertEquals(1.0, counter?.count())
     }
 
@@ -159,22 +162,24 @@ class DlqReplayServiceTest {
         val outcome = service.abandon("AQEB-handle")
 
         assertTrue(outcome is DlqReplayService.AbandonOutcome.Failed)
-        val counter = meterRegistry.find(CdcOutboxMetrics.DLQ_REPLAYS)
-            .tag(CdcOutboxMetrics.TAG_OUTCOME, "abandon_failed")
-            .counter()
+        val counter =
+            meterRegistry.find(CdcOutboxMetrics.DLQ_REPLAYS)
+                .tag(CdcOutboxMetrics.TAG_OUTCOME, "abandon_failed")
+                .counter()
         assertEquals(1.0, counter?.count())
     }
 
     @Test
     fun `replay falls back to current time when deadLetteredAt does not parse`() {
-        val malformedDate = DlqEnvelope(
-            originalPrefix = "sns://orders-events",
-            lsn = "0/16E8198",
-            content = "{}",
-            failureType = "TimeoutException",
-            failureMessage = "",
-            deadLetteredAt = "not-a-valid-instant",
-        )
+        val malformedDate =
+            DlqEnvelope(
+                originalPrefix = "sns://orders-events",
+                lsn = "0/16E8198",
+                content = "{}",
+                failureType = "TimeoutException",
+                failureMessage = "",
+                deadLetteredAt = "not-a-valid-instant",
+            )
         val capturedEvent = slot<OutboxEvent>()
         every { registry.publish(any(), capture(capturedEvent)) } returns Unit
 
@@ -184,12 +189,13 @@ class DlqReplayServiceTest {
         assertTrue(capturedEvent.captured.occurredAt.epochSecond > 0)
     }
 
-    private fun sampleEnvelope(prefix: String) = DlqEnvelope(
-        originalPrefix = prefix,
-        lsn = "0/16E8198",
-        content = """{"orderId":42}""",
-        failureType = "TimeoutException",
-        failureMessage = "publish timed out",
-        deadLetteredAt = "2026-05-15T10:00:00Z",
-    )
+    private fun sampleEnvelope(prefix: String) =
+        DlqEnvelope(
+            originalPrefix = prefix,
+            lsn = "0/16E8198",
+            content = """{"orderId":42}""",
+            failureType = "TimeoutException",
+            failureMessage = "publish timed out",
+            deadLetteredAt = "2026-05-15T10:00:00Z",
+        )
 }

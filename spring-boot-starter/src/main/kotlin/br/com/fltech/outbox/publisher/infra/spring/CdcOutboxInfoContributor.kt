@@ -52,37 +52,42 @@ class CdcOutboxInfoContributor(
     private val sinkRegistry: ObjectProvider<EventSinkRegistry>,
     private val source: ObjectProvider<CdcSource>,
 ) : InfoContributor {
-
     override fun contribute(builder: Info.Builder) {
-        val details = linkedMapOf<String, Any?>(
-            "version" to libraryVersion(),
-            "processor" to mapOf("kind" to properties.processor.kind.name),
-            "replication" to mapOf(
-                "slot" to properties.replication.slotName,
-                "outputPlugin" to properties.replication.outputPlugin,
-                "formatVersion" to properties.replication.formatVersion.name,
-            ),
-            "source" to mapOf(
-                "type" to (source.ifAvailable?.javaClass?.simpleName ?: "none"),
-            ),
-            "sinks" to mapOf(
-                "schemes" to (
-                    sinkRegistry.ifAvailable?.knownSchemes()?.sorted()
-                        ?: emptyList<String>()
+        val details =
+            linkedMapOf<String, Any?>(
+                "version" to libraryVersion(),
+                "processor" to mapOf("kind" to properties.processor.kind.name),
+                "replication" to
+                    mapOf(
+                        "slot" to properties.replication.slotName,
+                        "outputPlugin" to properties.replication.outputPlugin,
+                        "formatVersion" to properties.replication.formatVersion.name,
                     ),
-            ),
-            "mappings" to mapOf("count" to properties.mappings.size),
-            "checkpoint" to mapOf(
-                "enabled" to properties.checkpoint.enabled,
-                "directory" to properties.checkpoint.directory,
-            ),
-            "lag" to mapOf(
-                "enabled" to properties.lag.enabled,
-                "interval" to properties.lag.interval.toString(),
-            ),
-            "dlqReplay" to mapOf("enabled" to properties.dlq.replay.enabled),
-            "replay" to mapOf("enabled" to properties.replay.enabled),
-        )
+                "source" to
+                    mapOf(
+                        "type" to (source.ifAvailable?.javaClass?.simpleName ?: "none"),
+                    ),
+                "sinks" to
+                    mapOf(
+                        "schemes" to (
+                            sinkRegistry.ifAvailable?.knownSchemes()?.sorted()
+                                ?: emptyList<String>()
+                        ),
+                    ),
+                "mappings" to mapOf("count" to properties.mappings.size),
+                "checkpoint" to
+                    mapOf(
+                        "enabled" to properties.checkpoint.enabled,
+                        "directory" to properties.checkpoint.directory,
+                    ),
+                "lag" to
+                    mapOf(
+                        "enabled" to properties.lag.enabled,
+                        "interval" to properties.lag.interval.toString(),
+                    ),
+                "dlqReplay" to mapOf("enabled" to properties.dlq.replay.enabled),
+                "replay" to mapOf("enabled" to properties.replay.enabled),
+            )
         builder.withDetail("cdc-outbox", details)
     }
 
@@ -91,6 +96,5 @@ class CdcOutboxInfoContributor(
      * manifest, falling back to `unknown` on exploded classpaths
      * (tests, IDE runs).
      */
-    private fun libraryVersion(): String =
-        this::class.java.`package`?.implementationVersion ?: "unknown"
+    private fun libraryVersion(): String = this::class.java.`package`?.implementationVersion ?: "unknown"
 }

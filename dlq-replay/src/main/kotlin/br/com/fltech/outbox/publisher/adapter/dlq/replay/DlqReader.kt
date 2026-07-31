@@ -9,7 +9,6 @@ package br.com.fltech.outbox.publisher.adapter.dlq.replay
  * thread. Concurrent invocations are not supported.
  */
 interface DlqReader {
-
     /**
      * Returns up to [max] envelopes from the DLQ without consuming
      * them. Each entry carries a [Handle] the operator can later use

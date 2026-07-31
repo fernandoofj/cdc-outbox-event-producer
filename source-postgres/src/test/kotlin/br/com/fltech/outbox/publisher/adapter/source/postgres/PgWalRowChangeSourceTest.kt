@@ -7,10 +7,10 @@ import br.com.fltech.outbox.publisher.replication.config.PostgresConfigurationMo
 import br.com.fltech.outbox.publisher.replication.config.ReplicationConfigurationMother
 import br.com.fltech.outbox.publisher.replication.connector.ConnectionProvider
 import br.com.fltech.outbox.publisher.replication.connector.PostgresConnector
+import io.mockk.Runs
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
-import io.mockk.Runs
 import io.mockk.verify
 import org.junit.jupiter.api.Test
 import org.postgresql.replication.LogSequenceNumber
@@ -27,7 +27,6 @@ import kotlin.test.assertNull
  * fan-out.
  */
 class PgWalRowChangeSourceTest {
-
     private val pgConfig = PostgresConfigurationMother.build()
     private val replicationConfig = ReplicationConfigurationMother.build()
     private val connectionProvider = mockk<ConnectionProvider>()
@@ -56,11 +55,12 @@ class PgWalRowChangeSourceTest {
 
     @Test
     fun `INSERT row emits a RowChange with after-image columns and lsn checkpoint`() {
-        val payload = """
+        val payload =
+            """
             {"xid":1,"action":"I","schema":"public","table":"orders","lsn":"0/16E8198",
              "columns":[{"name":"id","type":"integer","value":42},
                         {"name":"status","type":"text","value":"NEW"}]}
-        """.trimIndent()
+            """.trimIndent()
         val connector = mockk<PostgresConnector>(relaxed = true)
         every { connector.readPending() } returns payload.asBuffer() andThen null
         every { connector.lastReceivedLsn() } returns LogSequenceNumber.valueOf("0/16E0000")
@@ -79,11 +79,12 @@ class PgWalRowChangeSourceTest {
 
     @Test
     fun `UPDATE row emits before via identity and after via columns`() {
-        val payload = """
+        val payload =
+            """
             {"xid":1,"action":"U","schema":"public","table":"orders","lsn":"0/16E8200",
              "columns":[{"name":"id","value":42},{"name":"status","value":"PAID"}],
              "identity":[{"name":"id","value":42}]}
-        """.trimIndent()
+            """.trimIndent()
         val connector = mockk<PostgresConnector>(relaxed = true)
         every { connector.readPending() } returns payload.asBuffer() andThen null
         every { connector.lastReceivedLsn() } returns LogSequenceNumber.valueOf("0/16E0000")
@@ -102,10 +103,11 @@ class PgWalRowChangeSourceTest {
 
     @Test
     fun `DELETE row emits before via identity and no after-image`() {
-        val payload = """
+        val payload =
+            """
             {"xid":1,"action":"D","schema":"public","table":"orders","lsn":"0/16E8300",
              "identity":[{"name":"id","value":42}]}
-        """.trimIndent()
+            """.trimIndent()
         val connector = mockk<PostgresConnector>(relaxed = true)
         every { connector.readPending() } returns payload.asBuffer() andThen null
         every { connector.lastReceivedLsn() } returns LogSequenceNumber.valueOf("0/16E0000")
@@ -123,9 +125,10 @@ class PgWalRowChangeSourceTest {
 
     @Test
     fun `MessageChange records are ignored — the legacy adapter owns that flow`() {
-        val payload = """
+        val payload =
+            """
             {"xid":1,"action":"M","prefix":"sns://t","content":"{}","lsn":"0/16E8400"}
-        """.trimIndent()
+            """.trimIndent()
         val connector = mockk<PostgresConnector>(relaxed = true)
         // First poll consumes the message record (returns null since
         // we ignore it), second poll returns null genuinely.
@@ -148,13 +151,14 @@ class PgWalRowChangeSourceTest {
         val src = newSource(connector, checkpointStore = store)
         src.open()
 
-        val row = RowChange(
-            op = RowChange.Op.INSERT,
-            table = "public.orders",
-            sourceCheckpoint = "0/16E8198",
-            occurredAt = java.time.Instant.EPOCH,
-            after = emptyMap(),
-        )
+        val row =
+            RowChange(
+                op = RowChange.Op.INSERT,
+                table = "public.orders",
+                sourceCheckpoint = "0/16E8198",
+                occurredAt = java.time.Instant.EPOCH,
+                after = emptyMap(),
+            )
         src.ack(row)
 
         verify { connector.setStreamLsn(LogSequenceNumber.valueOf("0/16E8198")) }
@@ -173,13 +177,15 @@ class PgWalRowChangeSourceTest {
         val src = newSource(connector, checkpointStore = store)
         src.open()
 
-        val row = RowChange(
-            op = RowChange.Op.INSERT,
-            table = "public.orders",
-            sourceCheckpoint = "0/0", // INVALID_LSN
-            occurredAt = java.time.Instant.EPOCH,
-            after = emptyMap(),
-        )
+        val row =
+            RowChange(
+                op = RowChange.Op.INSERT,
+                table = "public.orders",
+                // INVALID_LSN
+                sourceCheckpoint = "0/0",
+                occurredAt = java.time.Instant.EPOCH,
+                after = emptyMap(),
+            )
         src.ack(row)
 
         verify(exactly = 0) { connector.setStreamLsn(any()) }

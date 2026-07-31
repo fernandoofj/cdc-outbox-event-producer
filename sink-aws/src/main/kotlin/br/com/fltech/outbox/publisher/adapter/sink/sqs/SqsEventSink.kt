@@ -17,8 +17,10 @@ import io.awspring.cloud.sqs.operations.SqsTemplate
 class SqsEventSink(
     private val sqsTemplate: SqsTemplate,
 ) : EventSink {
-
-    override fun publish(routing: Routing, event: OutboxEvent) {
+    override fun publish(
+        routing: Routing,
+        event: OutboxEvent,
+    ) {
         val attributes: Map<String, Any> = event.headers + routing.attributes
         sqsTemplate.send { it.queue(routing.target).payload(event.payloadAsString).headers(attributes) }
     }

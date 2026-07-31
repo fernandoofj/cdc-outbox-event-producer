@@ -17,6 +17,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
+// LongParameterList: 7 collaborators (replayers map, mapping rules,
+// sink registry, metrics, two cap knobs, executor factory) — each
+// is a distinct concern the consumer can override.
+
 /**
  * Orchestrates source-side replay jobs. Holds a single-active-job
  * mutex so a misclick on the operator endpoint cannot launch two
@@ -38,9 +42,6 @@ import java.util.concurrent.atomic.AtomicReference
  * operator can route a replay to a different sink (e.g., a test
  * topic) without disturbing the original consumers.
  */
-// LongParameterList: 7 collaborators (replayers map, mapping rules,
-// sink registry, metrics, two cap knobs, executor factory) — each
-// is a distinct concern the consumer can override.
 @Suppress("LongParameterList")
 class ReplayService(
     private val replayers: Map<String, SourceReplayer>,
@@ -51,7 +52,6 @@ class ReplayService(
     private val jobTimeoutMs: Long = DEFAULT_TIMEOUT_MS,
     private val executorFactory: () -> ExecutorService = { defaultExecutor() },
 ) {
-
     private val active = AtomicReference<ReplayJob?>(null)
     private val finished = ConcurrentHashMap<String, ReplayJob>()
 
@@ -62,20 +62,22 @@ class ReplayService(
      * when another job is already running.
      */
     fun startReplay(request: ReplayRequest): ReplayJob {
-        val replayer = replayers[request.sourceKind]
-            ?: throw UnsupportedReplayException(
-                "no SourceReplayer registered for sourceKind='${request.sourceKind}'; " +
-                    "known: ${replayers.keys}",
+        val replayer =
+            replayers[request.sourceKind]
+                ?: throw UnsupportedReplayException(
+                    "no SourceReplayer registered for sourceKind='${request.sourceKind}'; " +
+                        "known: ${replayers.keys}",
+                )
+        val job =
+            ReplayJob(
+                jobId = UUID.randomUUID().toString(),
+                sourceKind = request.sourceKind,
+                fromPosition = request.fromPosition,
+                toPosition = request.toPosition,
+                dryRun = request.dryRun,
+                override = request.override,
+                startedAt = Instant.now(),
             )
-        val job = ReplayJob(
-            jobId = UUID.randomUUID().toString(),
-            sourceKind = request.sourceKind,
-            fromPosition = request.fromPosition,
-            toPosition = request.toPosition,
-            dryRun = request.dryRun,
-            override = request.override,
-            startedAt = Instant.now(),
-        )
         if (!active.compareAndSet(null, job)) {
             throw ConcurrentReplayException(
                 "another replay is already running: jobId=${active.get()?.jobId}",
@@ -96,7 +98,11 @@ class ReplayService(
     /** List of jobs that have completed since process start (capped to avoid leak). */
     fun finishedJobs(): List<ReplayJob> = finished.values.toList()
 
-    private fun run(job: ReplayJob, replayer: SourceReplayer, executor: ExecutorService) {
+    private fun run(
+        job: ReplayJob,
+        replayer: SourceReplayer,
+        executor: ExecutorService,
+    ) {
         val started = System.currentTimeMillis()
         try {
             val source = replayer.openBoundedSource(job.fromPosition, job.toPosition)
@@ -113,7 +119,12 @@ class ReplayService(
             // it builds the daemon-thread factory.
             logger.error(
                 "ReplayService: job {} failed (sourceKind={}, from={}, to={}, cause={})",
-                job.jobId, job.sourceKind, job.fromPosition, job.toPosition, e.javaClass.simpleName, e,
+                job.jobId,
+                job.sourceKind,
+                job.fromPosition,
+                job.toPosition,
+                e.javaClass.simpleName,
+                e,
             )
             job.status = ReplayStatus.FAILED
             job.errorClass = e.javaClass.simpleName
@@ -153,6 +164,10 @@ class ReplayService(
         job.eventsProcessed = count
     }
 
+    // ReturnCount: 4 distinct DrainStep outcomes (Timeout, Capped,
+    // Drained, Process). Guard-clause shape mirrors the existing
+    // project convention.
+
     /**
      * One iteration of the drain loop. Decides whether to process a
      * row, stop because the cap was hit, stop because the window
@@ -160,9 +175,6 @@ class ReplayService(
      * `drainLoop` so the loop body is a single `when` instead of a
      * chain of `break`/`continue` jumps.
      */
-    // ReturnCount: 4 distinct DrainStep outcomes (Timeout, Capped,
-    // Drained, Process). Guard-clause shape mirrors the existing
-    // project convention.
     @Suppress("ReturnCount")
     private fun nextStep(
         job: ReplayJob,
@@ -180,7 +192,8 @@ class ReplayService(
         if (count >= maxEventsPerJob) {
             logger.warn(
                 "ReplayService: job {} hit max-events cap ({}); stopping early",
-                job.jobId, maxEventsPerJob,
+                job.jobId,
+                maxEventsPerJob,
             )
             return DrainStep.Capped
         }
@@ -194,9 +207,7 @@ class ReplayService(
      * One follow-up poll disambiguates — two consecutive nulls mean
      * window drained.
      */
-    private fun drainOrSecondPoll(
-        source: br.com.fltech.outbox.publisher.core.port.RowChangeSource,
-    ): DrainStep {
+    private fun drainOrSecondPoll(source: br.com.fltech.outbox.publisher.core.port.RowChangeSource): DrainStep {
         val second = source.poll() ?: return DrainStep.Drained
         return DrainStep.Process(second)
     }
@@ -204,8 +215,11 @@ class ReplayService(
     /** Tri-state outcome of a drain-loop iteration. */
     private sealed class DrainStep {
         data class Timeout(val cause: ReplayTimeoutException) : DrainStep()
+
         object Capped : DrainStep()
+
         object Drained : DrainStep()
+
         data class Process(
             val rowChange: br.com.fltech.outbox.publisher.core.domain.RowChange,
         ) : DrainStep()
@@ -216,10 +230,11 @@ class ReplayService(
         rowChange: br.com.fltech.outbox.publisher.core.domain.RowChange,
         count: Long,
     ) {
-        val mapped = mappingRules.map(rowChange) ?: run {
-            job.eventsFilteredOut += 1
-            return
-        }
+        val mapped =
+            mappingRules.map(rowChange) ?: run {
+                job.eventsFilteredOut += 1
+                return
+            }
         val routing = applyOverride(mapped.routing, job.override)
         val event = mapped.copy(routing = routing)
         if (job.dryRun) {
@@ -235,28 +250,36 @@ class ReplayService(
             metrics.recordReplayEvent(job.sourceKind, routing.scheme, "publish_failed")
             logger.warn(
                 "ReplayService: job {} publish #{} failed (scheme={}, cause={}); continuing replay",
-                job.jobId, count, routing.scheme, e.javaClass.simpleName, e,
+                job.jobId,
+                count,
+                routing.scheme,
+                e.javaClass.simpleName,
+                e,
             )
         }
     }
 
-    private fun applyOverride(original: Routing, override: ReplayRequest.RoutingOverride?): Routing {
+    private fun applyOverride(
+        original: Routing,
+        override: ReplayRequest.RoutingOverride?,
+    ): Routing {
         if (override == null) return original
         return Routing(scheme = override.scheme, target = override.target, attributes = original.attributes)
     }
 
-    private fun OutboxEvent.copy(routing: Routing): OutboxEvent = OutboxEvent(
-        id = id,
-        routing = routing,
-        payload = payload,
-        occurredAt = occurredAt,
-        sourceCheckpoint = sourceCheckpoint,
-    )
+    private fun OutboxEvent.copy(routing: Routing): OutboxEvent =
+        OutboxEvent(
+            id = id,
+            routing = routing,
+            payload = payload,
+            occurredAt = occurredAt,
+            sourceCheckpoint = sourceCheckpoint,
+        )
 
     companion object {
         private val logger = LoggerFactory.getLogger(ReplayService::class.java)
         const val DEFAULT_MAX_EVENTS: Int = 100_000
-        const val DEFAULT_TIMEOUT_MS: Long = 10 * 60 * 1000L  // 10 minutes
+        const val DEFAULT_TIMEOUT_MS: Long = 10 * 60 * 1000L // 10 minutes
 
         private fun defaultExecutor(): ExecutorService =
             OneShotExecutor(
@@ -314,6 +337,7 @@ data class ReplayJob(
 enum class ReplayStatus { RUNNING, SUCCEEDED, FAILED }
 
 class ConcurrentReplayException(message: String) : RuntimeException(message)
+
 class ReplayTimeoutException(message: String) : RuntimeException(message)
 
 /**

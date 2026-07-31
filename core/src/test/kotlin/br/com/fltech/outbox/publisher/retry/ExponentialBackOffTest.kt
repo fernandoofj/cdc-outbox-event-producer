@@ -8,15 +8,15 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ExponentialBackOffTest {
-
     @Test
     fun `no-jitter policy doubles each attempt and caps at max`() {
-        val policy = ExponentialBackOff(
-            initial = Duration.ofMillis(100),
-            max = Duration.ofMillis(800),
-            multiplier = 2.0,
-            jitter = 0.0,
-        )
+        val policy =
+            ExponentialBackOff(
+                initial = Duration.ofMillis(100),
+                max = Duration.ofMillis(800),
+                multiplier = 2.0,
+                jitter = 0.0,
+            )
 
         assertEquals(100L, policy.nextDelay(1).toMillis(), "attempt 1: initial")
         assertEquals(200L, policy.nextDelay(2).toMillis(), "attempt 2: doubled")
@@ -27,25 +27,27 @@ class ExponentialBackOffTest {
 
     @Test
     fun `attempt less than 1 is treated as attempt 1`() {
-        val policy = ExponentialBackOff(
-            initial = Duration.ofMillis(500),
-            max = Duration.ofSeconds(10),
-            multiplier = 2.0,
-            jitter = 0.0,
-        )
+        val policy =
+            ExponentialBackOff(
+                initial = Duration.ofMillis(500),
+                max = Duration.ofSeconds(10),
+                multiplier = 2.0,
+                jitter = 0.0,
+            )
         assertEquals(500L, policy.nextDelay(0).toMillis())
         assertEquals(500L, policy.nextDelay(-5).toMillis())
     }
 
     @Test
     fun `jitter keeps each delay within plus or minus the jitter factor of the base`() {
-        val policy = ExponentialBackOff(
-            initial = Duration.ofMillis(1000),
-            max = Duration.ofSeconds(10),
-            multiplier = 2.0,
-            jitter = 0.3,
-            random = Random(seed = 42L),
-        )
+        val policy =
+            ExponentialBackOff(
+                initial = Duration.ofMillis(1000),
+                max = Duration.ofSeconds(10),
+                multiplier = 2.0,
+                jitter = 0.3,
+                random = Random(seed = 42L),
+            )
 
         repeat(BIG_SAMPLE) {
             val attempt = (it % 5) + 1

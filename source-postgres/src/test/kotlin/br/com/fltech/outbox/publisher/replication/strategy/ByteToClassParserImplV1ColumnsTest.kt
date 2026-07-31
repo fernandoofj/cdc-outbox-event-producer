@@ -5,12 +5,12 @@ import br.com.fltech.outbox.publisher.replication.model.DeleteChange
 import br.com.fltech.outbox.publisher.replication.model.InsertChange
 import br.com.fltech.outbox.publisher.replication.model.MessageChange
 import br.com.fltech.outbox.publisher.replication.model.UpdateChange
+import org.junit.jupiter.api.Test
 import java.nio.ByteBuffer
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.Test
 
 /**
  * Parity coverage for [ByteToClassParserImplV1] mirroring the V2
@@ -26,19 +26,19 @@ import org.junit.jupiter.api.Test
  * see the same in-memory representation regardless of plugin version.
  */
 class ByteToClassParserImplV1ColumnsTest {
-
     private val parser = ByteToClassParserImplV1(defaultMapper)
 
     @Test
     fun `INSERT surfaces columns from parallel arrays and leaves identity null`() {
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"nextlsn":"0/16E8198","change":[
               {"kind":"insert","schema":"public","table":"orders",
                "columnnames":["id","status","total_cents"],
                "columntypes":["integer","text","bigint"],
                "columnvalues":[42,"PENDING",999]}
             ]}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val change = parser.parse(payload).single() as InsertChange
 
@@ -54,7 +54,8 @@ class ByteToClassParserImplV1ColumnsTest {
 
     @Test
     fun `UPDATE surfaces both columns (post-image) and identity (oldkeys)`() {
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"nextlsn":"0/16E8200","change":[
               {"kind":"update","schema":"public","table":"orders",
                "columnnames":["id","status"],
@@ -66,7 +67,7 @@ class ByteToClassParserImplV1ColumnsTest {
                  "keyvalues":[42]
                }}
             ]}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val change = parser.parse(payload).single() as UpdateChange
 
@@ -87,7 +88,8 @@ class ByteToClassParserImplV1ColumnsTest {
 
     @Test
     fun `DELETE leaves columns null and surfaces identity from oldkeys`() {
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"nextlsn":"0/16E8300","change":[
               {"kind":"delete","schema":"public","table":"orders",
                "oldkeys":{
@@ -96,7 +98,7 @@ class ByteToClassParserImplV1ColumnsTest {
                  "keyvalues":[42]
                }}
             ]}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val change = parser.parse(payload).single() as DeleteChange
 
@@ -114,7 +116,8 @@ class ByteToClassParserImplV1ColumnsTest {
 
     @Test
     fun `wrapper nextlsn is propagated to every child change in the batch`() {
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"nextlsn":"0/16E8400","change":[
               {"kind":"insert","schema":"public","table":"orders",
                "columnnames":["id"],"columntypes":["integer"],"columnvalues":[1]},
@@ -124,7 +127,7 @@ class ByteToClassParserImplV1ColumnsTest {
               {"kind":"delete","schema":"public","table":"orders",
                "oldkeys":{"keynames":["id"],"keytypes":["integer"],"keyvalues":[1]}}
             ]}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val changes = parser.parse(payload)
 
@@ -136,12 +139,13 @@ class ByteToClassParserImplV1ColumnsTest {
 
     @Test
     fun `wrapper without nextlsn leaves child lsn null so the producer can fall back`() {
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"change":[
               {"kind":"insert","schema":"public","table":"orders",
                "columnnames":["id"],"columntypes":["integer"],"columnvalues":[1]}
             ]}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val change = parser.parse(payload).single() as InsertChange
 
@@ -154,13 +158,14 @@ class ByteToClassParserImplV1ColumnsTest {
         // arriving in the same wrapper as legitimate row records — we
         // MUST keep draining instead of head-of-line blocking the
         // whole transaction.
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"nextlsn":"0/16E8500","change":[
               {"kind":"truncate","schema":"public","table":"orders"},
               {"kind":"insert","schema":"public","table":"orders",
                "columnnames":["id"],"columntypes":["integer"],"columnvalues":[1]}
             ]}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val changes = parser.parse(payload)
 
@@ -176,14 +181,15 @@ class ByteToClassParserImplV1ColumnsTest {
 
     @Test
     fun `UPDATE without oldkeys degrades to null identity without throwing`() {
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"nextlsn":"0/16E8600","change":[
               {"kind":"update","schema":"public","table":"orders",
                "columnnames":["id","status"],
                "columntypes":["integer","text"],
                "columnvalues":[42,"PAID"]}
             ]}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val change = parser.parse(payload).single() as UpdateChange
 
@@ -193,14 +199,15 @@ class ByteToClassParserImplV1ColumnsTest {
 
     @Test
     fun `mismatched columnnames vs columnvalues lengths degrade to null columns and keep draining`() {
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"nextlsn":"0/16E8700","change":[
               {"kind":"insert","schema":"public","table":"orders",
                "columnnames":["id","status"],
                "columntypes":["integer","text"],
                "columnvalues":[42]}
             ]}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val change = parser.parse(payload).single() as InsertChange
 
@@ -214,14 +221,15 @@ class ByteToClassParserImplV1ColumnsTest {
         // wal2json V1 emits JSON `null` for NULL column values; the
         // parser must not coalesce them to an empty string or drop the
         // column entirely.
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"nextlsn":"0/16E8800","change":[
               {"kind":"insert","schema":"public","table":"orders",
                "columnnames":["id","notes"],
                "columntypes":["integer","text"],
                "columnvalues":[42,null]}
             ]}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val change = parser.parse(payload).single() as InsertChange
         val columns = assertNotNull(change.columns)
@@ -239,12 +247,13 @@ class ByteToClassParserImplV1ColumnsTest {
         // translation step we must keep producing a MessageChange
         // so SlotReaderMessageProducer's `change as MessageChange`
         // cast keeps working.
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"nextlsn":"0/16E8900","change":[
               {"kind":"message","transactional":true,
                "prefix":"orders.events","content":"{\"event\":1}"}
             ]}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val change = parser.parse(payload).single() as MessageChange
 
@@ -260,13 +269,14 @@ class ByteToClassParserImplV1ColumnsTest {
         // wal2json builds without `pg_logical_emit_message` support
         // could in theory emit a partial `message` record; the parser
         // must not blow up the whole batch.
-        val payload = """
+        val payload =
+            """
             {"xid":12345,"nextlsn":"0/16E8A00","change":[
               {"kind":"message","prefix":"orders.events"},
               {"kind":"insert","schema":"public","table":"orders",
                "columnnames":["id"],"columntypes":["integer"],"columnvalues":[1]}
             ]}
-        """.trimIndent().toByteBuffer()
+            """.trimIndent().toByteBuffer()
 
         val changes = parser.parse(payload)
 

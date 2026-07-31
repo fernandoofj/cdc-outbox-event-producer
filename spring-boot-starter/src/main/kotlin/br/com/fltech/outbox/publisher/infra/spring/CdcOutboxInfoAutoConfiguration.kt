@@ -32,7 +32,6 @@ import org.springframework.context.annotation.Bean
 @ConditionalOnProperty(prefix = "cdc.outbox", name = ["enabled"], havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(CdcOutboxProperties::class)
 open class CdcOutboxInfoAutoConfiguration {
-
     /**
      * Both `EventSinkRegistry` and `CdcSource` are optional collaborators
      * — a misconfigured deploy may run without either, and the info

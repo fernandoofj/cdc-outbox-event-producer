@@ -10,7 +10,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class DefaultMappingRulesTest {
-
     private val now = Instant.parse("2026-05-15T00:00:00Z")
 
     // LongParameterList: test fixture builder — each kwarg corresponds
@@ -44,8 +43,12 @@ class DefaultMappingRulesTest {
         after: Map<String, Any?> = emptyMap(),
         checkpoint: String = "0/16E8198",
     ) = RowChange(
-        op = op, table = table, sourceCheckpoint = checkpoint, occurredAt = now,
-        before = before, after = after,
+        op = op,
+        table = table,
+        sourceCheckpoint = checkpoint,
+        occurredAt = now,
+        before = before,
+        after = after,
     )
 
     @Test
@@ -62,14 +65,22 @@ class DefaultMappingRulesTest {
 
     @Test
     fun `INSERT uses 'after' snapshot for key derivation and payload projection`() {
-        val rules = DefaultMappingRules(listOf(mappingOrders(
-            keyFormat = "order:{id}",
-            include = listOf("id", "status"),
-        )))
-        val event = rules.map(row(
-            op = RowChange.Op.INSERT,
-            after = mapOf("id" to 42, "status" to "PENDING", "total_cents" to 999),
-        ))
+        val rules =
+            DefaultMappingRules(
+                listOf(
+                    mappingOrders(
+                        keyFormat = "order:{id}",
+                        include = listOf("id", "status"),
+                    ),
+                ),
+            )
+        val event =
+            rules.map(
+                row(
+                    op = RowChange.Op.INSERT,
+                    after = mapOf("id" to 42, "status" to "PENDING", "total_cents" to 999),
+                ),
+            )
         assertNotNull(event)
         assertEquals("order:42", event.id)
         val payload = event.payloadAsString
@@ -81,10 +92,13 @@ class DefaultMappingRulesTest {
     @Test
     fun `DELETE uses 'before' snapshot for key derivation`() {
         val rules = DefaultMappingRules(listOf(mappingOrders(keyFormat = "{id}")))
-        val event = rules.map(row(
-            op = RowChange.Op.DELETE,
-            before = mapOf("id" to 7),
-        ))
+        val event =
+            rules.map(
+                row(
+                    op = RowChange.Op.DELETE,
+                    before = mapOf("id" to 7),
+                ),
+            )
         assertNotNull(event)
         assertEquals("7", event.id)
         assertEquals("public.orders.deleted", event.headers["eventType"])
@@ -92,9 +106,14 @@ class DefaultMappingRulesTest {
 
     @Test
     fun `eventType template substitutes table and op`() {
-        val rules = DefaultMappingRules(listOf(mappingOrders(
-            eventTemplate = "orders.{op}",
-        )))
+        val rules =
+            DefaultMappingRules(
+                listOf(
+                    mappingOrders(
+                        eventTemplate = "orders.{op}",
+                    ),
+                ),
+            )
         assertEquals(
             "orders.created",
             rules.map(row(RowChange.Op.INSERT, after = mapOf("id" to 1)))?.headers?.get("eventType"),
@@ -118,13 +137,21 @@ class DefaultMappingRulesTest {
 
     @Test
     fun `payload exclude drops the listed columns and keeps the rest`() {
-        val rules = DefaultMappingRules(listOf(mappingOrders(
-            exclude = listOf("password_hash"),
-        )))
-        val event = rules.map(row(
-            op = RowChange.Op.INSERT,
-            after = mapOf("id" to 1, "name" to "Ada", "password_hash" to "secret"),
-        ))
+        val rules =
+            DefaultMappingRules(
+                listOf(
+                    mappingOrders(
+                        exclude = listOf("password_hash"),
+                    ),
+                ),
+            )
+        val event =
+            rules.map(
+                row(
+                    op = RowChange.Op.INSERT,
+                    after = mapOf("id" to 1, "name" to "Ada", "password_hash" to "secret"),
+                ),
+            )
         assertNotNull(event)
         val payload = event.payloadAsString
         assertEquals(setOf("id=1", "name=Ada"), payload.split("\n").toSet())
@@ -132,13 +159,21 @@ class DefaultMappingRulesTest {
 
     @Test
     fun `payload rename rewrites the outbound keys while keeping values`() {
-        val rules = DefaultMappingRules(listOf(mappingOrders(
-            rename = mapOf("total_cents" to "totalCents", "created_at" to "createdAt"),
-        )))
-        val event = rules.map(row(
-            op = RowChange.Op.INSERT,
-            after = mapOf("id" to 1, "total_cents" to 999, "created_at" to "2026-01-01"),
-        ))
+        val rules =
+            DefaultMappingRules(
+                listOf(
+                    mappingOrders(
+                        rename = mapOf("total_cents" to "totalCents", "created_at" to "createdAt"),
+                    ),
+                ),
+            )
+        val event =
+            rules.map(
+                row(
+                    op = RowChange.Op.INSERT,
+                    after = mapOf("id" to 1, "total_cents" to 999, "created_at" to "2026-01-01"),
+                ),
+            )
         assertNotNull(event)
         val keys = event.payloadAsString.split("\n").map { it.substringBefore("=") }.toSet()
         assertEquals(setOf("id", "totalCents", "createdAt"), keys)
@@ -146,27 +181,43 @@ class DefaultMappingRulesTest {
 
     @Test
     fun `routing attributes substitute column placeholders`() {
-        val rules = DefaultMappingRules(listOf(mappingOrders(
-            attributes = mapOf("tenant" to "{tenant_id}", "constant" to "fixed"),
-        )))
-        val event = rules.map(row(
-            op = RowChange.Op.INSERT,
-            after = mapOf("id" to 1, "tenant_id" to "acme"),
-        ))
+        val rules =
+            DefaultMappingRules(
+                listOf(
+                    mappingOrders(
+                        attributes = mapOf("tenant" to "{tenant_id}", "constant" to "fixed"),
+                    ),
+                ),
+            )
+        val event =
+            rules.map(
+                row(
+                    op = RowChange.Op.INSERT,
+                    after = mapOf("id" to 1, "tenant_id" to "acme"),
+                ),
+            )
         assertNotNull(event)
         assertEquals(mapOf("tenant" to "acme", "constant" to "fixed"), event.routing.attributes)
     }
 
     @Test
     fun `default key format joins columns with pipe when no template is given`() {
-        val rules = DefaultMappingRules(listOf(mappingOrders(
-            keyColumns = listOf("tenant_id", "id"),
-            keyFormat = null,
-        )))
-        val event = rules.map(row(
-            op = RowChange.Op.INSERT,
-            after = mapOf("tenant_id" to "acme", "id" to 42),
-        ))
+        val rules =
+            DefaultMappingRules(
+                listOf(
+                    mappingOrders(
+                        keyColumns = listOf("tenant_id", "id"),
+                        keyFormat = null,
+                    ),
+                ),
+            )
+        val event =
+            rules.map(
+                row(
+                    op = RowChange.Op.INSERT,
+                    after = mapOf("tenant_id" to "acme", "id" to 42),
+                ),
+            )
         assertNotNull(event)
         assertEquals("acme|42", event.id)
     }
@@ -174,9 +225,14 @@ class DefaultMappingRulesTest {
     @Test
     fun `empty key columns fall back to the sourceCheckpoint`() {
         val rules = DefaultMappingRules(listOf(mappingOrders(keyColumns = emptyList())))
-        val event = rules.map(row(
-            op = RowChange.Op.INSERT, after = mapOf("id" to 1), checkpoint = "0/CAFE",
-        ))
+        val event =
+            rules.map(
+                row(
+                    op = RowChange.Op.INSERT,
+                    after = mapOf("id" to 1),
+                    checkpoint = "0/CAFE",
+                ),
+            )
         assertEquals("0/CAFE", event?.id)
     }
 

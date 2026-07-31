@@ -22,9 +22,13 @@ interface EventSinkRegistry {
     fun resolve(scheme: String): EventSink?
 
     /** Convenience: resolve + publish + raise if no sink handles the scheme. */
-    fun publish(routing: Routing, event: OutboxEvent) {
-        val sink = resolve(routing.scheme)
-            ?: throw NoSinkForSchemeException(routing.scheme, knownSchemes())
+    fun publish(
+        routing: Routing,
+        event: OutboxEvent,
+    ) {
+        val sink =
+            resolve(routing.scheme)
+                ?: throw NoSinkForSchemeException(routing.scheme, knownSchemes())
         sink.publish(routing, event)
     }
 
@@ -41,6 +45,6 @@ class NoSinkForSchemeException(
     val scheme: String,
     val knownSchemes: Set<String>,
 ) : RuntimeException(
-    "No EventSink registered for scheme '$scheme'. " +
-        "Known schemes: ${knownSchemes.sorted()}",
-)
+        "No EventSink registered for scheme '$scheme'. " +
+            "Known schemes: ${knownSchemes.sorted()}",
+    )

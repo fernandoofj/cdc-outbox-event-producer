@@ -7,7 +7,6 @@ import org.junit.jupiter.api.extension.ExtendWith
 
 @ExtendWith(MockKExtension::class)
 class JsonHelperTest {
-
     @Test
     fun `Json string to JSONObject`() {
         // Real-world Shopify product payload — kept in a resource file

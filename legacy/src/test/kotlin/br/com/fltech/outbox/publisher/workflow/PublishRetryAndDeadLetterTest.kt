@@ -39,15 +39,15 @@ import kotlin.test.assertNull
  *    metric is recorded.
  */
 class PublishRetryAndDeadLetterTest {
-
     private val lsn = LogSequenceNumber.valueOf("0/16E8198")
 
     private val snsProducer = mockk<SNSProducer>()
     private val sqsProducer = mockk<SQSProducer>(relaxed = true)
     private val connector = mockk<PostgresConnector>()
-    private val noDelayBackOff = mockk<BackOff>().also {
-        every { it.nextDelay(any()) } returns Duration.ZERO
-    }
+    private val noDelayBackOff =
+        mockk<BackOff>().also {
+            every { it.nextDelay(any()) } returns Duration.ZERO
+        }
     private val registry = SimpleMeterRegistry()
     private val metrics = CdcOutboxMetrics(registry)
 
@@ -60,20 +60,25 @@ class PublishRetryAndDeadLetterTest {
         dlq: DeadLetterSink? = null,
         maxAttempts: Int = 3,
     ): SlotReaderMessageProducer {
-        val producer = SlotReaderMessageProducer(
-            postgresConfiguration = PostgresConfiguration(
-                host = "ignored", database = "x", username = "x", password = "x",
-            ),
-            replicationConfiguration = ReplicationConfiguration(slotName = "test_slot"),
-            snsProducer = snsProducer,
-            sqsProducer = sqsProducer,
-            connectionProvider = mockk(relaxed = true),
-            metrics = metrics,
-            reconnectBackOff = noDelayBackOff,
-            deadLetterSink = dlq,
-            maxPublishAttempts = maxAttempts,
-            publishBackOff = noDelayBackOff,
-        )
+        val producer =
+            SlotReaderMessageProducer(
+                postgresConfiguration =
+                    PostgresConfiguration(
+                        host = "ignored",
+                        database = "x",
+                        username = "x",
+                        password = "x",
+                    ),
+                replicationConfiguration = ReplicationConfiguration(slotName = "test_slot"),
+                snsProducer = snsProducer,
+                sqsProducer = sqsProducer,
+                connectionProvider = mockk(relaxed = true),
+                metrics = metrics,
+                reconnectBackOff = noDelayBackOff,
+                deadLetterSink = dlq,
+                maxPublishAttempts = maxAttempts,
+                publishBackOff = noDelayBackOff,
+            )
         producer.running = true
         producer.initializeCallback(connector)
         return producer
@@ -111,18 +116,30 @@ class PublishRetryAndDeadLetterTest {
         // Two retries — one after attempt 1 failed (tagged attempt="1") and
         // one after attempt 2 failed (tagged attempt="2"). The third attempt
         // succeeds and is NOT a retry.
-        assertEquals(1.0, registry.counter(
-            CdcOutboxMetrics.PUBLISH_RETRIES,
-            CdcOutboxMetrics.TAG_SINK, "sns",
-            CdcOutboxMetrics.TAG_TOPIC, "orders.events",
-            CdcOutboxMetrics.TAG_ATTEMPT, "1",
-        ).count())
-        assertEquals(1.0, registry.counter(
-            CdcOutboxMetrics.PUBLISH_RETRIES,
-            CdcOutboxMetrics.TAG_SINK, "sns",
-            CdcOutboxMetrics.TAG_TOPIC, "orders.events",
-            CdcOutboxMetrics.TAG_ATTEMPT, "2",
-        ).count())
+        assertEquals(
+            1.0,
+            registry.counter(
+                CdcOutboxMetrics.PUBLISH_RETRIES,
+                CdcOutboxMetrics.TAG_SINK,
+                "sns",
+                CdcOutboxMetrics.TAG_TOPIC,
+                "orders.events",
+                CdcOutboxMetrics.TAG_ATTEMPT,
+                "1",
+            ).count(),
+        )
+        assertEquals(
+            1.0,
+            registry.counter(
+                CdcOutboxMetrics.PUBLISH_RETRIES,
+                CdcOutboxMetrics.TAG_SINK,
+                "sns",
+                CdcOutboxMetrics.TAG_TOPIC,
+                "orders.events",
+                CdcOutboxMetrics.TAG_ATTEMPT,
+                "2",
+            ).count(),
+        )
     }
 
     @Test
@@ -138,12 +155,18 @@ class PublishRetryAndDeadLetterTest {
         verify(exactly = 1) { dlq.send(lsn, any(), any<IllegalStateException>()) }
         // discardMessage on the callback advances the slot via setStreamLsn.
         verify(atLeast = 1) { connector.setStreamLsn(lsn) }
-        assertEquals(1.0, registry.counter(
-            CdcOutboxMetrics.DEAD_LETTERED,
-            CdcOutboxMetrics.TAG_SINK, "sns",
-            CdcOutboxMetrics.TAG_TOPIC, "orders.events",
-            CdcOutboxMetrics.TAG_CAUSE, "IllegalStateException",
-        ).count())
+        assertEquals(
+            1.0,
+            registry.counter(
+                CdcOutboxMetrics.DEAD_LETTERED,
+                CdcOutboxMetrics.TAG_SINK,
+                "sns",
+                CdcOutboxMetrics.TAG_TOPIC,
+                "orders.events",
+                CdcOutboxMetrics.TAG_CAUSE,
+                "IllegalStateException",
+            ).count(),
+        )
     }
 
     @Test
@@ -170,29 +193,37 @@ class PublishRetryAndDeadLetterTest {
 
         verify(exactly = 1) { dlq.send(lsn, any(), any<IllegalStateException>()) }
         verify(exactly = 0) { connector.setStreamLsn(any()) }
-        assertEquals(1.0, registry.counter(
-            CdcOutboxMetrics.DEAD_LETTER_FAILURES,
-            CdcOutboxMetrics.TAG_CAUSE, "RuntimeException",
-        ).count())
+        assertEquals(
+            1.0,
+            registry.counter(
+                CdcOutboxMetrics.DEAD_LETTER_FAILURES,
+                CdcOutboxMetrics.TAG_CAUSE,
+                "RuntimeException",
+            ).count(),
+        )
     }
 
-    private fun snsMessage(prefix: String): MessageChange = MessageChange(
-        kindInput = "message",
-        transactional = true,
-        prefix = prefix,
-        // wal2json-style envelope around the SNSMessage shape — the producer
-        // parses it into an SNSMessage<Any> via Jackson at publish time.
-        content = """{
-            "headers":{"eventType":"OrderCreated"},
-            "body":{
-              "eventUUID":"00000000-0000-0000-0000-000000000001",
-              "eventType":"OrderCreated",
-              "domainId":"order-1",
-              "domain":"orders",
-              "eventTimestamp":"2026-05-14T00:00:00",
-              "payload":{}
-            }
-        }""".trimIndent(),
-        lsn = "0/16E8198",
-    )
+    private fun snsMessage(prefix: String): MessageChange =
+        MessageChange(
+            kindInput = "message",
+            transactional = true,
+            prefix = prefix,
+            // wal2json-style envelope around the SNSMessage shape — the producer
+            // parses it into an SNSMessage<Any> via Jackson at publish time.
+            content =
+                """
+                {
+                    "headers":{"eventType":"OrderCreated"},
+                    "body":{
+                      "eventUUID":"00000000-0000-0000-0000-000000000001",
+                      "eventType":"OrderCreated",
+                      "domainId":"order-1",
+                      "domain":"orders",
+                      "eventTimestamp":"2026-05-14T00:00:00",
+                      "payload":{}
+                    }
+                }
+                """.trimIndent(),
+            lsn = "0/16E8198",
+        )
 }

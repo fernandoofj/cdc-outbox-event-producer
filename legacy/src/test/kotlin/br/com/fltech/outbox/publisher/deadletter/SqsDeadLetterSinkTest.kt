@@ -16,7 +16,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class SqsDeadLetterSinkTest {
-
     private val sqsTemplate = mockk<SqsTemplate>()
     private val sink = SqsDeadLetterSink(sqsTemplate, queueName = "outbox-dlq")
 
@@ -26,13 +25,14 @@ class SqsDeadLetterSinkTest {
         every { sqsTemplate.send(capture(captured)) } returns mockk<SendResult<Map<String, String>>>(relaxed = true)
 
         val lsn = LogSequenceNumber.valueOf("0/16E8198")
-        val msg = MessageChange(
-            kindInput = "message",
-            transactional = true,
-            prefix = "orders.events",
-            content = """{"order":"123"}""",
-            lsn = "0/16E8198",
-        )
+        val msg =
+            MessageChange(
+                kindInput = "message",
+                transactional = true,
+                prefix = "orders.events",
+                content = """{"order":"123"}""",
+                lsn = "0/16E8198",
+            )
 
         sink.send(lsn, msg, IllegalStateException("broker is down"))
 
@@ -72,11 +72,12 @@ class SqsDeadLetterSinkTest {
         verify(exactly = 1) { sqsTemplate.send(any<Consumer<SqsSendOptions<Map<String, String>>>>()) }
     }
 
-    private fun msgChange(prefix: String) = MessageChange(
-        kindInput = "message",
-        transactional = true,
-        prefix = prefix,
-        content = "{}",
-        lsn = null,
-    )
+    private fun msgChange(prefix: String) =
+        MessageChange(
+            kindInput = "message",
+            transactional = true,
+            prefix = prefix,
+            content = "{}",
+            lsn = null,
+        )
 }

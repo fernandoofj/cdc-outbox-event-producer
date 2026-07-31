@@ -24,19 +24,23 @@ class SqsDeadLetterSink(
     private val sqsTemplate: SqsTemplate,
     private val queueName: String,
 ) : DeadLetterSink {
-
-    override fun send(lsn: LogSequenceNumber, messageChange: MessageChange, lastException: Throwable) {
-        val envelope = linkedMapOf(
-            "originalPrefix" to messageChange.prefix,
-            // `asString()` emits the canonical Postgres `X/X` hex pair
-            // (e.g. `0/16E8198`); `toString()` wraps it in `LSN{...}`,
-            // which is fine for logs but a poor key for queries.
-            "lsn" to lsn.asString(),
-            "content" to messageChange.content,
-            "failureType" to lastException.javaClass.simpleName,
-            "failureMessage" to (lastException.message ?: ""),
-            "deadLetteredAt" to Instant.now().toString(),
-        )
+    override fun send(
+        lsn: LogSequenceNumber,
+        messageChange: MessageChange,
+        lastException: Throwable,
+    ) {
+        val envelope =
+            linkedMapOf(
+                "originalPrefix" to messageChange.prefix,
+                // `asString()` emits the canonical Postgres `X/X` hex pair
+                // (e.g. `0/16E8198`); `toString()` wraps it in `LSN{...}`,
+                // which is fine for logs but a poor key for queries.
+                "lsn" to lsn.asString(),
+                "content" to messageChange.content,
+                "failureType" to lastException.javaClass.simpleName,
+                "failureMessage" to (lastException.message ?: ""),
+                "deadLetteredAt" to Instant.now().toString(),
+            )
         sqsTemplate.send { it.queue(queueName).payload(envelope) }
     }
 }

@@ -38,7 +38,6 @@ import kotlin.test.assertTrue
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @EnabledIfEnvironmentVariable(named = "RUN_TESTCONTAINERS", matches = "1|true|yes")
 class DlqReplayIT {
-
     private val localstack: LocalStackContainer =
         LocalStackContainer(DockerImageName.parse("localstack/localstack:3.8.1"))
             .withServices(LocalStackContainer.Service.SQS)
@@ -50,15 +49,16 @@ class DlqReplayIT {
     @BeforeAll
     fun startContainer() {
         localstack.start()
-        sqs = SqsClient.builder()
-            .endpointOverride(localstack.getEndpointOverride(LocalStackContainer.Service.SQS))
-            .credentialsProvider(
-                StaticCredentialsProvider.create(
-                    AwsBasicCredentials.create(localstack.accessKey, localstack.secretKey),
-                ),
-            )
-            .region(Region.of(localstack.region))
-            .build()
+        sqs =
+            SqsClient.builder()
+                .endpointOverride(localstack.getEndpointOverride(LocalStackContainer.Service.SQS))
+                .credentialsProvider(
+                    StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(localstack.accessKey, localstack.secretKey),
+                    ),
+                )
+                .region(Region.of(localstack.region))
+                .build()
         queueName = "cdc-outbox-dlq-it"
         queueUrl = sqs.createQueue(CreateQueueRequest.builder().queueName(queueName).build()).queueUrl()
     }
@@ -72,37 +72,48 @@ class DlqReplayIT {
     @Test
     fun `replay reads SqsDeadLetterSink envelope shape and re-publishes into the registry`() {
         val payload = """{"orderId":42,"event":"OrderCreated"}"""
-        val envelopeJson = jacksonObjectMapper().writeValueAsString(
-            mapOf(
-                "originalPrefix" to "sns://orders-events",
-                "lsn" to "0/16E8198",
-                "content" to payload,
-                "failureType" to "TimeoutException",
-                "failureMessage" to "publish timed out",
-                "deadLetteredAt" to "2026-05-15T10:00:00Z",
-            ),
-        )
+        val envelopeJson =
+            jacksonObjectMapper().writeValueAsString(
+                mapOf(
+                    "originalPrefix" to "sns://orders-events",
+                    "lsn" to "0/16E8198",
+                    "content" to payload,
+                    "failureType" to "TimeoutException",
+                    "failureMessage" to "publish timed out",
+                    "deadLetteredAt" to "2026-05-15T10:00:00Z",
+                ),
+            )
         sqs.sendMessage(SendMessageRequest.builder().queueUrl(queueUrl).messageBody(envelopeJson).build())
 
         val capturedEvents = CopyOnWriteArrayList<OutboxEvent>()
-        val capturingSink = object : EventSink {
-            override fun publish(routing: Routing, event: OutboxEvent) {
-                capturedEvents.add(event)
+        val capturingSink =
+            object : EventSink {
+                override fun publish(
+                    routing: Routing,
+                    event: OutboxEvent,
+                ) {
+                    capturedEvents.add(event)
+                }
             }
-        }
-        val registry = object : EventSinkRegistry {
-            override fun publish(routing: Routing, event: OutboxEvent) {
-                capturingSink.publish(routing, event)
+        val registry =
+            object : EventSinkRegistry {
+                override fun publish(
+                    routing: Routing,
+                    event: OutboxEvent,
+                ) {
+                    capturingSink.publish(routing, event)
+                }
+
+                override fun knownSchemes(): Set<String> = setOf("sns")
+
+                override fun resolve(scheme: String): EventSink? = if (scheme == "sns") capturingSink else null
             }
-            override fun knownSchemes(): Set<String> = setOf("sns")
-            override fun resolve(scheme: String): EventSink? =
-                if (scheme == "sns") capturingSink else null
-        }
-        val service = DlqReplayService(
-            reader = SqsDlqReader(sqs, queueName),
-            sinkRegistry = registry,
-            metrics = CdcOutboxMetrics.noop(),
-        )
+        val service =
+            DlqReplayService(
+                reader = SqsDlqReader(sqs, queueName),
+                sinkRegistry = registry,
+                metrics = CdcOutboxMetrics.noop(),
+            )
 
         val peeked = service.peek(10)
         assertEquals(1, peeked.size)

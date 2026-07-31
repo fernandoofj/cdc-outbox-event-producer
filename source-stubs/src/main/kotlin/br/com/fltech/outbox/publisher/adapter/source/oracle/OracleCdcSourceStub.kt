@@ -16,8 +16,11 @@ import br.com.fltech.outbox.publisher.core.port.CdcSource
  */
 class OracleCdcSourceStub : CdcSource {
     override fun open(): Nothing = unsupported("open")
+
     override fun poll(): OutboxEvent? = unsupported("poll")
+
     override fun ack(event: OutboxEvent): Nothing = unsupported("ack")
+
     override fun close(): Unit = Unit
 
     private fun unsupported(method: String): Nothing =

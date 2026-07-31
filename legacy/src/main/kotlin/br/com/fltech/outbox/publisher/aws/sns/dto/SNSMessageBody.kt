@@ -16,5 +16,5 @@ data class SNSMessageBody<T>(
     @JsonProperty("eventTimestamp")
     val eventTimestamp: LocalDateTime,
     @JsonProperty("payload")
-    val payload: T
+    val payload: T,
 )

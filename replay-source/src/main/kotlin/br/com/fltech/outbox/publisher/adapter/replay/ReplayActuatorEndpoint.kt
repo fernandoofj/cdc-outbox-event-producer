@@ -34,7 +34,6 @@ import org.springframework.security.core.context.SecurityContextHolder
 class ReplayActuatorEndpoint(
     private val service: ReplayService,
 ) {
-
     @ReadOperation
     fun snapshot(): Any {
         requireAuthenticated()
@@ -44,13 +43,18 @@ class ReplayActuatorEndpoint(
     }
 
     @ReadOperation
-    fun jobById(@Selector(match = Selector.Match.SINGLE) jobId: String): Any {
+    fun jobById(
+        @Selector(match = Selector.Match.SINGLE) jobId: String,
+    ): Any {
         requireAuthenticated()
         return service.getJob(jobId) ?: mapOf("error" to "no job with id='$jobId'")
     }
 
     @WriteOperation
-    fun start(@Selector(match = Selector.Match.SINGLE) action: String, body: ReplayRequest): Any {
+    fun start(
+        @Selector(match = Selector.Match.SINGLE) action: String,
+        body: ReplayRequest,
+    ): Any {
         requireAuthenticated()
         return when (action) {
             "start" -> tryStart(body)
@@ -58,19 +62,20 @@ class ReplayActuatorEndpoint(
         }
     }
 
-    private fun tryStart(body: ReplayRequest): Any = try {
-        service.startReplay(body)
-    } catch (e: ConcurrentReplayException) {
-        mapOf(
-            "error" to "another replay is already running",
-            "detail" to e.message,
-        )
-    } catch (e: UnsupportedReplayException) {
-        mapOf(
-            "error" to "replay not supported for the requested source",
-            "detail" to e.message,
-        )
-    }
+    private fun tryStart(body: ReplayRequest): Any =
+        try {
+            service.startReplay(body)
+        } catch (e: ConcurrentReplayException) {
+            mapOf(
+                "error" to "another replay is already running",
+                "detail" to e.message,
+            )
+        } catch (e: UnsupportedReplayException) {
+            mapOf(
+                "error" to "replay not supported for the requested source",
+                "detail" to e.message,
+            )
+        }
 
     private fun requireAuthenticated() {
         val authentication = SecurityContextHolder.getContext().authentication

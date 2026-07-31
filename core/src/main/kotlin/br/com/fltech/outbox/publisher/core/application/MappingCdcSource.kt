@@ -29,7 +29,6 @@ class MappingCdcSource(
     private val rowSource: RowChangeSource,
     private val mappingRules: MappingRules,
 ) : CdcSource {
-
     /**
      * Maps `event.sourceCheckpoint → RowChange` so [ack] can recover
      * the original row and forward it to the underlying source. In

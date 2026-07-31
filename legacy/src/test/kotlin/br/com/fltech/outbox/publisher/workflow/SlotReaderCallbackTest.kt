@@ -17,14 +17,14 @@ import java.util.UUID
 import kotlin.test.assertEquals
 
 class SlotReaderCallbackTest {
-
     private val lsnFailed = LogSequenceNumber.valueOf(100L)
     private val lsnSucceeded = LogSequenceNumber.valueOf(200L)
 
     private val producer = mockk<SlotReaderMessageProducer>(relaxed = true)
-    private val connector = mockk<PostgresConnector>().also {
-        every { it.setStreamLsn(any()) } just Runs
-    }
+    private val connector =
+        mockk<PostgresConnector>().also {
+            every { it.setStreamLsn(any()) } just Runs
+        }
 
     @Test
     fun `onFailure does NOT advance the slot LSN (at-least-once)`() {
@@ -102,45 +102,54 @@ class SlotReaderCallbackTest {
             1.0,
             registry.counter(
                 CdcOutboxMetrics.MESSAGES_PUBLISHED,
-                CdcOutboxMetrics.TAG_SINK, "sns",
-                CdcOutboxMetrics.TAG_TOPIC, "orders.events",
+                CdcOutboxMetrics.TAG_SINK,
+                "sns",
+                CdcOutboxMetrics.TAG_TOPIC,
+                "orders.events",
             ).count(),
         )
         assertEquals(
             1.0,
             registry.counter(
                 CdcOutboxMetrics.MESSAGES_PUBLISHED,
-                CdcOutboxMetrics.TAG_SINK, "sqs",
-                CdcOutboxMetrics.TAG_TOPIC, "orders.queue",
+                CdcOutboxMetrics.TAG_SINK,
+                "sqs",
+                CdcOutboxMetrics.TAG_TOPIC,
+                "orders.queue",
             ).count(),
         )
         assertEquals(
             1.0,
             registry.counter(
                 CdcOutboxMetrics.MESSAGES_FAILED,
-                CdcOutboxMetrics.TAG_SINK, "sns",
-                CdcOutboxMetrics.TAG_TOPIC, "orders.events",
-                CdcOutboxMetrics.TAG_CAUSE, "IllegalStateException",
+                CdcOutboxMetrics.TAG_SINK,
+                "sns",
+                CdcOutboxMetrics.TAG_TOPIC,
+                "orders.events",
+                CdcOutboxMetrics.TAG_CAUSE,
+                "IllegalStateException",
             ).count(),
         )
         assertEquals(
             1.0,
             registry.counter(
                 CdcOutboxMetrics.MESSAGES_DISCARDED,
-                CdcOutboxMetrics.TAG_REASON, "insert",
+                CdcOutboxMetrics.TAG_REASON,
+                "insert",
             ).count(),
         )
     }
 
     private fun snsMessage(eventType: String): SNSMessage<Any> {
-        val body = SNSMessageBody<Any>(
-            eventUUID = UUID.fromString("00000000-0000-0000-0000-000000000001"),
-            eventType = eventType,
-            domainId = "domain-1",
-            domain = "orders",
-            eventTimestamp = LocalDateTime.parse("2026-05-14T00:00:00"),
-            payload = mapOf("k" to "v"),
-        )
+        val body =
+            SNSMessageBody<Any>(
+                eventUUID = UUID.fromString("00000000-0000-0000-0000-000000000001"),
+                eventType = eventType,
+                domainId = "domain-1",
+                domain = "orders",
+                eventTimestamp = LocalDateTime.parse("2026-05-14T00:00:00"),
+                payload = mapOf("k" to "v"),
+            )
         return SNSMessage(headers = emptyMap(), body = body)
     }
 }

@@ -20,19 +20,20 @@ import kotlin.test.assertEquals
  *  - malformed field: warn-and-fallback path.
  */
 class ResolveLsnTest {
-
-    private val producer = SlotReaderMessageProducer(
-        postgresConfiguration = PostgresConfiguration(
-            host = "ignored",
-            database = "ignored",
-            username = "ignored",
-            password = "ignored",
-        ),
-        replicationConfiguration = ReplicationConfiguration(slotName = "ignored"),
-        snsProducer = mockk<SNSProducer>(relaxed = true),
-        sqsProducer = mockk<SQSProducer>(relaxed = true),
-        connectionProvider = mockk(relaxed = true),
-    )
+    private val producer =
+        SlotReaderMessageProducer(
+            postgresConfiguration =
+                PostgresConfiguration(
+                    host = "ignored",
+                    database = "ignored",
+                    username = "ignored",
+                    password = "ignored",
+                ),
+            replicationConfiguration = ReplicationConfiguration(slotName = "ignored"),
+            snsProducer = mockk<SNSProducer>(relaxed = true),
+            sqsProducer = mockk<SQSProducer>(relaxed = true),
+            connectionProvider = mockk(relaxed = true),
+        )
 
     private val fallback = LogSequenceNumber.valueOf(0xC0FFEEL)
 
@@ -54,11 +55,12 @@ class ResolveLsnTest {
         assertEquals(fallback, parsed)
     }
 
-    private fun messageWithLsn(lsn: String?): MessageChange = MessageChange(
-        kindInput = "message",
-        transactional = true,
-        prefix = "topic-a",
-        content = "{}",
-        lsn = lsn,
-    )
+    private fun messageWithLsn(lsn: String?): MessageChange =
+        MessageChange(
+            kindInput = "message",
+            transactional = true,
+            prefix = "topic-a",
+            content = "{}",
+            lsn = lsn,
+        )
 }

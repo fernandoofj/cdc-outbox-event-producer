@@ -10,9 +10,9 @@ import br.com.fltech.outbox.publisher.replication.model.Wal2JsonColumn
 import br.com.fltech.outbox.publisher.replication.model.v1.V1OldKeys
 import br.com.fltech.outbox.publisher.replication.model.v1.V1RowRecord
 import com.fasterxml.jackson.databind.ObjectMapper
-import java.nio.ByteBuffer
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
+import java.nio.ByteBuffer
 
 /**
  * Decodes a wal2json `format-version=1` slot message. V1 batches every
@@ -46,7 +46,6 @@ import org.springframework.stereotype.Component
 class ByteToClassParserImplV1(
     private val defaultMapper: ObjectMapper,
 ) : ByteToClassParser {
-
     override fun parse(byteBufferMessage: ByteBuffer): List<Change> {
         val byteArray = ByteArray(byteBufferMessage.remaining())
         byteBufferMessage.get(byteArray)
@@ -56,30 +55,36 @@ class ByteToClassParserImplV1(
         return slotMessage.changes.map { record -> translate(record, wrapperLsn) }
     }
 
-    private fun translate(record: V1RowRecord, wrapperLsn: String?): Change =
+    private fun translate(
+        record: V1RowRecord,
+        wrapperLsn: String?,
+    ): Change =
         when (record.kind.lowercase()) {
-            KIND_INSERT -> InsertChange(
-                kindInput = KIND_INSERT,
-                schema = record.schema,
-                table = record.table,
-                lsn = wrapperLsn,
-                columns = zipColumns(record),
-            )
-            KIND_UPDATE -> UpdateChange(
-                kindInput = KIND_UPDATE,
-                schema = record.schema,
-                table = record.table,
-                lsn = wrapperLsn,
-                columns = zipColumns(record),
-                identity = zipIdentity(record.oldKeys),
-            )
-            KIND_DELETE -> DeleteChange(
-                kindInput = KIND_DELETE,
-                schema = record.schema,
-                table = record.table,
-                lsn = wrapperLsn,
-                identity = zipIdentity(record.oldKeys),
-            )
+            KIND_INSERT ->
+                InsertChange(
+                    kindInput = KIND_INSERT,
+                    schema = record.schema,
+                    table = record.table,
+                    lsn = wrapperLsn,
+                    columns = zipColumns(record),
+                )
+            KIND_UPDATE ->
+                UpdateChange(
+                    kindInput = KIND_UPDATE,
+                    schema = record.schema,
+                    table = record.table,
+                    lsn = wrapperLsn,
+                    columns = zipColumns(record),
+                    identity = zipIdentity(record.oldKeys),
+                )
+            KIND_DELETE ->
+                DeleteChange(
+                    kindInput = KIND_DELETE,
+                    schema = record.schema,
+                    table = record.table,
+                    lsn = wrapperLsn,
+                    identity = zipIdentity(record.oldKeys),
+                )
             KIND_MESSAGE -> translateMessage(record, wrapperLsn)
             else -> Change(record.kind)
         }
@@ -92,7 +97,10 @@ class ByteToClassParserImplV1(
      * [Change] so the slot keeps draining instead of head-of-line
      * blocking on a malformed payload.
      */
-    private fun translateMessage(record: V1RowRecord, wrapperLsn: String?): Change {
+    private fun translateMessage(
+        record: V1RowRecord,
+        wrapperLsn: String?,
+    ): Change {
         val prefix = record.prefix
         val content = record.content
         val transactional = record.transactional
@@ -100,7 +108,9 @@ class ByteToClassParserImplV1(
             logger.warn(
                 "wal2json V1 message record dropped: missing required fields " +
                     "(prefix={}, content={}, transactional={}); degrading to generic Change.",
-                prefix != null, content != null, transactional != null,
+                prefix != null,
+                content != null,
+                transactional != null,
             )
             return Change(KIND_MESSAGE)
         }
@@ -112,6 +122,10 @@ class ByteToClassParserImplV1(
             lsn = wrapperLsn,
         )
     }
+
+    // ReturnCount: missing names and missing values are different
+    // wal2json shapes (truncate, message-only, malformed) — each
+    // null guard carries operational meaning the caller can register.
 
     /**
      * Zips V1's parallel post-image arrays (`columnnames` /
@@ -127,9 +141,6 @@ class ByteToClassParserImplV1(
      * and degrade to null — the slot keeps draining rather than
      * head-of-line blocking on a malformed record.
      */
-    // ReturnCount: missing names and missing values are different
-    // wal2json shapes (truncate, message-only, malformed) — each
-    // null guard carries operational meaning the caller can register.
     @Suppress("ReturnCount")
     private fun zipColumns(record: V1RowRecord): List<Wal2JsonColumn>? {
         val names = record.columnNames ?: return null
@@ -144,14 +155,15 @@ class ByteToClassParserImplV1(
         )
     }
 
+    // ReturnCount: same guard rationale as [zipColumns] — 4 null
+    // shapes (no oldkeys block, no keyNames, no keyValues, mismatched).
+
     /**
      * Zips V1's nested `oldkeys` parallel arrays into V2's
      * `List<Wal2JsonColumn>` representation for the replica-identity
      * projection. Same null-tolerance and length-mismatch semantics as
      * [zipColumns].
      */
-    // ReturnCount: same guard rationale as [zipColumns] — 4 null
-    // shapes (no oldkeys block, no keyNames, no keyValues, mismatched).
     @Suppress("ReturnCount")
     private fun zipIdentity(oldKeys: V1OldKeys?): List<Wal2JsonColumn>? {
         if (oldKeys == null) return null
@@ -178,7 +190,10 @@ class ByteToClassParserImplV1(
             logger.warn(
                 "wal2json V1 record [{}] has mismatched array lengths " +
                     "({} names vs {} values, fields={}); degrading to null.",
-                recordContext, names.size, values.size, arrayLabel,
+                recordContext,
+                names.size,
+                values.size,
+                arrayLabel,
             )
             return null
         }
@@ -186,7 +201,10 @@ class ByteToClassParserImplV1(
             logger.warn(
                 "wal2json V1 record [{}] has mismatched type-array length " +
                     "({} names vs {} types, fields={}); types dropped, values kept.",
-                recordContext, names.size, types.size, arrayLabel,
+                recordContext,
+                names.size,
+                types.size,
+                arrayLabel,
             )
         }
         return names.mapIndexed { index, name ->

@@ -5,7 +5,10 @@ import java.sql.DriverManager
 import java.util.Properties
 
 class DefaultConnectionProvider : ConnectionProvider {
-    override fun getConnection(url: String, properties: Properties): Connection {
+    override fun getConnection(
+        url: String,
+        properties: Properties,
+    ): Connection {
         return DriverManager.getConnection(url, properties)
     }
 }

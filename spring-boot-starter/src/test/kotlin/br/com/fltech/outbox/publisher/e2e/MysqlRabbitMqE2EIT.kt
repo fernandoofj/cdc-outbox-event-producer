@@ -63,7 +63,6 @@ import kotlin.test.assertTrue
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @EnabledIfEnvironmentVariable(named = "RUN_TESTCONTAINERS", matches = "1|true|yes")
 class MysqlRabbitMqE2EIT {
-
     private val mysql: MySQLContainer<Nothing> = E2EContainers.newMysql()
     private val rabbit: RabbitMQContainer = E2EContainers.newRabbitMq()
 
@@ -110,12 +109,13 @@ class MysqlRabbitMqE2EIT {
         // Pre-create exchange + queue + binding via the AMQP client so
         // the test asserts on a real, named queue rather than relying
         // on the Rabbit sink to declare anything.
-        val cf = ConnectionFactory().apply {
-            host = rabbit.host
-            port = rabbit.amqpPort
-            username = rabbit.adminUsername
-            password = rabbit.adminPassword
-        }
+        val cf =
+            ConnectionFactory().apply {
+                host = rabbit.host
+                port = rabbit.amqpPort
+                username = rabbit.adminUsername
+                password = rabbit.adminPassword
+            }
         cf.newConnection().use { conn ->
             conn.createChannel().use { ch ->
                 ch.exchangeDeclare(EXCHANGE, "topic", true)
@@ -126,10 +126,11 @@ class MysqlRabbitMqE2EIT {
         }
 
         // Spring AMQP RabbitTemplate against the Testcontainer.
-        rabbitConnectionFactory = CachingConnectionFactory(rabbit.host, rabbit.amqpPort).apply {
-            username = rabbit.adminUsername
-            setPassword(rabbit.adminPassword)
-        }
+        rabbitConnectionFactory =
+            CachingConnectionFactory(rabbit.host, rabbit.amqpPort).apply {
+                username = rabbit.adminUsername
+                setPassword(rabbit.adminPassword)
+            }
         rabbitTemplate = RabbitTemplate(rabbitConnectionFactory)
 
         // INFORMATION_SCHEMA lookup pool for binlog column-name
@@ -140,15 +141,16 @@ class MysqlRabbitMqE2EIT {
         // names. Without this, after-maps come back as
         // `col0`/`col1`/… and the mapping `include` projection
         // produces `{}`.
-        binlogDataSource = HikariDataSource(
-            HikariConfig().apply {
-                jdbcUrl = mysql.jdbcUrl
-                username = mysql.username
-                password = mysql.password
-                maximumPoolSize = 2
-                poolName = "mysql-rabbit-e2e-info-schema"
-            },
-        )
+        binlogDataSource =
+            HikariDataSource(
+                HikariConfig().apply {
+                    jdbcUrl = mysql.jdbcUrl
+                    username = mysql.username
+                    password = mysql.password
+                    maximumPoolSize = 2
+                    poolName = "mysql-rabbit-e2e-info-schema"
+                },
+            )
     }
 
     @AfterAll
@@ -180,23 +182,25 @@ class MysqlRabbitMqE2EIT {
     }
 
     private fun buildProcessor(): CdcProcessor {
-        val rowSource = MySqlBinlogRowChangeSource(
-            host = mysql.host,
-            port = mysql.getMappedPort(MYSQL_PORT),
-            username = mysql.username,
-            password = mysql.password,
-            dataSource = binlogDataSource,
-        )
+        val rowSource =
+            MySqlBinlogRowChangeSource(
+                host = mysql.host,
+                port = mysql.getMappedPort(MYSQL_PORT),
+                username = mysql.username,
+                password = mysql.password,
+                dataSource = binlogDataSource,
+            )
         val source = MappingCdcSource(rowSource, DefaultMappingRules(listOf(buildMapping()), JSON_SERIALIZER))
         val sinks: Map<String, EventSink> = mapOf("amqp" to RabbitMqEventSink(rabbitTemplate))
         return CdcProcessor(
             source = source,
             sinkRegistry = DefaultEventSinkRegistry(sinks),
             maxPublishAttempts = MAX_PUBLISH_ATTEMPTS,
-            publishBackOff = ExponentialBackOff(
-                initial = Duration.ofMillis(BACKOFF_INITIAL_MS),
-                max = Duration.ofMillis(BACKOFF_MAX_MS),
-            ),
+            publishBackOff =
+                ExponentialBackOff(
+                    initial = Duration.ofMillis(BACKOFF_INITIAL_MS),
+                    max = Duration.ofMillis(BACKOFF_MAX_MS),
+                ),
             slotLabel = "mysql-rabbit-e2e",
         )
     }
@@ -208,16 +212,18 @@ class MysqlRabbitMqE2EIT {
      * three columns the consumer cares about — surrogate PK (`id`) and
      * the timestamp (`created_at`) stay off the wire.
      */
-    private fun buildMapping(): TableMapping = TableMapping(
-        table = "${mysql.databaseName}.$OUTBOX_TABLE",
-        capture = setOf(RowChange.Op.INSERT),
-        key = TableMapping.Key(columns = listOf("aggregate_id"), format = "outbox:{aggregate_id}"),
-        payload = TableMapping.Payload(
-            include = listOf("aggregate_id", "event_type", "payload"),
-        ),
-        eventType = TableMapping.EventType(template = "outbox.{op}"),
-        routing = TableMapping.Routing(sink = "amqp://$EXCHANGE/$ROUTING_KEY", attributes = emptyMap()),
-    )
+    private fun buildMapping(): TableMapping =
+        TableMapping(
+            table = "${mysql.databaseName}.$OUTBOX_TABLE",
+            capture = setOf(RowChange.Op.INSERT),
+            key = TableMapping.Key(columns = listOf("aggregate_id"), format = "outbox:{aggregate_id}"),
+            payload =
+                TableMapping.Payload(
+                    include = listOf("aggregate_id", "event_type", "payload"),
+                ),
+            eventType = TableMapping.EventType(template = "outbox.{op}"),
+            routing = TableMapping.Routing(sink = "amqp://$EXCHANGE/$ROUTING_KEY", attributes = emptyMap()),
+        )
 
     private fun waitForBinlogReady(processor: CdcProcessor) {
         // The orchestrator loop sets `lastActivityMs` BEFORE every
@@ -282,16 +288,18 @@ class MysqlRabbitMqE2EIT {
          * production path plugs Jackson; the test stays self-contained.
          */
         private val JSON_SERIALIZER: (Map<String, Any?>) -> ByteArray = { map ->
-            val entries = map.entries.joinToString(",") { (k, v) ->
-                "\"$k\":${jsonValue(v)}"
-            }
+            val entries =
+                map.entries.joinToString(",") { (k, v) ->
+                    "\"$k\":${jsonValue(v)}"
+                }
             "{$entries}".toByteArray(Charsets.UTF_8)
         }
 
-        private fun jsonValue(v: Any?): String = when (v) {
-            null -> "null"
-            is Number, is Boolean -> v.toString()
-            else -> "\"${v.toString().replace("\\", "\\\\").replace("\"", "\\\"")}\""
-        }
+        private fun jsonValue(v: Any?): String =
+            when (v) {
+                null -> "null"
+                is Number, is Boolean -> v.toString()
+                else -> "\"${v.toString().replace("\\", "\\\\").replace("\"", "\\\"")}\""
+            }
     }
 }

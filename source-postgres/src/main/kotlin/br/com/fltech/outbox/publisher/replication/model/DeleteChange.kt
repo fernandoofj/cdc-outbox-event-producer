@@ -12,15 +12,17 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * `kind` keeps working.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-class DeleteChange @JsonCreator constructor(
-    @JsonProperty(value = "kind", required = true)
-    private val kindInput: String,
-    @param:JsonProperty(value = "schema", required = false)
-    val schema: String? = null,
-    @param:JsonProperty(value = "table", required = false)
-    val table: String? = null,
-    @param:JsonProperty(value = "lsn", required = false)
-    val lsn: String? = null,
-    @param:JsonProperty(value = "identity", required = false)
-    val identity: List<Wal2JsonColumn>? = null,
-) : Change(kindInput)
+class DeleteChange
+    @JsonCreator
+    constructor(
+        @JsonProperty(value = "kind", required = true)
+        private val kindInput: String,
+        @param:JsonProperty(value = "schema", required = false)
+        val schema: String? = null,
+        @param:JsonProperty(value = "table", required = false)
+        val table: String? = null,
+        @param:JsonProperty(value = "lsn", required = false)
+        val lsn: String? = null,
+        @param:JsonProperty(value = "identity", required = false)
+        val identity: List<Wal2JsonColumn>? = null,
+    ) : Change(kindInput)

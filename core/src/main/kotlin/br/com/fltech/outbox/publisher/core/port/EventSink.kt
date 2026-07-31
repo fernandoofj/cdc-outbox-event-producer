@@ -28,5 +28,8 @@ fun interface EventSink {
      * Publish [event] to [routing.target]. Throws on failure; the
      * orchestrator decides retry / dead-letter.
      */
-    fun publish(routing: Routing, event: OutboxEvent)
+    fun publish(
+        routing: Routing,
+        event: OutboxEvent,
+    )
 }

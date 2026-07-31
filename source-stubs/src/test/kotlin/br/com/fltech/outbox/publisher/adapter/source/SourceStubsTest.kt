@@ -9,7 +9,6 @@ import org.junit.jupiter.api.assertThrows
 import java.time.Instant
 
 class SourceStubsTest {
-
     private val event = OutboxEvent("e", Routing("sns", "t"), ByteArray(0), Instant.EPOCH, "ck")
 
     @Test

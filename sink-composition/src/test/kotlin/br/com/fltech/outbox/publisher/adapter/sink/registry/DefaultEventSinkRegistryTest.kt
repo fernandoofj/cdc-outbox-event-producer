@@ -13,14 +13,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class DefaultEventSinkRegistryTest {
-
     private val sns = mockk<EventSink>(relaxed = true)
     private val sqs = mockk<EventSink>(relaxed = true)
     private val kafka = mockk<EventSink>(relaxed = true)
 
-    private val registry = DefaultEventSinkRegistry(
-        mapOf("sns" to sns, "sqs" to sqs, "kafka" to kafka),
-    )
+    private val registry =
+        DefaultEventSinkRegistry(
+            mapOf("sns" to sns, "sqs" to sqs, "kafka" to kafka),
+        )
 
     @Test
     fun `resolve is case-insensitive on the scheme`() {

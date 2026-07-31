@@ -29,8 +29,12 @@ class SlotReaderCallback(
     private val postgresConnector: PostgresConnector,
     private val metrics: CdcOutboxMetrics = CdcOutboxMetrics.noop(),
 ) {
-
-    fun onFailure(lsn: LogSequenceNumber, prefix: String, sink: String, t: Throwable) {
+    fun onFailure(
+        lsn: LogSequenceNumber,
+        prefix: String,
+        sink: String,
+        t: Throwable,
+    ) {
         logger.error(
             "Failed to send record {} to #{} via {} — slot will not advance",
             lsn,
@@ -43,7 +47,11 @@ class SlotReaderCallback(
         // Postgres redelivers this exact message on the next read.
     }
 
-    fun onSNSSuccess(lsn: LogSequenceNumber, destinationName: String, message: SNSMessage<Any>) {
+    fun onSNSSuccess(
+        lsn: LogSequenceNumber,
+        destinationName: String,
+        message: SNSMessage<Any>,
+    ) {
         logger.info(
             "Successfully sent record {} containing event #{} of type #{} and domainId #{} to SNS topic #{}",
             lsn,
@@ -56,13 +64,19 @@ class SlotReaderCallback(
         finishWithSuccess(lsn)
     }
 
-    fun onSQSSuccess(lsn: LogSequenceNumber, destinationName: String) {
+    fun onSQSSuccess(
+        lsn: LogSequenceNumber,
+        destinationName: String,
+    ) {
         logger.info("Successfully sent record {} to SQS queue #{}", lsn, destinationName)
         metrics.recordPublished(sink = SINK_SQS, topic = destinationName)
         finishWithSuccess(lsn)
     }
 
-    fun discardMessage(lsn: LogSequenceNumber, type: String) {
+    fun discardMessage(
+        lsn: LogSequenceNumber,
+        type: String,
+    ) {
         logger.info("Discarding record {} type #{}", lsn, type)
         metrics.recordDiscarded(reason = type)
         finishWithSuccess(lsn)

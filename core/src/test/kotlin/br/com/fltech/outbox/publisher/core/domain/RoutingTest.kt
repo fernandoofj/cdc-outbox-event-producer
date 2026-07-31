@@ -5,7 +5,6 @@ import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
 
 class RoutingTest {
-
     @Test
     fun `parse splits scheme and target on the first --colon-slash-slash-- and lower-cases the scheme`() {
         val r = Routing.parse("Kafka://orders.events")

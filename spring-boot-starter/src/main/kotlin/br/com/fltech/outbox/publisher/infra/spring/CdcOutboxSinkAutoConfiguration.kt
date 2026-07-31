@@ -39,7 +39,6 @@ import org.springframework.kafka.core.KafkaTemplate
 @AutoConfigureAfter(CdcOutboxAutoConfiguration::class)
 @ConditionalOnProperty(prefix = "cdc.outbox", name = ["enabled"], havingValue = "true", matchIfMissing = true)
 open class CdcOutboxSinkAutoConfiguration {
-
     @Bean("cdcOutboxSinkRegistry")
     @ConditionalOnMissingBean(name = ["cdcOutboxSinkRegistry"])
     open fun cdcOutboxSinkRegistry(eventSinks: Map<String, EventSink>): EventSinkRegistry {

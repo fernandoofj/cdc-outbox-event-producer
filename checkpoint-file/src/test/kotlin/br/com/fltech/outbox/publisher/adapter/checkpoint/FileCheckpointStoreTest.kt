@@ -27,29 +27,36 @@ import kotlin.test.assertTrue
  *    rejected.
  */
 class FileCheckpointStoreTest {
-
     @Test
-    fun `save then load round-trips for a typical binlog checkpoint`(@TempDir dir: Path) {
+    fun `save then load round-trips for a typical binlog checkpoint`(
+        @TempDir dir: Path,
+    ) {
         val store = FileCheckpointStore(dir)
         store.save("binlog:65536", "mysql-bin.000004:891")
         assertEquals("mysql-bin.000004:891", store.load("binlog:65536"))
     }
 
     @Test
-    fun `save then load round-trips for a Postgres LSN`(@TempDir dir: Path) {
+    fun `save then load round-trips for a Postgres LSN`(
+        @TempDir dir: Path,
+    ) {
         val store = FileCheckpointStore(dir)
         store.save("pg-wal:orders_outbox_slot", "0/16E8198")
         assertEquals("0/16E8198", store.load("pg-wal:orders_outbox_slot"))
     }
 
     @Test
-    fun `load returns null for an unknown key`(@TempDir dir: Path) {
+    fun `load returns null for an unknown key`(
+        @TempDir dir: Path,
+    ) {
         val store = FileCheckpointStore(dir)
         assertNull(store.load("never-saved"))
     }
 
     @Test
-    fun `save twice keeps only the latest value and leaves no orphan tmp file`(@TempDir dir: Path) {
+    fun `save twice keeps only the latest value and leaves no orphan tmp file`(
+        @TempDir dir: Path,
+    ) {
         val store = FileCheckpointStore(dir)
         store.save("binlog:1", "mysql-bin.000001:120")
         store.save("binlog:1", "mysql-bin.000001:240")
@@ -60,7 +67,9 @@ class FileCheckpointStoreTest {
     }
 
     @Test
-    fun `corrupt checkpoint file reads as null without throwing`(@TempDir dir: Path) {
+    fun `corrupt checkpoint file reads as null without throwing`(
+        @TempDir dir: Path,
+    ) {
         // Simulate a half-written file by writing raw bytes that don't
         // decode as JSON. The store must treat this as "missing" so
         // the source can fall back to its natural start position
@@ -79,7 +88,9 @@ class FileCheckpointStoreTest {
     }
 
     @Test
-    fun `value field present but key field mismatch reads as null`(@TempDir dir: Path) {
+    fun `value field present but key field mismatch reads as null`(
+        @TempDir dir: Path,
+    ) {
         // Two distinct keys can sanitise to the same on-disk filename.
         // The store's defence is the `key` field stored inside the
         // JSON — load returns null when it doesn't match the caller's
@@ -95,7 +106,9 @@ class FileCheckpointStoreTest {
     }
 
     @Test
-    fun `directory is created lazily so first save does not need explicit mkdir`(@TempDir dir: Path) {
+    fun `directory is created lazily so first save does not need explicit mkdir`(
+        @TempDir dir: Path,
+    ) {
         val nested = dir.resolve("subdir").resolve("checkpoints")
         val store = FileCheckpointStore(nested)
         store.save("k", "v")
@@ -104,7 +117,9 @@ class FileCheckpointStoreTest {
     }
 
     @Test
-    fun `value with quotes and backslashes survives the round trip`(@TempDir dir: Path) {
+    fun `value with quotes and backslashes survives the round trip`(
+        @TempDir dir: Path,
+    ) {
         // Defensive — real LSN strings don't contain these, but we
         // shouldn't corrupt the file if the contract changes.
         val store = FileCheckpointStore(dir)
@@ -114,7 +129,9 @@ class FileCheckpointStoreTest {
     }
 
     @Test
-    fun `orphan sweep deletes a single tmp file on construction`(@TempDir dir: Path) {
+    fun `orphan sweep deletes a single tmp file on construction`(
+        @TempDir dir: Path,
+    ) {
         // Simulate a crash mid-save: a `.tmp` file is on disk with no
         // canonical sibling. The constructor must reclaim it.
         val orphan = dir.resolve("binlog_1.json.tmp")
@@ -128,13 +145,16 @@ class FileCheckpointStoreTest {
             1.0,
             registry.counter(
                 CdcOutboxMetrics.CHECKPOINT_ORPHANS_SWEPT,
-                CdcOutboxMetrics.TAG_OUTCOME, "deleted",
+                CdcOutboxMetrics.TAG_OUTCOME,
+                "deleted",
             ).count(),
         )
     }
 
     @Test
-    fun `orphan sweep deletes every tmp file in one pass`(@TempDir dir: Path) {
+    fun `orphan sweep deletes every tmp file in one pass`(
+        @TempDir dir: Path,
+    ) {
         // Two orphans from independent keys must both be reclaimed.
         Files.writeString(dir.resolve("binlog_1.json.tmp"), "stale-a")
         Files.writeString(dir.resolve("pg-wal_orders.json.tmp"), "stale-b")
@@ -149,13 +169,16 @@ class FileCheckpointStoreTest {
             3.0,
             registry.counter(
                 CdcOutboxMetrics.CHECKPOINT_ORPHANS_SWEPT,
-                CdcOutboxMetrics.TAG_OUTCOME, "deleted",
+                CdcOutboxMetrics.TAG_OUTCOME,
+                "deleted",
             ).count(),
         )
     }
 
     @Test
-    fun `orphan sweep leaves canonical json and ad-hoc files alone`(@TempDir dir: Path) {
+    fun `orphan sweep leaves canonical json and ad-hoc files alone`(
+        @TempDir dir: Path,
+    ) {
         // Canonical files and unrelated content (e.g. an operator's
         // README, a backup) must NEVER be touched — only `.tmp`.
         val canonical = dir.resolve("binlog_1.json")
@@ -175,13 +198,16 @@ class FileCheckpointStoreTest {
             1.0,
             registry.counter(
                 CdcOutboxMetrics.CHECKPOINT_ORPHANS_SWEPT,
-                CdcOutboxMetrics.TAG_OUTCOME, "deleted",
+                CdcOutboxMetrics.TAG_OUTCOME,
+                "deleted",
             ).count(),
         )
     }
 
     @Test
-    fun `orphan sweep is a no-op on an empty directory`(@TempDir dir: Path) {
+    fun `orphan sweep is a no-op on an empty directory`(
+        @TempDir dir: Path,
+    ) {
         val registry = SimpleMeterRegistry()
         FileCheckpointStore(dir, CdcOutboxMetrics(registry))
 
@@ -192,7 +218,9 @@ class FileCheckpointStoreTest {
     }
 
     @Test
-    fun `orphan sweep is a no-op when the parent directory does not yet exist`(@TempDir dir: Path) {
+    fun `orphan sweep is a no-op when the parent directory does not yet exist`(
+        @TempDir dir: Path,
+    ) {
         // The store lazily creates the directory; the sweep then finds
         // an empty FS view. Either way: no crash, no counter bump.
         val nested = dir.resolve("not-yet-here").resolve("checkpoints")
@@ -205,7 +233,9 @@ class FileCheckpointStoreTest {
     }
 
     @Test
-    fun `orphan sweep is idempotent — second construction finds nothing to do`(@TempDir dir: Path) {
+    fun `orphan sweep is idempotent — second construction finds nothing to do`(
+        @TempDir dir: Path,
+    ) {
         Files.writeString(dir.resolve("binlog_1.json.tmp"), "stale")
 
         val registry = SimpleMeterRegistry()
@@ -220,13 +250,16 @@ class FileCheckpointStoreTest {
             1.0,
             registry.counter(
                 CdcOutboxMetrics.CHECKPOINT_ORPHANS_SWEPT,
-                CdcOutboxMetrics.TAG_OUTCOME, "deleted",
+                CdcOutboxMetrics.TAG_OUTCOME,
+                "deleted",
             ).count(),
         )
     }
 
     @Test
-    fun `orphan sweep records failed outcome and does not crash construction on IO error`(@TempDir dir: Path) {
+    fun `orphan sweep records failed outcome and does not crash construction on IO error`(
+        @TempDir dir: Path,
+    ) {
         // Reproduce the "one bad file" path by dropping the parent
         // directory to read+execute only AFTER seeding `.tmp` orphans.
         // POSIX deletion authority lives on the parent inode, so each
@@ -258,11 +291,11 @@ class FileCheckpointStoreTest {
             2.0,
             registry.counter(
                 CdcOutboxMetrics.CHECKPOINT_ORPHANS_SWEPT,
-                CdcOutboxMetrics.TAG_OUTCOME, "failed",
+                CdcOutboxMetrics.TAG_OUTCOME,
+                "failed",
             ).count(),
         )
     }
 
-    private fun supportsPosix(path: Path): Boolean =
-        path.fileSystem.supportedFileAttributeViews().contains("posix")
+    private fun supportsPosix(path: Path): Boolean = path.fileSystem.supportedFileAttributeViews().contains("posix")
 }

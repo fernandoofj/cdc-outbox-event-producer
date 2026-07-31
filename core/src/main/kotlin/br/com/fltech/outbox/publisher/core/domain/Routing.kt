@@ -59,14 +59,15 @@ data class Routing(
          *    project — kept for backwards compatibility)
          *  - `topic` (bare; defaults to `sns`)
          */
-        fun parsePrefix(prefix: String): Routing = when {
-            SCHEME_SEPARATOR in prefix -> parse(prefix)
-            LEGACY_SEPARATOR in prefix -> {
-                val parts = prefix.split(LEGACY_SEPARATOR, limit = 2)
-                Routing(scheme = parts[0].lowercase(), target = parts[1])
+        fun parsePrefix(prefix: String): Routing =
+            when {
+                SCHEME_SEPARATOR in prefix -> parse(prefix)
+                LEGACY_SEPARATOR in prefix -> {
+                    val parts = prefix.split(LEGACY_SEPARATOR, limit = 2)
+                    Routing(scheme = parts[0].lowercase(), target = parts[1])
+                }
+                else -> Routing(scheme = DEFAULT_SCHEME, target = prefix)
             }
-            else -> Routing(scheme = DEFAULT_SCHEME, target = prefix)
-        }
 
         const val DEFAULT_SCHEME = "sns"
     }

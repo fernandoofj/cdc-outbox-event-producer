@@ -46,7 +46,6 @@ import org.springframework.context.annotation.Bean
 )
 @ConditionalOnBean(value = [EventSinkRegistry::class, MappingRules::class])
 open class CdcOutboxReplayAutoConfiguration {
-
     /**
      * Postgres replayer is registered as the explicit stub. A
      * future round can replace this bean with a real implementation
@@ -73,17 +72,17 @@ open class CdcOutboxReplayAutoConfiguration {
         sinkRegistry: EventSinkRegistry,
         metrics: CdcOutboxMetrics,
         properties: CdcOutboxProperties,
-    ): ReplayService = ReplayService(
-        replayers = replayers.associateBy { it.sourceKind },
-        mappingRules = mappingRules,
-        sinkRegistry = sinkRegistry,
-        metrics = metrics,
-        maxEventsPerJob = properties.replay.maxEventsPerJob,
-        jobTimeoutMs = properties.replay.timeoutMs,
-    )
+    ): ReplayService =
+        ReplayService(
+            replayers = replayers.associateBy { it.sourceKind },
+            mappingRules = mappingRules,
+            sinkRegistry = sinkRegistry,
+            metrics = metrics,
+            maxEventsPerJob = properties.replay.maxEventsPerJob,
+            jobTimeoutMs = properties.replay.timeoutMs,
+        )
 
     @Bean
     @ConditionalOnMissingBean(ReplayActuatorEndpoint::class)
-    open fun cdcOutboxReplayEndpoint(service: ReplayService): ReplayActuatorEndpoint =
-        ReplayActuatorEndpoint(service)
+    open fun cdcOutboxReplayEndpoint(service: ReplayService): ReplayActuatorEndpoint = ReplayActuatorEndpoint(service)
 }

@@ -38,7 +38,6 @@ import br.com.fltech.outbox.publisher.core.domain.OutboxEvent
  *    not an error.
  */
 interface CdcSource : AutoCloseable {
-
     /**
      * Open the underlying connection / consumer. Throws on permanent
      * failure (auth, missing slot, etc.) so the orchestrator can decide

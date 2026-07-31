@@ -17,32 +17,33 @@ import java.util.concurrent.CompletableFuture
 import kotlin.test.assertEquals
 
 class KafkaEventSinkTest {
-
     @Test
     fun `publish writes a ProducerRecord with id as key, payload as value, headers as Kafka headers`() {
         val template = mockk<KafkaTemplate<String, ByteArray>>()
         val captured = slot<ProducerRecord<String, ByteArray>>()
-        val future = CompletableFuture<SendResult<String, ByteArray>>().apply {
-            // Resolve immediately so `.get()` returns instantly.
-            complete(
-                SendResult(
-                    ProducerRecord("dummy", "dummy", ByteArray(0)),
-                    RecordMetadata(TopicPartition("dummy", 0), 0, 0, 0L, 0, 0),
-                ),
-            )
-        }
+        val future =
+            CompletableFuture<SendResult<String, ByteArray>>().apply {
+                // Resolve immediately so `.get()` returns instantly.
+                complete(
+                    SendResult(
+                        ProducerRecord("dummy", "dummy", ByteArray(0)),
+                        RecordMetadata(TopicPartition("dummy", 0), 0, 0, 0L, 0, 0),
+                    ),
+                )
+            }
         every { template.send(capture(captured)) } returns future
         val sink = KafkaEventSink(template)
 
         val routing = Routing("kafka", "orders.events", mapOf("env" to "prod"))
-        val event = OutboxEvent(
-            id = "domain-1",
-            routing = routing,
-            payload = "hello".toByteArray(),
-            occurredAt = Instant.EPOCH,
-            sourceCheckpoint = "ck",
-            headers = mapOf("trace-id" to "abc"),
-        )
+        val event =
+            OutboxEvent(
+                id = "domain-1",
+                routing = routing,
+                payload = "hello".toByteArray(),
+                occurredAt = Instant.EPOCH,
+                sourceCheckpoint = "ck",
+                headers = mapOf("trace-id" to "abc"),
+            )
 
         sink.publish(routing, event)
 

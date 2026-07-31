@@ -13,7 +13,6 @@ import br.com.fltech.outbox.publisher.core.port.EventSinkRegistry
 class DefaultEventSinkRegistry(
     sinks: Map<String, EventSink>,
 ) : EventSinkRegistry {
-
     private val sinks: Map<String, EventSink> = sinks.mapKeys { (k, _) -> k.lowercase() }
 
     init {

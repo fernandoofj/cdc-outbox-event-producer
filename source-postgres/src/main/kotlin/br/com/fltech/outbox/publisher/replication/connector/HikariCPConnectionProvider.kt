@@ -24,10 +24,12 @@ import java.util.concurrent.ConcurrentHashMap
 class HikariCPConnectionProvider(
     private val poolConfig: PoolConfig = PoolConfig(),
 ) : ConnectionProvider {
-
     private val pools = ConcurrentHashMap<PoolKey, HikariDataSource>()
 
-    override fun getConnection(url: String, properties: Properties): Connection {
+    override fun getConnection(
+        url: String,
+        properties: Properties,
+    ): Connection {
         if (isReplicationConnection(properties)) {
             return DriverManager.getConnection(url, properties)
         }
@@ -45,7 +47,10 @@ class HikariCPConnectionProvider(
     private fun isReplicationConnection(properties: Properties): Boolean =
         properties.getProperty(REPLICATION_PROPERTY) != null
 
-    private fun buildPool(url: String, properties: Properties): HikariDataSource {
+    private fun buildPool(
+        url: String,
+        properties: Properties,
+    ): HikariDataSource {
         // Split the JDBC properties into Hikari's typed setters (user/password)
         // and a passthrough map for the rest. Forwarding the whole Properties
         // bag as `dataSourceProperties` works today but mis-uses the field,
@@ -55,22 +60,23 @@ class HikariCPConnectionProvider(
         val configuredUser = driverProperties.remove(PG_USER)?.toString()
         val configuredPassword = driverProperties.remove(PG_PASSWORD)?.toString()
 
-        val config = HikariConfig().apply {
-            jdbcUrl = url
-            configuredUser?.let { username = it }
-            configuredPassword?.let { password = it }
-            dataSourceProperties = driverProperties
-            maximumPoolSize = poolConfig.maximumPoolSize
-            minimumIdle = poolConfig.minimumIdle
-            connectionTimeout = poolConfig.connectionTimeout.toMillis()
-            validationTimeout = poolConfig.validationTimeout.toMillis()
-            idleTimeout = poolConfig.idleTimeout.toMillis()
-            maxLifetime = poolConfig.maxLifetime.toMillis()
-            leakDetectionThreshold = poolConfig.leakDetectionThreshold.toMillis()
-            keepaliveTime = poolConfig.keepaliveTime.toMillis()
-            poolName = poolConfig.poolName
-            isAutoCommit = poolConfig.autoCommit
-        }
+        val config =
+            HikariConfig().apply {
+                jdbcUrl = url
+                configuredUser?.let { username = it }
+                configuredPassword?.let { password = it }
+                dataSourceProperties = driverProperties
+                maximumPoolSize = poolConfig.maximumPoolSize
+                minimumIdle = poolConfig.minimumIdle
+                connectionTimeout = poolConfig.connectionTimeout.toMillis()
+                validationTimeout = poolConfig.validationTimeout.toMillis()
+                idleTimeout = poolConfig.idleTimeout.toMillis()
+                maxLifetime = poolConfig.maxLifetime.toMillis()
+                leakDetectionThreshold = poolConfig.leakDetectionThreshold.toMillis()
+                keepaliveTime = poolConfig.keepaliveTime.toMillis()
+                poolName = poolConfig.poolName
+                isAutoCommit = poolConfig.autoCommit
+            }
         return HikariDataSource(config)
     }
 

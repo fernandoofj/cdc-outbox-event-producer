@@ -10,8 +10,8 @@ import br.com.fltech.outbox.publisher.core.port.RowChangeSource
 import br.com.fltech.outbox.publisher.workflow.SlotReaderMessageProducer
 import io.mockk.mockk
 import org.junit.jupiter.api.Test
-import org.springframework.boot.health.contributor.HealthIndicator
 import org.springframework.boot.autoconfigure.AutoConfigurations
+import org.springframework.boot.health.contributor.HealthIndicator
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -32,21 +32,22 @@ import kotlin.test.assertTrue
  * production wiring, not the test scaffolding.
  */
 class ProcessorKindToggleTest {
+    private val baseProps =
+        arrayOf(
+            "cdc.outbox.postgres.host=db.example.com",
+            "cdc.outbox.postgres.username=replica",
+            "cdc.outbox.postgres.password=secret",
+            "cdc.outbox.postgres.database=appdb",
+            "cdc.outbox.replication.slot-name=test_slot",
+        )
 
-    private val baseProps = arrayOf(
-        "cdc.outbox.postgres.host=db.example.com",
-        "cdc.outbox.postgres.username=replica",
-        "cdc.outbox.postgres.password=secret",
-        "cdc.outbox.postgres.database=appdb",
-        "cdc.outbox.replication.slot-name=test_slot",
-    )
-
-    private val autoConfigs = AutoConfigurations.of(
-        CdcOutboxAutoConfiguration::class.java,
-        CdcOutboxHexagonalAutoConfiguration::class.java,
-        CdcOutboxSinkAutoConfiguration::class.java,
-        CdcOutboxHealthAutoConfiguration::class.java,
-    )
+    private val autoConfigs =
+        AutoConfigurations.of(
+            CdcOutboxAutoConfiguration::class.java,
+            CdcOutboxHexagonalAutoConfiguration::class.java,
+            CdcOutboxSinkAutoConfiguration::class.java,
+            CdcOutboxHealthAutoConfiguration::class.java,
+        )
 
     @Test
     fun `unset processor-kind wires the HEXAGONAL chain and the hex health indicator`() {
@@ -146,14 +147,22 @@ class ProcessorKindToggleTest {
     @Configuration
     open class StubSinks {
         @Bean
-        open fun snsProducer(): SNSProducer = object : SNSProducer {
-            override fun <T : Any> send(topicName: String, message: SNSMessage<T>) = Unit
-        }
+        open fun snsProducer(): SNSProducer =
+            object : SNSProducer {
+                override fun <T : Any> send(
+                    topicName: String,
+                    message: SNSMessage<T>,
+                ) = Unit
+            }
 
         @Bean
-        open fun sqsProducer(): SQSProducer = object : SQSProducer {
-            override fun <T : Any> send(queueName: String, message: T) = Unit
-        }
+        open fun sqsProducer(): SQSProducer =
+            object : SQSProducer {
+                override fun <T : Any> send(
+                    queueName: String,
+                    message: T,
+                ) = Unit
+            }
     }
 
     /**
@@ -168,8 +177,7 @@ class ProcessorKindToggleTest {
         open fun cdcOutboxSource(): CdcSource = mockk(relaxed = true)
 
         @Bean
-        open fun cdcOutboxProcessorLifecycle(): CdcProcessorLifecycle =
-            CdcProcessorLifecycle(mockk(relaxed = true))
+        open fun cdcOutboxProcessorLifecycle(): CdcProcessorLifecycle = CdcProcessorLifecycle(mockk(relaxed = true))
     }
 
     /**
@@ -184,8 +192,7 @@ class ProcessorKindToggleTest {
         open fun cdcOutboxRowSource(): RowChangeSource = mockk(relaxed = true)
 
         @Bean
-        open fun cdcOutboxProcessorLifecycle(): CdcProcessorLifecycle =
-            CdcProcessorLifecycle(mockk(relaxed = true))
+        open fun cdcOutboxProcessorLifecycle(): CdcProcessorLifecycle = CdcProcessorLifecycle(mockk(relaxed = true))
     }
 
     /**
@@ -196,7 +203,6 @@ class ProcessorKindToggleTest {
     @Configuration
     open class NoOpLegacyLifecycle {
         @Bean
-        open fun cdcOutboxLifecycle(): CdcOutboxLifecycle =
-            CdcOutboxLifecycle(mockk(relaxed = true))
+        open fun cdcOutboxLifecycle(): CdcOutboxLifecycle = CdcOutboxLifecycle(mockk(relaxed = true))
     }
 }

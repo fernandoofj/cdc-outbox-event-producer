@@ -16,8 +16,10 @@ import io.awspring.cloud.sns.core.SnsTemplate
 class SNSTransactionalProducer(
     private val snsTemplate: SnsTemplate,
 ) : SNSProducer {
-
-    override fun <T : Any> send(topicName: String, message: SNSMessage<T>) {
+    override fun <T : Any> send(
+        topicName: String,
+        message: SNSMessage<T>,
+    ) {
         snsTemplate.convertAndSend(topicName, message.body, message.headers)
     }
 }

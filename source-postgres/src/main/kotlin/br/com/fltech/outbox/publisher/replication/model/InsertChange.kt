@@ -36,15 +36,17 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * surface them.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-open class InsertChange @JsonCreator constructor(
-    @JsonProperty(value = "kind", required = true)
-    private val kindInput: String,
-    @param:JsonProperty(value = "schema", required = false)
-    val schema: String? = null,
-    @param:JsonProperty(value = "table", required = false)
-    val table: String? = null,
-    @param:JsonProperty(value = "lsn", required = false)
-    val lsn: String? = null,
-    @param:JsonProperty(value = "columns", required = false)
-    val columns: List<Wal2JsonColumn>? = null,
-) : Change(kindInput)
+open class InsertChange
+    @JsonCreator
+    constructor(
+        @JsonProperty(value = "kind", required = true)
+        private val kindInput: String,
+        @param:JsonProperty(value = "schema", required = false)
+        val schema: String? = null,
+        @param:JsonProperty(value = "table", required = false)
+        val table: String? = null,
+        @param:JsonProperty(value = "lsn", required = false)
+        val lsn: String? = null,
+        @param:JsonProperty(value = "columns", required = false)
+        val columns: List<Wal2JsonColumn>? = null,
+    ) : Change(kindInput)

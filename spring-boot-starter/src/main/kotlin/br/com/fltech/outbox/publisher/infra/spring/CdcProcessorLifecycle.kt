@@ -18,7 +18,6 @@ import java.util.concurrent.TimeUnit
 class CdcProcessorLifecycle(
     private val processor: CdcProcessor,
 ) : SmartLifecycle {
-
     @Volatile
     private var executor: ExecutorService? = null
 
@@ -36,15 +35,17 @@ class CdcProcessorLifecycle(
         // `running=false` for the health indicator — same operator
         // visibility as the in-method catch, without swallowing
         // Error inside the try.
-        val pool = Executors.newSingleThreadExecutor { r ->
-            Thread(r, THREAD_NAME).apply {
-                isDaemon = true
-                uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, t ->
-                    logger.error("CDC outbox processor died with unrecoverable error", t)
-                    running = false
+        val pool =
+            Executors.newSingleThreadExecutor { r ->
+                Thread(r, THREAD_NAME).apply {
+                    isDaemon = true
+                    uncaughtExceptionHandler =
+                        Thread.UncaughtExceptionHandler { _, t ->
+                            logger.error("CDC outbox processor died with unrecoverable error", t)
+                            running = false
+                        }
                 }
             }
-        }
         executor = pool
         running = true
         pool.execute {
@@ -64,13 +65,14 @@ class CdcProcessorLifecycle(
         processor.stop()
         executor?.let { pool ->
             pool.shutdown()
-            val terminated = try {
-                pool.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-                logger.warn("Interrupted while awaiting CDC outbox processor shutdown", e)
-                false
-            }
+            val terminated =
+                try {
+                    pool.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    logger.warn("Interrupted while awaiting CDC outbox processor shutdown", e)
+                    false
+                }
             if (!terminated) {
                 logger.warn(
                     "CDC outbox processor did not terminate within {} s; sending interrupt",
@@ -84,7 +86,9 @@ class CdcProcessorLifecycle(
     }
 
     override fun isRunning(): Boolean = running
+
     override fun isAutoStartup(): Boolean = true
+
     override fun getPhase(): Int = CdcOutboxLifecycle.LIFECYCLE_PHASE
 
     companion object {

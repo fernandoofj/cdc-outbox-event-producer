@@ -21,10 +21,12 @@ import br.com.fltech.outbox.publisher.core.port.UnsupportedReplayException
  * targeted at Postgres fails fast and surfaces the limitation.
  */
 class PgWalReplayerStub : SourceReplayer {
-
     override val sourceKind: String = SOURCE_KIND
 
-    override fun openBoundedSource(fromPosition: String, toPosition: String): RowChangeSource {
+    override fun openBoundedSource(
+        fromPosition: String,
+        toPosition: String,
+    ): RowChangeSource {
         throw UnsupportedReplayException(
             "Postgres WAL replay is not implemented yet. Postgres logical replication slots are " +
                 "monotonic — replaying a past LSN window requires either a temporary slot created " +

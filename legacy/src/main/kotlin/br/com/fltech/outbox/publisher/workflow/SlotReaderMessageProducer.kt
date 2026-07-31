@@ -27,6 +27,11 @@ import java.sql.SQLException
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 
+// TooManyFunctions: this class is the orchestrator. The functions are
+// short, focused, and each plays a distinct role in the streaming loop.
+// Will be split into application/CdcProcessor + adapter when the
+// hexagonal refactor lands (Wave 3+).
+
 /**
  * Long-running loop that consumes a Postgres logical-replication slot, parses
  * each WAL record, and publishes outbound events to the configured sinks.
@@ -58,10 +63,6 @@ import java.util.concurrent.TimeUnit
  *    `lastReceiveLSN` immediately after `readPending`. The drift caveat
  *    documented previously applies only on that fallback path.
  */
-// TooManyFunctions: this class is the orchestrator. The functions are
-// short, focused, and each plays a distinct role in the streaming loop.
-// Will be split into application/CdcProcessor + adapter when the
-// hexagonal refactor lands (Wave 3+).
 @Suppress("TooManyFunctions", "LongParameterList")
 class SlotReaderMessageProducer(
     private val postgresConfiguration: PostgresConfiguration,
@@ -91,10 +92,11 @@ class SlotReaderMessageProducer(
      * message (separate from [reconnectBackOff] which governs the
      * outer connection-level loop).
      */
-    private val publishBackOff: BackOff = ExponentialBackOff(
-        initial = Duration.ofMillis(DEFAULT_PUBLISH_BACKOFF_INITIAL_MS),
-        max = Duration.ofSeconds(DEFAULT_PUBLISH_BACKOFF_MAX_SECONDS),
-    ),
+    private val publishBackOff: BackOff =
+        ExponentialBackOff(
+            initial = Duration.ofMillis(DEFAULT_PUBLISH_BACKOFF_INITIAL_MS),
+            max = Duration.ofSeconds(DEFAULT_PUBLISH_BACKOFF_MAX_SECONDS),
+        ),
 ) {
     // `running` is `internal` so unit tests can drive the retry/dead-letter
     // state machine without going through the full streaming loop.
@@ -121,8 +123,9 @@ class SlotReaderMessageProducer(
     private lateinit var slotReaderCallback: SlotReaderCallback
     private val byteToClassParserImplV1 = ByteToClassParserImplV1(defaultMapper)
     private val byteToClassParserImplV2 = ByteToClassParserImplV2(defaultMapper)
-    private val byteToClassParser = ByteToClassParserStrategy(byteToClassParserImplV1, byteToClassParserImplV2)
-        .selectParser(replicationConfiguration)
+    private val byteToClassParser =
+        ByteToClassParserStrategy(byteToClassParserImplV1, byteToClassParserImplV2)
+            .selectParser(replicationConfiguration)
 
     fun startStreaming() {
         // Flip to true here (not at field-init time) so that
@@ -148,12 +151,13 @@ class SlotReaderMessageProducer(
      * Read-only snapshot of producer state for health checks. Safe to call
      * from a different thread (relies on `@Volatile` fields).
      */
-    fun snapshotState(): ProducerState = ProducerState(
-        slot = replicationConfiguration.slotName,
-        running = running,
-        pendingFailureLsn = pendingFailureLsn?.toString(),
-        msSinceLastActivity = msSinceLastFlush(),
-    )
+    fun snapshotState(): ProducerState =
+        ProducerState(
+            slot = replicationConfiguration.slotName,
+            running = running,
+            pendingFailureLsn = pendingFailureLsn?.toString(),
+            msSinceLastActivity = msSinceLastFlush(),
+        )
 
     private fun msSinceLastFlush(): Long {
         val ts = lastFlushedTime
@@ -200,7 +204,11 @@ class SlotReaderMessageProducer(
         }
     }
 
-    private fun handleReconnectableError(reason: String, cause: Throwable, force: Boolean) {
+    private fun handleReconnectableError(
+        reason: String,
+        cause: Throwable,
+        force: Boolean,
+    ) {
         logger.error("Replication stream error ({}), will reconnect", reason, cause)
         metrics.recordReconnect(reason)
         if (force) {
@@ -246,8 +254,7 @@ class SlotReaderMessageProducer(
     private fun createPostgresConnector(
         postgresConfiguration: PostgresConfiguration,
         replicationConfiguration: ReplicationConfiguration,
-    ): PostgresConnector =
-        PostgresConnector(postgresConfiguration, replicationConfiguration, connectionProvider)
+    ): PostgresConnector = PostgresConnector(postgresConfiguration, replicationConfiguration, connectionProvider)
 
     // `internal` so tests can wire a callback with a mocked PostgresConnector
     // and exercise [processMessage] in isolation.
@@ -293,7 +300,10 @@ class SlotReaderMessageProducer(
         }
     }
 
-    private fun processData(byteBufferMessage: ByteBuffer, lsn: LogSequenceNumber) {
+    private fun processData(
+        byteBufferMessage: ByteBuffer,
+        lsn: LogSequenceNumber,
+    ) {
         val changes = byteToClassParser.parse(byteBufferMessage)
         val nonEmpty = changes.takeIf { it.isNotEmpty() }
         if (nonEmpty == null) {
@@ -315,7 +325,10 @@ class SlotReaderMessageProducer(
     // successful publish, explicit discard, or dead-letter.
     // `internal` so unit tests can drive it without spinning the
     // full loop.
-    internal fun processMessage(messageChange: MessageChange, fallbackLsn: LogSequenceNumber) {
+    internal fun processMessage(
+        messageChange: MessageChange,
+        fallbackLsn: LogSequenceNumber,
+    ) {
         // Prefer the per-message LSN carried inside the wal2json payload over
         // the stream's high-water-mark fallback (see class KDoc).
         val lsn = resolveLsn(messageChange, fallbackLsn)
@@ -416,7 +429,10 @@ class SlotReaderMessageProducer(
     // ReturnCount: 3 outcomes (no embedded lsn, INVALID_LSN sentinel,
     // valid parsed). Single-return would hide the diagnostic WARN log.
     @Suppress("ReturnCount")
-    internal fun resolveLsn(messageChange: MessageChange, fallback: LogSequenceNumber): LogSequenceNumber {
+    internal fun resolveLsn(
+        messageChange: MessageChange,
+        fallback: LogSequenceNumber,
+    ): LogSequenceNumber {
         val embedded = messageChange.lsn ?: return fallback
         // pgjdbc's LogSequenceNumber.valueOf never throws — it returns
         // INVALID_LSN (0/0) on a malformed input. We have to detect that
@@ -443,7 +459,11 @@ class SlotReaderMessageProducer(
         }
     }
 
-    private fun processSNSMessage(destinationName: String, messageChange: MessageChange, lsn: LogSequenceNumber) {
+    private fun processSNSMessage(
+        destinationName: String,
+        messageChange: MessageChange,
+        lsn: LogSequenceNumber,
+    ) {
         val message = messageChange.content.parseToObject()
         logger.info(
             "Posting message to SNS topic #{} event type #{}, domainID #{}",
@@ -457,7 +477,11 @@ class SlotReaderMessageProducer(
         slotReaderCallback.onSNSSuccess(lsn, destinationName, message)
     }
 
-    private fun processSQSMessage(destinationName: String, messageChange: MessageChange, lsn: LogSequenceNumber) {
+    private fun processSQSMessage(
+        destinationName: String,
+        messageChange: MessageChange,
+        lsn: LogSequenceNumber,
+    ) {
         logger.info("Posting message to SQS queue #{} with payload {}", destinationName, messageChange.content)
         val map = JsonHelper.fromJsonString(messageChange.content).toMap()
         val started = System.nanoTime()
@@ -466,8 +490,7 @@ class SlotReaderMessageProducer(
         slotReaderCallback.onSQSSuccess(lsn, destinationName)
     }
 
-    private fun elapsedSince(startNanos: Long): Duration =
-        Duration.ofNanos(System.nanoTime() - startNanos)
+    private fun elapsedSince(startNanos: Long): Duration = Duration.ofNanos(System.nanoTime() - startNanos)
 
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(SlotReaderMessageProducer::class.java)

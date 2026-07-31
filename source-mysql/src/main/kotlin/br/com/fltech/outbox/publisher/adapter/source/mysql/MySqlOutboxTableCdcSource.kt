@@ -5,7 +5,6 @@ import br.com.fltech.outbox.publisher.core.domain.Routing
 import br.com.fltech.outbox.publisher.core.port.CdcSource
 import org.slf4j.LoggerFactory
 import java.sql.Connection
-import java.time.Instant
 import javax.sql.DataSource
 
 /**
@@ -47,7 +46,6 @@ class MySqlOutboxTableCdcSource(
     private val tableName: String = DEFAULT_TABLE,
     private val batchSize: Int = DEFAULT_BATCH_SIZE,
 ) : CdcSource {
-
     init {
         // Defence in depth: the table name is interpolated directly into
         // the SQL (PreparedStatement doesn't allow parameterised
@@ -71,6 +69,7 @@ class MySqlOutboxTableCdcSource(
     // safely read the latest write without a torn long-pointer.
     @Volatile
     private var inflightConn: Connection? = null
+
     @Volatile
     private var inflightId: Long? = null
 
@@ -116,7 +115,10 @@ class MySqlOutboxTableCdcSource(
             }
         }
 
-    private fun bindInflightAndProject(conn: java.sql.Connection, rs: java.sql.ResultSet): OutboxEvent {
+    private fun bindInflightAndProject(
+        conn: java.sql.Connection,
+        rs: java.sql.ResultSet,
+    ): OutboxEvent {
         val id = rs.getLong("id")
         val prefix = rs.getString("prefix")
         val payload = rs.getString("payload")
@@ -132,20 +134,22 @@ class MySqlOutboxTableCdcSource(
         )
     }
 
-    private val pollSql = """
+    private val pollSql =
+        """
         SELECT id, prefix, payload, headers, created_at
         FROM $tableName
         WHERE published_at IS NULL
         ORDER BY id
         LIMIT $batchSize
         FOR UPDATE SKIP LOCKED
-    """.trimIndent()
+        """.trimIndent()
 
     override fun ack(event: OutboxEvent) {
-        val conn = inflightConn ?: run {
-            logger.warn("ack called with no in-flight transaction for event {}; nothing to commit", event.id)
-            return
-        }
+        val conn =
+            inflightConn ?: run {
+                logger.warn("ack called with no in-flight transaction for event {}; nothing to commit", event.id)
+                return
+            }
         val id = inflightId ?: return
         try {
             conn.prepareStatement(
@@ -181,6 +185,7 @@ class MySqlOutboxTableCdcSource(
         const val DEFAULT_BATCH_SIZE = 1
         const val MAX_BATCH_SIZE = 1000
         const val VALIDATION_TIMEOUT_SECONDS = 3
+
         /** ASCII identifier shape: leading letter/underscore, then alphanumerics/underscores. */
         val IDENTIFIER_REGEX = Regex("[A-Za-z_][A-Za-z0-9_]*")
     }

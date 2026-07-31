@@ -6,20 +6,20 @@ import org.junit.jupiter.api.assertThrows
 import javax.sql.DataSource
 
 class MySqlOutboxTableCdcSourceTest {
-
     private val dataSource = mockk<DataSource>(relaxed = true)
 
     @Test
     fun `constructor rejects table names that escape the conservative identifier regex`() {
-        val badNames = listOf(
-            "outbox; DROP TABLE users",
-            "outbox_events`; --",
-            "outbox events",
-            "1outbox",
-            "",
-            "outbox-events",
-            "outbox.events",
-        )
+        val badNames =
+            listOf(
+                "outbox; DROP TABLE users",
+                "outbox_events`; --",
+                "outbox events",
+                "1outbox",
+                "",
+                "outbox-events",
+                "outbox.events",
+            )
         badNames.forEach { name ->
             assertThrows<IllegalArgumentException>("expected reject for '$name'") {
                 MySqlOutboxTableCdcSource(dataSource, tableName = name)

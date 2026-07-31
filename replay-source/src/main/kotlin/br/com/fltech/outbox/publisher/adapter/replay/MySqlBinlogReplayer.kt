@@ -22,6 +22,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import javax.sql.DataSource
 
+// LongParameterList: same rationale as the live MySqlBinlogRowChangeSource —
+// host/port/credentials + serverId + JDBC handle for column resolution +
+// factory hooks are all genuinely independent collaborators.
+
 /**
  * Replays MySQL binlog row events from a specific file:position
  * window. Opens a separate [BinaryLogClient] with an isolated
@@ -37,9 +41,6 @@ import javax.sql.DataSource
  * `INFORMATION_SCHEMA` lookup pattern. The replayer takes its own
  * `DataSource` to keep concurrent usage safe.
  */
-// LongParameterList: same rationale as the live MySqlBinlogRowChangeSource —
-// host/port/credentials + serverId + JDBC handle for column resolution +
-// factory hooks are all genuinely independent collaborators.
 @Suppress("LongParameterList")
 class MySqlBinlogReplayer(
     private val host: String,
@@ -58,18 +59,22 @@ class MySqlBinlogReplayer(
     private val clientFactory: (String, Int, String, String) -> BinaryLogClient = ::BinaryLogClient,
     private val bufferSize: Int = DEFAULT_BUFFER_SIZE,
 ) : SourceReplayer {
-
     override val sourceKind: String = SOURCE_KIND
 
-    override fun openBoundedSource(fromPosition: String, toPosition: String): RowChangeSource {
-        val (fromFile, fromOffset) = parsePosition(fromPosition)
-            ?: throw UnsupportedReplayException(
-                "fromPosition '$fromPosition' did not parse as <binlog-file>:<offset>",
-            )
-        val (toFile, toOffset) = parsePosition(toPosition)
-            ?: throw UnsupportedReplayException(
-                "toPosition '$toPosition' did not parse as <binlog-file>:<offset>",
-            )
+    override fun openBoundedSource(
+        fromPosition: String,
+        toPosition: String,
+    ): RowChangeSource {
+        val (fromFile, fromOffset) =
+            parsePosition(fromPosition)
+                ?: throw UnsupportedReplayException(
+                    "fromPosition '$fromPosition' did not parse as <binlog-file>:<offset>",
+                )
+        val (toFile, toOffset) =
+            parsePosition(toPosition)
+                ?: throw UnsupportedReplayException(
+                    "toPosition '$toPosition' did not parse as <binlog-file>:<offset>",
+                )
         return BoundedMySqlBinlogSource(
             host = host,
             port = port,
@@ -103,15 +108,16 @@ class MySqlBinlogReplayer(
     }
 }
 
+// LongParameterList + TooManyFunctions: 12 ctor params are the
+// binlog client surface (host/port/creds/serverId), the from/to
+// window, and the factory hooks; one method per binlog event type
+// matches the live source's pattern.
+
 /**
  * Bounded [RowChangeSource] backed by a single binlog session.
  * `poll()` returns null once the binlog cursor crosses the stop
  * position OR the binlog drains earlier.
  */
-// LongParameterList + TooManyFunctions: 12 ctor params are the
-// binlog client surface (host/port/creds/serverId), the from/to
-// window, and the factory hooks; one method per binlog event type
-// matches the live source's pattern.
 @Suppress("LongParameterList", "TooManyFunctions")
 internal class BoundedMySqlBinlogSource(
     private val host: String,
@@ -127,7 +133,6 @@ internal class BoundedMySqlBinlogSource(
     private val toOffset: Long,
     bufferSize: Int,
 ) : RowChangeSource {
-
     private val opened = AtomicBoolean(false)
     private val finished = AtomicBoolean(false)
     private val client = AtomicReference<BinaryLogClient?>()
@@ -157,14 +162,19 @@ internal class BoundedMySqlBinlogSource(
             }
         }, "cdc-outbox-replay-mysql-$serverId").apply {
             isDaemon = true
-            uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, t ->
-                logger.error("MySqlBinlogReplayer daemon died with unrecoverable error", t)
-                finished.set(true)
-            }
+            uncaughtExceptionHandler =
+                Thread.UncaughtExceptionHandler { _, t ->
+                    logger.error("MySqlBinlogReplayer daemon died with unrecoverable error", t)
+                    finished.set(true)
+                }
         }.start()
         logger.info(
             "MySqlBinlogReplayer: started replay session serverId={} from={}:{} to={}:{}",
-            serverId, fromFile, fromOffset, toFile, toOffset,
+            serverId,
+            fromFile,
+            fromOffset,
+            toFile,
+            toOffset,
         )
     }
 
@@ -194,7 +204,8 @@ internal class BoundedMySqlBinlogSource(
             if (reachedStop(header.nextPosition)) {
                 logger.info(
                     "MySqlBinlogReplayer: stop position {}:{} reached; draining session",
-                    currentBinlogFile, header.nextPosition,
+                    currentBinlogFile,
+                    header.nextPosition,
                 )
                 finished.set(true)
                 runCatching { client.get()?.disconnect() }
@@ -216,8 +227,8 @@ internal class BoundedMySqlBinlogSource(
     private fun reachedStop(nextPosition: Long): Boolean {
         val fileCmp = compareBinlogFiles(currentBinlogFile, toFile)
         return when {
-            fileCmp < 0 -> false  // still in earlier binlog file
-            fileCmp > 0 -> true   // we already passed the target file
+            fileCmp < 0 -> false // still in earlier binlog file
+            fileCmp > 0 -> true // we already passed the target file
             else -> nextPosition >= toOffset
         }
     }
@@ -227,7 +238,10 @@ internal class BoundedMySqlBinlogSource(
      * because MySQL names them `mysql-bin.000001`, `000002`, … in
      * monotonically increasing sequence.
      */
-    private fun compareBinlogFiles(a: String, b: String): Int = a.compareTo(b)
+    private fun compareBinlogFiles(
+        a: String,
+        b: String,
+    ): Int = a.compareTo(b)
 
     private fun handleTableMap(data: TableMapEventData) {
         tableCache[data.tableId] = "${data.database}.${data.table}"
@@ -237,34 +251,46 @@ internal class BoundedMySqlBinlogSource(
     // ReturnCount: 3 distinct early exits (already cached, no
     // DataSource, lookup failed). Same guard-clause rationale.
     @Suppress("ReturnCount")
-    private fun resolveColumnNames(tableId: Long, schema: String, table: String) {
+    private fun resolveColumnNames(
+        tableId: Long,
+        schema: String,
+        table: String,
+    ) {
         if (columnNamesByTableId.containsKey(tableId)) return
         val ds = dataSource ?: return
-        val names = try {
-            ds.connection.use { conn ->
-                conn.prepareStatement(COLUMN_LOOKUP_SQL).use { stmt ->
-                    stmt.setString(1, schema)
-                    stmt.setString(2, table)
-                    readNames(stmt)
+        val names =
+            try {
+                ds.connection.use { conn ->
+                    conn.prepareStatement(COLUMN_LOOKUP_SQL).use { stmt ->
+                        stmt.setString(1, schema)
+                        stmt.setString(2, table)
+                        readNames(stmt)
+                    }
                 }
+            } catch (e: Exception) {
+                logger.warn(
+                    "MySqlBinlogReplayer: column lookup failed for {}.{} ({}); falling back to indexed names",
+                    schema,
+                    table,
+                    e.javaClass.simpleName,
+                    e,
+                )
+                return
             }
-        } catch (e: Exception) {
-            logger.warn(
-                "MySqlBinlogReplayer: column lookup failed for {}.{} ({}); falling back to indexed names",
-                schema, table, e.javaClass.simpleName, e,
-            )
-            return
-        }
         if (!names.isNullOrEmpty()) columnNamesByTableId[tableId] = names
     }
 
-    private fun readNames(stmt: PreparedStatement): List<String>? = stmt.executeQuery().use { rs ->
-        val names = mutableListOf<String>()
-        while (rs.next()) names += rs.getString(1)
-        if (names.isEmpty()) null else names
-    }
+    private fun readNames(stmt: PreparedStatement): List<String>? =
+        stmt.executeQuery().use { rs ->
+            val names = mutableListOf<String>()
+            while (rs.next()) names += rs.getString(1)
+            if (names.isEmpty()) null else names
+        }
 
-    private fun handleWriteRows(data: WriteRowsEventData, header: EventHeaderV4) {
+    private fun handleWriteRows(
+        data: WriteRowsEventData,
+        header: EventHeaderV4,
+    ) {
         val table = tableCache[data.tableId] ?: return
         val names = columnNamesByTableId[data.tableId]
         data.rows.forEach { row ->
@@ -280,7 +306,10 @@ internal class BoundedMySqlBinlogSource(
         }
     }
 
-    private fun handleUpdateRows(data: UpdateRowsEventData, header: EventHeaderV4) {
+    private fun handleUpdateRows(
+        data: UpdateRowsEventData,
+        header: EventHeaderV4,
+    ) {
         val table = tableCache[data.tableId] ?: return
         val names = columnNamesByTableId[data.tableId]
         data.rows.forEach { entry ->
@@ -297,7 +326,10 @@ internal class BoundedMySqlBinlogSource(
         }
     }
 
-    private fun handleDeleteRows(data: DeleteRowsEventData, header: EventHeaderV4) {
+    private fun handleDeleteRows(
+        data: DeleteRowsEventData,
+        header: EventHeaderV4,
+    ) {
         val table = tableCache[data.tableId] ?: return
         val names = columnNamesByTableId[data.tableId]
         data.rows.forEach { row ->

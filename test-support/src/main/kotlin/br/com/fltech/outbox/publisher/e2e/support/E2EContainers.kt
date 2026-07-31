@@ -26,7 +26,6 @@ import org.testcontainers.utility.DockerImageName
  * of test isolation. Each test gets its own pair of containers.
  */
 object E2EContainers {
-
     /**
      * Postgres image with logical replication enabled. Mirrors what
      * `AtLeastOnceDeliveryIT` boots — same image, same `postgres -c`
@@ -41,9 +40,12 @@ object E2EContainers {
             withPassword(PG_PASSWORD)
             withCommand(
                 "postgres",
-                "-c", "wal_level=logical",
-                "-c", "max_replication_slots=4",
-                "-c", "max_wal_senders=4",
+                "-c",
+                "wal_level=logical",
+                "-c",
+                "max_replication_slots=4",
+                "-c",
+                "max_wal_senders=4",
             )
         }
     }

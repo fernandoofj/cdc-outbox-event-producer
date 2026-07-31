@@ -42,7 +42,6 @@ import kotlin.test.assertNull
  *    counter (that's reserved for genuine resolution failures).
  */
 class MySqlBinlogRowChangeSourceTest {
-
     private val client = mockk<BinaryLogClient>(relaxed = true)
     private val factory: (String, Int, String, String) -> BinaryLogClient = { _, _, _, _ -> client }
 
@@ -233,11 +232,12 @@ class MySqlBinlogRowChangeSourceTest {
         }
         val registry = SimpleMeterRegistry()
         val metrics = CdcOutboxMetrics(registry)
-        val src = newSource(
-            dataSource = mockk(),
-            columnLookup = lookup,
-            metrics = metrics,
-        )
+        val src =
+            newSource(
+                dataSource = mockk(),
+                columnLookup = lookup,
+                metrics = metrics,
+            )
         src.open()
 
         val listener = listenerSlot.captured
@@ -252,7 +252,8 @@ class MySqlBinlogRowChangeSourceTest {
             0.0,
             registry.counter(
                 CdcOutboxMetrics.BINLOG_COLUMN_RESOLUTION_FALLBACKS,
-                CdcOutboxMetrics.TAG_TABLE, "shop.orders",
+                CdcOutboxMetrics.TAG_TABLE,
+                "shop.orders",
             ).count(),
         )
         src.close()
@@ -268,10 +269,11 @@ class MySqlBinlogRowChangeSourceTest {
             lookups += 1
             listOf("id", "status")
         }
-        val src = newSource(
-            dataSource = mockk(),
-            columnLookup = lookup,
-        )
+        val src =
+            newSource(
+                dataSource = mockk(),
+                columnLookup = lookup,
+            )
         src.open()
 
         val listener = listenerSlot.captured
@@ -327,7 +329,8 @@ class MySqlBinlogRowChangeSourceTest {
             1.0,
             registry.counter(
                 CdcOutboxMetrics.BINLOG_SCHEMA_DRIFT,
-                CdcOutboxMetrics.TAG_TABLE, "shop.orders",
+                CdcOutboxMetrics.TAG_TABLE,
+                "shop.orders",
             ).count(),
         )
         // Cache was invalidated → second lookup ran.
@@ -369,7 +372,8 @@ class MySqlBinlogRowChangeSourceTest {
             0.0,
             registry.counter(
                 CdcOutboxMetrics.BINLOG_SCHEMA_DRIFT,
-                CdcOutboxMetrics.TAG_TABLE, "shop.orders",
+                CdcOutboxMetrics.TAG_TABLE,
+                "shop.orders",
             ).count(),
         )
         assertEquals(1, lookups.size)
@@ -402,7 +406,8 @@ class MySqlBinlogRowChangeSourceTest {
             0.0,
             registry.counter(
                 CdcOutboxMetrics.BINLOG_SCHEMA_DRIFT,
-                CdcOutboxMetrics.TAG_TABLE, "shop.orders",
+                CdcOutboxMetrics.TAG_TABLE,
+                "shop.orders",
             ).count(),
         )
         src.close()
@@ -413,12 +418,13 @@ class MySqlBinlogRowChangeSourceTest {
         schema: String,
         table: String,
         columnCount: Int,
-    ): Event = tableMapEventWithTypes(
-        tableId = tableId,
-        schema = schema,
-        table = table,
-        types = ByteArray(columnCount),
-    )
+    ): Event =
+        tableMapEventWithTypes(
+            tableId = tableId,
+            schema = schema,
+            table = table,
+            types = ByteArray(columnCount),
+        )
 
     private fun tableMapEventWithTypes(
         tableId: Long,
@@ -426,17 +432,19 @@ class MySqlBinlogRowChangeSourceTest {
         table: String,
         types: ByteArray,
     ): Event {
-        val header = EventHeaderV4().apply {
-            eventType = EventType.TABLE_MAP
-            timestamp = 0L
-            nextPosition = 0L
-        }
-        val data = TableMapEventData().apply {
-            this.tableId = tableId
-            this.database = schema
-            this.table = table
-            this.columnTypes = types
-        }
+        val header =
+            EventHeaderV4().apply {
+                eventType = EventType.TABLE_MAP
+                timestamp = 0L
+                nextPosition = 0L
+            }
+        val data =
+            TableMapEventData().apply {
+                this.tableId = tableId
+                this.database = schema
+                this.table = table
+                this.columnTypes = types
+            }
         return Event(header, data)
     }
 }

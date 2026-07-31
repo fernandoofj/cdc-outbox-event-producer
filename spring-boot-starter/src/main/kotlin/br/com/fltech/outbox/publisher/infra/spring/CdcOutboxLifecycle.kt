@@ -23,7 +23,6 @@ import java.util.concurrent.TimeUnit
 class CdcOutboxLifecycle(
     private val producer: SlotReaderMessageProducer,
 ) : SmartLifecycle {
-
     @Volatile
     private var executor: ExecutorService? = null
 
@@ -40,15 +39,17 @@ class CdcOutboxLifecycle(
         // Error (OOM, StackOverflow) is logged + `running` cleared
         // for the health indicator. Exception is caught in-method
         // and logged at ERROR with `running=false` in `finally`.
-        val pool = Executors.newSingleThreadExecutor { r ->
-            Thread(r, THREAD_NAME).apply {
-                isDaemon = true
-                uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, t ->
-                    logger.error("CDC outbox producer died with unrecoverable error", t)
-                    running = false
+        val pool =
+            Executors.newSingleThreadExecutor { r ->
+                Thread(r, THREAD_NAME).apply {
+                    isDaemon = true
+                    uncaughtExceptionHandler =
+                        Thread.UncaughtExceptionHandler { _, t ->
+                            logger.error("CDC outbox producer died with unrecoverable error", t)
+                            running = false
+                        }
                 }
             }
-        }
         executor = pool
         running = true
         pool.execute {
@@ -68,13 +69,14 @@ class CdcOutboxLifecycle(
         producer.stopStreaming()
         executor?.let { pool ->
             pool.shutdown()
-            val terminated = try {
-                pool.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-                logger.warn("Interrupted while awaiting CDC outbox shutdown", e)
-                false
-            }
+            val terminated =
+                try {
+                    pool.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    logger.warn("Interrupted while awaiting CDC outbox shutdown", e)
+                    false
+                }
             if (!terminated) {
                 logger.warn(
                     "CDC outbox loop did not terminate within {} s; sending interrupt",

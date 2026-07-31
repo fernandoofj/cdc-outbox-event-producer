@@ -28,9 +28,10 @@ import org.springframework.security.core.context.SecurityContextHolder
 class DlqReplayActuatorEndpoint(
     private val service: DlqReplayService,
 ) {
-
     @ReadOperation
-    fun listMessages(@Selector(match = Selector.Match.SINGLE) action: String?): Any {
+    fun listMessages(
+        @Selector(match = Selector.Match.SINGLE) action: String?,
+    ): Any {
         requireAuthenticated()
         return when (action) {
             null, "messages" -> mapOf("messages" to service.peek(DEFAULT_PEEK_SIZE))
@@ -40,7 +41,10 @@ class DlqReplayActuatorEndpoint(
     }
 
     @WriteOperation
-    fun replay(@Selector(match = Selector.Match.SINGLE) action: String, body: ReplayRequest?): Any {
+    fun replay(
+        @Selector(match = Selector.Match.SINGLE) action: String,
+        body: ReplayRequest?,
+    ): Any {
         requireAuthenticated()
         return when (action) {
             "replay" -> {
@@ -58,7 +62,9 @@ class DlqReplayActuatorEndpoint(
     }
 
     @DeleteOperation
-    fun abandon(@Selector(match = Selector.Match.SINGLE) handle: String): Any {
+    fun abandon(
+        @Selector(match = Selector.Match.SINGLE) handle: String,
+    ): Any {
         requireAuthenticated()
         return service.abandon(handle)
     }
