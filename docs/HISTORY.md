@@ -11,12 +11,12 @@ file records the actual delivery and the Tech Lead verdict per round.
 
 ## Round 24 — ktlint backlog cleared, hard-coded-port IT fixed, remaining pool config
 
-Closes items 1–5 of the pending-tasks list surfaced after Round 23,
-plus item 7 (branch cleanup, done inline). Item 6 (Maven Central
-publish) is documented, not built — see below.
+Closes items 1–5 of the pending-tasks list surfaced after Round 23
+(item 5, Maven Central, is documented rather than built — see below),
+plus item 7 (branch cleanup, done inline).
 
   * **`ktlintCheck` backlog cleared** (item 1): `./gradlew ktlintFormat`
-    across all 15 modules + `checkpoint-file`, fixing ~15 violations
+    across all 15 modules, fixing ~15 violations
     the auto-formatter couldn't correct on its own — mostly "EOL
     comment may not be preceded by a KDoc" (detekt-suppression
     justification comments sitting between a class/method KDoc and the
@@ -74,8 +74,19 @@ publish) is documented, not built — see below.
     Gradle plugin config yet — wiring a publish target against an
     unverified namespace produces build config nobody can run.
   * **Stale local branches deleted** (item 7): all 12 branches flagged
-    in Round 23 as blocked by session permissions — merged cleanly
-    this time.
+    in Round 23 as blocked by session permissions — `git branch -d`
+    went through cleanly this time; all were already fully reachable
+    from `main`, so nothing was lost.
+  * **Tech Lead pass caught three more**: `IntegrationBase.tearDownEnd`
+    dropped the replication slot before closing the connection / stopping
+    the container with no `try`/`finally` — a failed `DROP` would have
+    leaked the Testcontainers Postgres instead of the external one the
+    old code assumed; wrapped in `try`/`finally` so the container always
+    stops. `AWSParamaters` (in `test-support`, a real published Maven
+    coordinate since Wave 7) had zero remaining callers after the
+    `IntegrationBase` rewrite — deleted rather than left as dead public
+    API. `autoCommit` was missing the KDoc every sibling `Pool` field
+    carries — added.
   * **Verification**: `./gradlew clean build` (zero exclusions, all
     15 modules + BOM) green; `./gradlew clean build -x :legacy:test`
     followed by `:legacy:build` alone also green, confirming the

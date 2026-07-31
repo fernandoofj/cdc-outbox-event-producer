@@ -60,7 +60,7 @@ toolchain (Kotlin, JVM target, Gradle wrapper versions) and
     operation must log at WARN/ERROR and increment a Micrometer
     counter via `CdcOutboxMetrics`.
   * `./gradlew detekt` and `./gradlew ktlintCheck` must both be clean
-    (Round 23 closed out the ktlint backlog — the whole tree passes
+    (Round 24 closed out the ktlint backlog — the whole tree passes
     `./gradlew build` with zero exclusions now). Any `@Suppress` needs
     a one-line justification comment immediately above it.
 

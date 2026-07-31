@@ -65,11 +65,16 @@ abstract class IntegrationBase {
     }
 
     protected fun tearDownEnd() {
-        val dropSlotCommand = "SELECT pg_drop_replication_slot('${replicationConfiguration.slotName}')"
-        executeCommand(dropSlotCommand)
-
-        auxiliarConnection.close()
-        postgres.stop()
+        try {
+            val dropSlotCommand = "SELECT pg_drop_replication_slot('${replicationConfiguration.slotName}')"
+            executeCommand(dropSlotCommand)
+            auxiliarConnection.close()
+        } finally {
+            // The container is dedicated to this test class (Round 24), so a
+            // failure above must not leak it — Ryuk eventually reaps orphans,
+            // but stop() here is immediate and doesn't depend on that safety net.
+            postgres.stop()
+        }
     }
 
     protected fun executeCommand(command: String): Boolean {

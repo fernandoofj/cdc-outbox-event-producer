@@ -126,6 +126,16 @@ data class CdcOutboxProperties(
          * enable it via `cdc.outbox.pool.keepalive-time`.
          */
         val keepaliveTime: Duration = Duration.ZERO,
+        /**
+         * Whether pooled connections auto-commit. Defaults to `true`,
+         * matching
+         * [br.com.fltech.outbox.publisher.replication.connector.HikariCPConnectionProvider.PoolConfig]'s
+         * own default.
+         * Set `false` only if a consumer-side interceptor needs explicit
+         * transaction control over this pool's connections — the producer
+         * itself issues single autocommitting statements and doesn't
+         * depend on either setting.
+         */
         val autoCommit: Boolean = true,
     )
 
