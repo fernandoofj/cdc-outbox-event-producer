@@ -9,6 +9,72 @@ file records the actual delivery and the Tech Lead verdict per round.
 > external release scheme. They're kept here as-is because they're
 > the actual identifiers used in the corresponding commits and PRs.
 
+## Round 23 — Backlog polish (deferred MINOR/NIT items)
+
+Closed 5 of 6 small items deliberately deferred across Rounds 21–22
+Tech Lead reviews, none blocking on their own. The 6th (stale local
+branch cleanup) is disclosed as not done below, not counted as done.
+
+  * **`PoolConfig.keepaliveTime` surfaced via config**: added to
+    `CdcOutboxProperties.Pool` (`cdc.outbox.pool.keepalive-time`,
+    default `Duration.ZERO` — matches the Round 21 decision to keep
+    HikariCP 7's keepalive disabled by default) and wired into
+    `CdcOutboxAutoConfiguration.cdcOutboxConnectionProvider`. Every
+    other `Pool` field was already configurable; this was the one gap
+    left after the HikariCP 5→7 bump. Added to `docs/ARCHITECTURE.md`'s
+    `cdc.outbox.pool.*` reference table and the README config summary
+    (both were previously undocumented for this field — a first pass
+    at this round shipped the code without touching either).
+    A first attempt at test coverage only asserted
+    `CdcOutboxProperties.Pool.keepaliveTime` bound correctly — a
+    second Tech Lead pass pointed out that deleting the actual wiring
+    line in `CdcOutboxAutoConfiguration` would leave both assertions
+    green, since neither touched `HikariCPConnectionProvider`'s
+    `PoolConfig`. Added one real regression test that reads the
+    connection provider bean's private `poolConfig` via reflection
+    (the bean is obtainable with no live database — pools build lazily
+    inside `getConnection()`, not the constructor) and asserts
+    `cdc.outbox.pool.keepalive-time=90s` actually reaches it.
+  * **`core` no longer depends on `org.json`**: `JsonHelper` (and its
+    test + fixture) moved to `:legacy`, its only caller
+    (`SlotReaderMessageProducer`), and marked `internal` there since
+    nothing outside `:legacy` calls it — matching the `implementation`
+    (not `api`) scope of the `org.json` dependency the move added to
+    `legacy/build.gradle.kts`. `core/build.gradle.kts` drops the
+    `api("org.json:json:...")` line entirely — the domain module no
+    longer leaks a JSON driver it doesn't otherwise use, closing the
+    hexagonal-boundary smell flagged since the Round 21 review.
+  * **Anonymous-auth check made type-safe**: `isAnonymous()` in both
+    `DlqReplayActuatorEndpoint` and `ReplayActuatorEndpoint` switched
+    from `javaClass.simpleName == "AnonymousAuthenticationToken"` to
+    `this is AnonymousAuthenticationToken` — same runtime behavior,
+    immune to the proxy/subclass cases a string compare would miss.
+    The `ROLE_GUEST` test case covering this disjunct was added in
+    Round 22's mutation-testing pass, not this round; both existing
+    endpoint test suites, 5 cases each, pass unmodified against the
+    refactor.
+  * **Unused `spring-security-test:7.0.5` dropped** from
+    `dlq-replay/build.gradle.kts` — the auth-gate tests added in
+    Round 22 use `spring-security-core` types directly, never needed
+    the test-support artifact.
+  * **README §Roadmap row order fixed**: rows 12 and 19 had drifted to
+    the bottom of the table (added after the numbering was already
+    settled); reordered to strict ascending `#`, matching CLAUDE.md's
+    single-source-of-truth expectation for the roadmap.
+  * **Not done — stale local branches**: 12 fully-merged branches from
+    Rounds 21–22 (`test/pr-*`, `feat/package-rename-drop-cdc-segment`,
+    `feat/spring-boot-4-migration`, `chore/oss-readiness`) still on
+    disk; local `git branch -d` was blocked by this session's
+    permission settings. Harmless (fully reachable from `main`),
+    delete manually with `git branch -d <name>` when convenient.
+  * **Verification**: `./gradlew clean build` green across all 15
+    modules + BOM (ktlint and `:legacy:test`'s two DB-dependent ITs
+    excluded, same as Rounds 21–22 — both pre-existing, unrelated);
+    all 5 real Testcontainers-backed integration/E2E suites re-run and
+    green, including `AtLeastOnceDeliveryIT` (the one that actually
+    exercises the relocated `JsonHelper` via
+    `SlotReaderMessageProducer`).
+
 ## Round 22 — Spring Boot 4 migration
 
 Round 21 deliberately skipped PRs #2 (Spring Boot 3.3.5 → 4.0.6) and #3

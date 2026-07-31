@@ -98,6 +98,7 @@ open class CdcOutboxAutoConfiguration {
                 maxLifetime = properties.pool.maxLifetime,
                 leakDetectionThreshold = properties.pool.leakDetectionThreshold,
                 poolName = properties.pool.poolName,
+                keepaliveTime = properties.pool.keepaliveTime,
             ),
         )
 

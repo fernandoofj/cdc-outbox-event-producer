@@ -29,7 +29,6 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-test:4.0.6")
     testImplementation("org.springframework.boot:spring-boot-test-autoconfigure:4.0.6")
     testImplementation("org.springframework.security:spring-security-core:7.0.5")
-    testImplementation("org.springframework.security:spring-security-test:7.0.5")
     testImplementation("org.testcontainers:localstack:1.21.4")
     testImplementation("org.assertj:assertj-core:3.25.3")
 }

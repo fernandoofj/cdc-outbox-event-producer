@@ -128,6 +128,16 @@ data class CdcOutboxProperties(
         val maxLifetime: Duration = Duration.ofMinutes(30),
         val leakDetectionThreshold: Duration = Duration.ofSeconds(30),
         val poolName: String = "cdc-outbox-query-pool",
+        /**
+         * HikariCP keepalive probe interval. Defaults to disabled
+         * ([Duration.ZERO]), matching this pool's pre-HikariCP-7 behavior
+         * (Round 21) rather than HikariCP's own 2-minute default — the
+         * single query connection this pool serves is held too briefly
+         * for a keepalive probe to matter under normal operation, but an
+         * operator running behind an aggressive NAT idle timeout can
+         * enable it via `cdc.outbox.pool.keepalive-time`.
+         */
+        val keepaliveTime: Duration = Duration.ZERO,
     )
 
     data class Retry(
