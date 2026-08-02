@@ -203,6 +203,24 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
     }
 
     /**
+     * Records that `cdc.outbox.checkpoint.enabled=true` but no
+     * checkpoint store bean ended up wired — most commonly because
+     * `cdc-outbox-checkpoint-file` isn't on the classpath. Silent for
+     * a Postgres-only deployment (the slot LSN is authoritative
+     * either way), but a real gap for the MySQL binlog source: it
+     * treats a missing store as "resume from the binlog head",
+     * silently dropping every event produced while the app was down.
+     */
+    fun recordCheckpointMisconfigured() {
+        registry?.let {
+            Counter.builder(CHECKPOINT_MISCONFIGURED)
+                .description("cdc.outbox.checkpoint.enabled=true but no checkpoint store bean was wired")
+                .register(it)
+                .increment()
+        }
+    }
+
+    /**
      * Registers a Micrometer [Gauge] reporting replication lag (in
      * bytes) for the source identified by [sourceLabel]. The [supplier]
      * is invoked by Micrometer on every scrape; implementations MUST
@@ -325,6 +343,7 @@ class CdcOutboxMetrics(private val registry: MeterRegistry?) {
             "cdc.outbox.source.binlog.column_resolution.fallbacks"
         const val BINLOG_SCHEMA_DRIFT = "cdc.outbox.source.binlog.schema_drift"
         const val CHECKPOINT_ORPHANS_SWEPT = "cdc.outbox.checkpoint.orphans_swept"
+        const val CHECKPOINT_MISCONFIGURED = "cdc.outbox.checkpoint.misconfigured"
         const val SOURCE_LAG_BYTES = "cdc.outbox.source.lag_bytes"
         const val DLQ_REPLAYS = "cdc.outbox.dlq.replays"
         const val REPLAY_EVENTS = "cdc.outbox.replay.events"

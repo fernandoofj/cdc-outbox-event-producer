@@ -9,6 +9,121 @@ file records the actual delivery and the Tech Lead verdict per round.
 > external release scheme. They're kept here as-is because they're
 > the actual identifiers used in the corresponding commits and PRs.
 
+## Round 26 — Checkpoint-store fail-open fix, root LocalStack pin, jvmToolchain
+
+Two-item follow-up to a post-Round-25 backlog. Small in scope, went
+through the same review rigor as the round it follows because the
+first fix attempt introduced a new problem.
+
+  * **Root `docker-compose.yml` LocalStack pin**: `localstack/localstack:latest`
+    → `3.8.1`, same fix as the sample app's own compose file — newer
+    LocalStack tags gate startup behind a paid license token and
+    refuse to start without one (`exit code 55`). Verified: ran
+    `./gradlew startDockerCompose`, LocalStack came up healthy and its
+    init scripts (S3/SQS/SNS) all ran; Postgres failed to bind port
+    5432, but that's an unrelated conflict with a different project's
+    container already running on this machine, not caused by this
+    change. Also dropped the obsolete top-level `version: '3.9'` key
+    (Compose warns about it on every invocation).
+  * **`cdcOutboxCheckpointStore` isolated** into a nested
+    `FileCheckpointStoreConfiguration` (`@ConditionalOnClass(FileCheckpointStore::class)`)
+    — the same bug family as Round 25's five: `FileCheckpointStore`
+    lives in the optional `:checkpoint-file` module, `compileOnly` in
+    the starter, and this bean's body unconditionally constructed it.
+    Round 25's own third Tech Lead pass found this exact instance but
+    explicitly called it out of scope for that round.
+
+**First attempt at the isolation fix introduced a MAJOR**: nesting the
+bean behind `@ConditionalOnClass` converts a loud
+`NoClassDefFoundError` at boot into total silence — `cdc.outbox.checkpoint.enabled=true`
+without the module now just doesn't wire a store, no log, no metric.
+For `MySqlBinlogRowChangeSource` this isn't cosmetic: it treats a
+missing store as "resume from the binlog head," silently dropping
+every event produced while the app was down. `CLAUDE.md`'s own rule
+("no silent error paths... MUST emit a log line at WARN or ERROR AND
+a Micrometer counter") applies directly. Fixed with a new
+`cdcOutboxCheckpointMisconfigurationGuard` bean: checks
+`ObjectProvider<CheckpointStore>` at bean-*creation* time (after every
+bean definition, from any auto-config or user config, is already
+registered — same reasoning as `cdcOutboxRowChangeSource`'s own
+`ObjectProvider` usage, argued inline this time rather than by a
+cross-reference that pointed at code doing the opposite), and if none
+exists, logs a WARN and calls a new `CdcOutboxMetrics.recordCheckpointMisconfigured()`
+(`cdc.outbox.checkpoint.misconfigured` counter).
+
+**Second Tech Lead pass on that fix** caught: (a) `.ifAvailable`
+throws `NoUniqueBeanDefinitionException` if a consumer ever registers
+two non-`@Primary` `CheckpointStore` beans — a diagnostic bean
+becoming a new way to fail startup; switched to
+`.stream().count() == 0L`, which tolerates ambiguity instead of
+throwing on it. (b) The guard's `@Bean` method needed *some*
+non-void return type to satisfy Spring ("`@Bean` method must not be
+declared as void") — the first pass used a bare `object` marker with
+no meaning; replaced with `data class CheckpointConfigurationCheck(val misconfigured: Boolean)`,
+a real, inspectable value. (c) **No test covered the happy path** —
+every new test asserted the *absent*-module behavior; nothing proved
+`FileCheckpointStoreConfiguration` still wires the store when the
+module genuinely is present, which is the actual data-loss-preventing
+behavior. Added two tests: module present + `enabled=true` → a real
+`FileCheckpointStore` wires and the misconfigured counter stays at
+zero; a consumer-supplied `CheckpointStore` also suppresses the guard
+regardless of `:checkpoint-file`'s presence. Both verified by mutation
+(temporarily breaking the wiring, confirming the new tests fail, then
+restoring). (d) Stale/misleading KDoc: one paragraph claimed row-level
+adapters "pick up a checkpoint store via `ObjectProvider` in the bean
+definitions below" — no such definitions exist; corrected to say
+consumers wire it by hand via constructor parameter. (e) README lines
+in three places (§ Etapas do processo MySQL binlog row, § Configuração,
+§ Quick start) asserted `checkpoint.enabled=true` unconditionally
+installs the store; all three now name the module dependency and the
+WARN+counter fallback explicitly.
+
+**Also fixed, third recurrence**: `build.gradle.kts` had no
+`jvmToolchain(21)`, so `./gradlew clean build` depends on whatever JDK
+happens to be ambient — on this machine's default (OpenJDK 26.0.1) the
+build fails outright in under a second, because Gradle 8.10.2's own
+embedded Kotlin DSL compiler can't parse a bare `java -version` like
+`26.0.1` (documented in `CONTRIBUTING.md` since Round 22). Added
+`jvmToolchain(21)` to every subproject — this does NOT fix the
+documented failure (the daemon that would evaluate the toolchain
+block never starts on an incompatible ambient JDK in the first place;
+`JAVA_HOME` still must point at JDK ≤23 to invoke `./gradlew` at all)
+but does make actual source compilation reproducible once the daemon
+is up, independent of which compatible JDK happens to be ambient.
+Flagged out-of-scope by name in the two prior review passes on this
+same file; addressed this time rather than deferred a fourth time.
+
+`./gradlew clean build` (zero exclusions) and
+`RUN_TESTCONTAINERS=1 ./gradlew test` both green: **259 tests, 0
+failures, 0 errors, 0 skipped** (up from Round 25's 256 — the two new
+happy-path/consumer-override tests).
+
+Not fixed, flagged separately (`spawn_task`): `cdc.outbox.checkpoint.misconfigured`
+has no Grafana panel or AlertManager rule yet, unlike its sibling
+`checkpoint.orphans_swept` (Round 10) — of every counter in this
+project this is the one most worth alerting on, since non-zero means
+active, ongoing data loss for MySQL binlog consumers.
+
+Tech Lead: FAIL → fix → FAIL → fix → PASS. First pass on this round:
+the silent-data-loss MAJOR described above. Second pass: the four
+findings (a)-(d) above plus the JDK-toolchain MAJOR, which had been
+correctly flagged as pre-existing and out of scope twice before but
+was addressed this round rather than deferred again. Third pass:
+mutation-tested the new/changed tests directly (4 independent mutants
+against the guard bean and the nested config — all 4 killed, none
+survived) rather than trusting the "verified by reverting" claims at
+face value; confirmed `jvmToolchain(21)` compiles to the right
+bytecode version; found the round-number attribution wrong in three
+README spots (said "Round 25" for work that landed in this round) and
+the roadmap/HISTORY text describing its own review as still in
+progress — both one-line fixes, applied before commit. Remaining
+findings (Grafana/AlertManager still deferred with an admittedly
+imprecise justification; the misconfiguration counter models
+persistent state as a one-shot event, better suited to a gauge;
+`jvmToolchain(21)` without a Foojay resolver narrows which ambient
+JDKs can build the project, undocumented) are MINOR/NIT, left for a
+follow-up commit per this project's own PASS-with-minor-findings rule.
+
 ## Round 25 — Sample consumer app (NF2) + 5 real starter bugs it uncovered
 
 Closes items 1, 2, 4, 5 of the post-Round-24 pending-tasks list (item

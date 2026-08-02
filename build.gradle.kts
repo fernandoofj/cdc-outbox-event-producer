@@ -87,6 +87,21 @@ subprojects {
         withJavadocJar()
     }
 
+    // Pins the JDK actually used to COMPILE this module's Kotlin/Java
+    // sources to 21, via Gradle's toolchain resolution — independent
+    // of whatever JDK happens to be on PATH. This does NOT fix
+    // CONTRIBUTING.md's documented failure mode (Gradle 8.10.2's
+    // OWN embedded Kotlin DSL compiler can't parse a bare
+    // `java -version` like `26.0.1` on JDK 24+, so the daemon that
+    // would evaluate this very toolchain block never starts in the
+    // first place) — that half still requires `JAVA_HOME` pointed at
+    // JDK ≤23 before invoking `./gradlew` at all, same as always.
+    // What this DOES fix: once the daemon is up, compilation is
+    // reproducible regardless of which JDK ≤23 happens to be ambient.
+    extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension> {
+        jvmToolchain(21)
+    }
+
     tasks.withType<KotlinCompile> {
         compilerOptions {
             freeCompilerArgs.add("-Xjsr305=strict")

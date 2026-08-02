@@ -24,6 +24,7 @@ import br.com.fltech.outbox.publisher.replication.config.PostgresConfiguration
 import br.com.fltech.outbox.publisher.replication.config.ReplicationConfiguration
 import br.com.fltech.outbox.publisher.replication.connector.ConnectionProvider
 import br.com.fltech.outbox.publisher.retry.BackOff
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.autoconfigure.AutoConfiguration
@@ -78,31 +79,107 @@ import javax.sql.DataSource
 )
 open class CdcOutboxHexagonalAutoConfiguration {
     /**
-     * Default [CheckpointStore] backed by [FileCheckpointStore], wired
-     * only when `cdc.outbox.checkpoint.enabled=true`. Adapters that
-     * accept a checkpoint store (MySQL binlog, Postgres WAL row
-     * source) pick it up via [ObjectProvider] in the bean definitions
-     * below. Consumers can replace the wiring by supplying their own
-     * [CheckpointStore] bean — the standard
-     * `@ConditionalOnMissingBean` rule applies.
+     * Isolated in its own nested [Configuration], gated by
+     * [ConditionalOnClass]: [FileCheckpointStore] lives in the
+     * optional `:checkpoint-file` module, `compileOnly` in this
+     * starter. Unlike the other nested configs in this file, this
+     * bean's own signature (`CheckpointStore` in, `CdcOutboxProperties`/
+     * `CdcOutboxMetrics` out — all `core`/local types) was never at
+     * risk of the `Class.getDeclaredMethods()` crash the rest of this
+     * round fixed; the risk here is narrower — the method BODY
+     * constructs `FileCheckpointStore` unconditionally, so a consumer
+     * who sets `cdc.outbox.checkpoint.enabled=true` without adding
+     * `cdc-outbox-checkpoint-file` got a raw `NoClassDefFoundError` at
+     * bean-creation time instead of a clean condition miss.
      *
-     * [CdcOutboxMetrics] is threaded in so the constructor-time
-     * orphan-`.tmp` sweep can publish
-     * `cdc.outbox.checkpoint.orphans_swept{outcome}` against the
-     * application's Micrometer registry. Without this thread the
-     * counter stays at the no-op facade and operators see no signal.
+     * `dlq-replay`'s auto-config uses the same `@ConditionalOnClass`
+     * shape for its own optional dependency (Spring Security), but for
+     * an opposite reason: not wiring there is a deliberate fail-*closed*
+     * choice (a destructive action shouldn't ship without an auth
+     * framework). Here, not wiring is fail-*open* — a real behavioral
+     * loss for checkpoint-dependent sources, not a safety net — so it
+     * pairs with [cdcOutboxCheckpointMisconfigurationGuard] below
+     * instead of relying on the class gate alone.
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(FileCheckpointStore::class)
+    open class FileCheckpointStoreConfiguration {
+        /**
+         * Default [CheckpointStore] backed by [FileCheckpointStore], wired
+         * only when `cdc.outbox.checkpoint.enabled=true`. Row-level
+         * adapters that accept a checkpoint store (MySQL binlog,
+         * Postgres WAL row source) take it as a constructor parameter
+         * — the consumer wires it by hand when constructing the
+         * adapter bean, this starter doesn't inject it for them.
+         * Consumers can replace the wiring by supplying their own
+         * [CheckpointStore] bean — the standard
+         * `@ConditionalOnMissingBean` rule applies.
+         *
+         * [CdcOutboxMetrics] is threaded in so the constructor-time
+         * orphan-`.tmp` sweep can publish
+         * `cdc.outbox.checkpoint.orphans_swept{outcome}` against the
+         * application's Micrometer registry. Without this thread the
+         * counter stays at the no-op facade and operators see no signal.
+         */
+        @Bean
+        @ConditionalOnMissingBean(CheckpointStore::class)
+        @ConditionalOnProperty(
+            prefix = "cdc.outbox.checkpoint",
+            name = ["enabled"],
+            havingValue = "true",
+        )
+        open fun cdcOutboxCheckpointStore(
+            properties: CdcOutboxProperties,
+            metrics: CdcOutboxMetrics,
+        ): CheckpointStore = FileCheckpointStore(Paths.get(properties.checkpoint.directory), metrics)
+    }
+
+    /**
+     * Safety net for the fail-open gap [FileCheckpointStoreConfiguration]
+     * introduces: `cdc.outbox.checkpoint.enabled=true` no longer
+     * guarantees a [CheckpointStore] gets wired (silently skipped when
+     * `:checkpoint-file` is absent). No silent error paths per this
+     * project's own rule — warn loudly and count it instead.
+     *
+     * Checked via `ObjectProvider`, evaluated at bean-*creation* time
+     * — after every bean definition across every auto-config and user
+     * config is already registered — so this reliably sees whichever
+     * `CheckpointStore` ended up wired, from anywhere, regardless of
+     * auto-configuration processing order. `.stream().count()`, not
+     * `.ifAvailable`: the latter throws `NoUniqueBeanDefinitionException`
+     * if a consumer happens to register two non-`@Primary`
+     * `CheckpointStore` beans — a diagnostic bean must never itself
+     * become a new way to fail startup.
      */
     @Bean
-    @ConditionalOnMissingBean(CheckpointStore::class)
     @ConditionalOnProperty(
         prefix = "cdc.outbox.checkpoint",
         name = ["enabled"],
         havingValue = "true",
     )
-    open fun cdcOutboxCheckpointStore(
-        properties: CdcOutboxProperties,
+    open fun cdcOutboxCheckpointMisconfigurationGuard(
+        checkpointStoreProvider: ObjectProvider<CheckpointStore>,
         metrics: CdcOutboxMetrics,
-    ): CheckpointStore = FileCheckpointStore(Paths.get(properties.checkpoint.directory), metrics)
+    ): CheckpointConfigurationCheck {
+        val misconfigured = checkpointStoreProvider.stream().count() == 0L
+        if (misconfigured) {
+            logger.warn(
+                "cdc.outbox.checkpoint.enabled=true but no CheckpointStore was wired — " +
+                    "is cdc-outbox-checkpoint-file on the classpath? Checkpoint-dependent " +
+                    "sources (e.g. MySQL binlog) will resume from scratch on every restart.",
+            )
+            metrics.recordCheckpointMisconfigured()
+        }
+        return CheckpointConfigurationCheck(misconfigured)
+    }
+
+    /**
+     * Result of [cdcOutboxCheckpointMisconfigurationGuard]'s check —
+     * a real, inspectable value (not a fake marker) so a future health
+     * indicator or test can read [misconfigured] directly instead of
+     * relying solely on the log line and counter.
+     */
+    data class CheckpointConfigurationCheck(val misconfigured: Boolean)
 
     /**
      * Picks the right [CdcSource] given the consumer's wiring: a
@@ -375,5 +452,9 @@ open class CdcOutboxHexagonalAutoConfiguration {
         @ConditionalOnBean(DeadLetterSink::class)
         @ConditionalOnMissingBean(DeadLetterPort::class)
         open fun cdcOutboxDeadLetterPort(legacy: DeadLetterSink): DeadLetterPort = LegacyDeadLetterPortAdapter(legacy)
+    }
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(CdcOutboxHexagonalAutoConfiguration::class.java)
     }
 }
