@@ -233,7 +233,7 @@ class AtLeastOnceDeliveryIT {
             postgresConfiguration =
                 PostgresConfiguration(
                     host = postgres.host,
-                    port = postgres.getMappedPort(5432).toString(),
+                    port = postgres.getMappedPort(PostgreSQLContainer.POSTGRESQL_PORT).toString(),
                     database = postgres.databaseName,
                     username = PG_USER,
                     password = PG_PASSWORD,

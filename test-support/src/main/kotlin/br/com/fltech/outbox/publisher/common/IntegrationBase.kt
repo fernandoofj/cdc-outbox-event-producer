@@ -5,10 +5,8 @@ import br.com.fltech.outbox.publisher.replication.config.PostgresConfiguration
 import br.com.fltech.outbox.publisher.replication.config.ReplicationConfiguration
 import br.com.fltech.outbox.publisher.replication.connector.DefaultConnectionProvider
 import org.junit.jupiter.api.TestInstance
-import org.slf4j.LoggerFactory
 import org.testcontainers.containers.PostgreSQLContainer
 import java.sql.Connection
-import java.sql.SQLException
 import java.util.Properties
 
 /**
@@ -39,7 +37,7 @@ abstract class IntegrationBase {
         postgresConfiguration =
             PostgresConfiguration(
                 host = postgres.host,
-                port = postgres.getMappedPort(POSTGRES_PORT).toString(),
+                port = postgres.getMappedPort(PostgreSQLContainer.POSTGRESQL_PORT).toString(),
                 database = postgres.databaseName,
                 username = postgres.username,
                 password = postgres.password,
@@ -54,14 +52,7 @@ abstract class IntegrationBase {
                 "'${replicationConfiguration.slotName}'," +
                 "'${replicationConfiguration.outputPlugin}')"
 
-        try {
-            executeCommand(createSlotCommand)
-        } catch (e: SQLException) {
-            when (e.sqlState) {
-                ALREADY_EXISTS_SQL_STATE -> logger.info("Slot ${replicationConfiguration.slotName} already exists")
-                else -> throw e
-            }
-        }
+        executeCommand(createSlotCommand)
     }
 
     protected fun tearDownEnd() {
@@ -85,9 +76,6 @@ abstract class IntegrationBase {
     }
 
     companion object {
-        private val logger = LoggerFactory.getLogger(IntegrationBase::class.java)
-        private const val ALREADY_EXISTS_SQL_STATE = "42710"
-        private const val POSTGRES_PORT = 5432
         private const val SLOT_NAME = "catalog_slot"
 
         private fun createConnection(

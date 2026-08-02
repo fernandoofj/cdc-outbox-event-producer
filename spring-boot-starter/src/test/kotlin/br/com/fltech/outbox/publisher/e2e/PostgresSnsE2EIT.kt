@@ -159,7 +159,7 @@ class PostgresSnsE2EIT {
                 postgresConfiguration =
                     PostgresConfiguration(
                         host = postgres.host,
-                        port = postgres.getMappedPort(POSTGRES_PORT).toString(),
+                        port = postgres.getMappedPort(PostgreSQLContainer.POSTGRESQL_PORT).toString(),
                         database = postgres.databaseName,
                         username = E2EContainers.PG_USER,
                         password = E2EContainers.PG_PASSWORD,
@@ -240,7 +240,6 @@ class PostgresSnsE2EIT {
         private const val TOPIC = "hex-orders-events"
         private const val QUEUE = "hex-orders-events-subscriber"
         private const val SLOT_NAME = "hex_pg_sns_e2e_slot"
-        private const val POSTGRES_PORT = 5432
         private const val BACKOFF_INITIAL_MS = 50L
         private const val BACKOFF_MAX_MS = 200L
         private const val POLL_INTERVAL_MS = 250L
