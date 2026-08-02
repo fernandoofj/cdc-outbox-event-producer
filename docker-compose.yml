@@ -1,4 +1,3 @@
-version: '3.9'
 services:
   postgres:
     image: 'debezium/postgres:14-alpine'
@@ -16,7 +15,12 @@ services:
       - local
 
   localstack:
-    image: localstack/localstack:latest
+    # Pinned, not `:latest` — newer LocalStack tags gate startup behind
+    # a Pro license token (LOCALSTACK_AUTH_TOKEN) even for
+    # community-tier services like SNS/SQS, and this container refuses
+    # to start without one (exit code 55). Same fix already applied in
+    # examples/spring-boot-postgres-sns/docker-compose.yml.
+    image: localstack/localstack:3.8.1
     ports:
       - "127.0.0.1:4510-4559:4510-4559"  # external service port range
       - "127.0.0.1:4566:4566"            # LocalStack Edge Proxy
