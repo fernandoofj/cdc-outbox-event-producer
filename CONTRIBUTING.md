@@ -92,11 +92,12 @@ setup and identity proof only the maintainer can do:
   1. **A Sonatype Central account** (<https://central.sonatype.com>)
      with a registered namespace. The group ID here is
      `br.com.fltech.outbox` — Central requires proving ownership of
-     `fltech.com` via a DNS TXT record (`_sonatype-central` or similar,
-     the exact record name is issued per-namespace at registration
-     time), not just a GitHub account. If `fltech.com` isn't a domain
-     you control, either provision a domain-based namespace you do
-     control, or move the coordinate to `io.github.<username>`
+     `fltech.com.br` via a DNS TXT record (`_sonatype-central` or
+     similar, the exact record name is issued per-namespace at
+     registration time), not just a GitHub account. If `fltech.com.br`
+     isn't a domain you control, either provision a domain-based
+     namespace you do control, or move the coordinate to
+     `io.github.<username>`
      (verified by proving control of the corresponding GitHub account
      instead of DNS — the same class of check Round 22 rejected for
      `io.github.cdc` because it wasn't this project's account; a
