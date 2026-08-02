@@ -34,9 +34,37 @@ import org.springframework.kafka.core.KafkaTemplate
  * broker-specific imports).
  *
  * Activated only when `cdc.outbox.enabled=true` (default).
+ *
+ * `@AutoConfigureAfter(name = [...])`, not the class-literal form:
+ * without an explicit ordering hint each nested sink config's
+ * `@ConditionalOnBean(...Template::class)` was evaluated *before* the
+ * broker's own auto-configuration (e.g. Spring Cloud AWS's
+ * `SnsAutoConfiguration`) had registered that template bean's
+ * definition — `@ConditionalOnBean` only sees what's been registered
+ * by auto-configs processed so far, not the final application state,
+ * so every sink silently failed to wire even with the right
+ * dependency on the classpath (`EventSinkRegistry` ended up with zero
+ * known schemes). The string form avoids a compile-time dependency on
+ * these optional broker autoconfiguration classes, mirroring why the
+ * sink adapters themselves are `compileOnly`.
  */
 @AutoConfiguration
-@AutoConfigureAfter(CdcOutboxAutoConfiguration::class)
+@AutoConfigureAfter(
+    value = [CdcOutboxAutoConfiguration::class],
+    name = [
+        "io.awspring.cloud.autoconfigure.sns.SnsAutoConfiguration",
+        "io.awspring.cloud.autoconfigure.sqs.SqsAutoConfiguration",
+        // Boot 4 exploded per-technology autoconfigs out of
+        // spring-boot-autoconfigure into their own modules under a new
+        // package (org.springframework.boot.<tech>.autoconfigure.*) —
+        // NOT org.springframework.boot.autoconfigure.<tech>.* (the Boot
+        // 3 location). AutoConfigurationSorter silently ignores names it
+        // can't resolve, so a stale Boot-3-era FQN here would make this
+        // ordering fix a silent no-op instead of a compile error.
+        "org.springframework.boot.kafka.autoconfigure.KafkaAutoConfiguration",
+        "org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration",
+    ],
+)
 @ConditionalOnProperty(prefix = "cdc.outbox", name = ["enabled"], havingValue = "true", matchIfMissing = true)
 open class CdcOutboxSinkAutoConfiguration {
     @Bean("cdcOutboxSinkRegistry")

@@ -29,9 +29,11 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.autoconfigure.AutoConfiguration
 import org.springframework.boot.autoconfigure.AutoConfigureAfter
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
 import java.nio.file.Paths
 import javax.sql.DataSource
 
@@ -103,55 +105,96 @@ open class CdcOutboxHexagonalAutoConfiguration {
     ): CheckpointStore = FileCheckpointStore(Paths.get(properties.checkpoint.directory), metrics)
 
     /**
-     * Picks the right [CdcSource] given the consumer's wiring:
-     *  - a [RowChangeSource] bean → wrap in [MappingCdcSource].
-     *    Consumers opt in by registering a `RowChangeSource` (e.g.
-     *    the MySQL binlog or the new Postgres WAL row source) instead
-     *    of overriding the bare `CdcSource` directly.
-     *  - nothing provided → fall through to the Postgres
-     *    message-flow default.
+     * Picks the right [CdcSource] given the consumer's wiring: a
+     * [RowChangeSource] bean → wrap in [MappingCdcSource]. Consumers
+     * opt in by registering a `RowChangeSource` (e.g. the MySQL binlog
+     * or the Postgres WAL row source) instead of overriding the bare
+     * `CdcSource` directly. `RowChangeSource`/`MappingRules` are
+     * `core` types, always resolvable, so this method is safe to leave
+     * directly on the outer class — unlike the Postgres fallback in
+     * [PostgresSourceConfiguration] below, which needs `:source-postgres`
+     * types in its signature.
      *
-     * The `@ConditionalOnMissingBean(CdcSource::class)` keeps the
-     * consumer-supplied path always winning over either branch.
+     * Mutual exclusion with [PostgresSourceConfiguration] is NOT a
+     * registration-order race: Spring processes a configuration
+     * class's nested member classes *before* its own `@Bean` methods
+     * (`ConfigurationClassParser` calls `processMemberClasses` ahead of
+     * bean-method retrieval), so the nested class always gets a chance
+     * to register first regardless of textual order in this file. The
+     * fallback instead checks `RowChangeSource` absence explicitly.
+     *
+     * That check is still a `@ConditionalOnBean`, evaluated at
+     * bean-*definition* time as auto-configuration classes are
+     * processed in order — unlike the pre-split code, which resolved
+     * the row source via `ObjectProvider` at bean-*creation* time
+     * (after every bean definition across every auto-config is
+     * already registered, so registration order can't matter). The
+     * consumer's [RowChangeSource] MUST come from a plain
+     * `@Configuration`/`@Bean` (or a `@SpringBootApplication`-scanned
+     * component) — those always register before
+     * `@EnableAutoConfiguration`-imported classes, which is what every
+     * adapter this project ships expects (README's Quick Start wires
+     * `MySqlBinlogRowChangeSource`/`PgWalRowChangeSource` this way). A
+     * `RowChangeSource` supplied by a THIRD-PARTY auto-configuration
+     * with no explicit `@AutoConfigureBefore(CdcOutboxHexagonalAutoConfiguration::class)`
+     * could lose this race and silently fall through to the Postgres
+     * WAL default instead — with no error, log, or counter.
      */
     @Bean("cdcOutboxSource")
+    @ConditionalOnBean(RowChangeSource::class)
     @ConditionalOnMissingBean(CdcSource::class)
-    open fun cdcOutboxSource(
-        postgresConfiguration: PostgresConfiguration,
-        replicationConfiguration: ReplicationConfiguration,
-        connectionProvider: ConnectionProvider,
-        rowSourceProvider: ObjectProvider<RowChangeSource>,
+    open fun cdcOutboxRowChangeSource(
+        rowSource: RowChangeSource,
         mappingRulesProvider: ObjectProvider<MappingRules>,
     ): CdcSource {
-        val rowSource = rowSourceProvider.ifAvailable
-        if (rowSource != null) {
-            // ObjectProvider keeps the dependency on MappingRules
-            // *soft*: when the consumer wires a row source but no
-            // rules, fall back to MappingRules.EMPTY so the
-            // orchestrator stays consistent with
-            // `CdcOutboxMappingAutoConfiguration`'s own default.
-            val rules = mappingRulesProvider.getIfAvailable { MappingRules.EMPTY }
-            return MappingCdcSource(rowSource, rules)
-        }
-        return PgLogicalReplicationCdcSource(
-            postgresConfiguration = postgresConfiguration,
-            replicationConfiguration = replicationConfiguration,
-            connectionProvider = connectionProvider,
-            objectMapper = defaultMapper,
-        )
+        // ObjectProvider keeps the dependency on MappingRules *soft*:
+        // when the consumer wires a row source but no rules, fall back
+        // to MappingRules.EMPTY so the orchestrator stays consistent
+        // with `CdcOutboxMappingAutoConfiguration`'s own default.
+        val rules = mappingRulesProvider.getIfAvailable { MappingRules.EMPTY }
+        return MappingCdcSource(rowSource, rules)
     }
 
     /**
-     * Adapts a legacy [DeadLetterSink] bean to the hexagonal
-     * [DeadLetterPort]. Only wired when a [DeadLetterSink] is present
-     * AND no `DeadLetterPort` bean already exists — the consumer can
-     * supply their own `DeadLetterPort` directly and it takes
-     * precedence.
+     * Isolated in its own nested [Configuration], gated by
+     * [ConditionalOnClass]: [PostgresConfiguration], [ReplicationConfiguration]
+     * and [ConnectionProvider] live in the optional `:source-postgres`
+     * module — a MySQL-only consumer (README's "Setup MySQL binlog +
+     * Kafka") never declares it. This bean used to sit directly on the
+     * outer class with these types as unconditional parameters, which
+     * crashes `Class.getDeclaredMethods()` for the whole class the
+     * moment `:source-postgres` is absent — the same failure mode this
+     * file's [LegacyDeadLetterAdapterConfiguration] and
+     * [LagProbeConfiguration] already guard against for their own
+     * optional dependencies.
      */
-    @Bean
-    @ConditionalOnBean(DeadLetterSink::class)
-    @ConditionalOnMissingBean(DeadLetterPort::class)
-    open fun cdcOutboxDeadLetterPort(legacy: DeadLetterSink): DeadLetterPort = LegacyDeadLetterPortAdapter(legacy)
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(PostgresConfiguration::class)
+    open class PostgresSourceConfiguration {
+        /**
+         * `@ConditionalOnMissingBean(value = [CdcSource::class, RowChangeSource::class])`,
+         * not just `CdcSource` alone: nested member classes are
+         * processed before [cdcOutboxRowChangeSource] above, so relying
+         * on "no `CdcSource` bean yet" would always be true at this
+         * point and this fallback would win even when a
+         * [RowChangeSource] is present. Checking `RowChangeSource`
+         * absence directly makes the precedence correct regardless of
+         * processing order.
+         */
+        @Bean("cdcOutboxSource")
+        @ConditionalOnMissingBean(value = [CdcSource::class, RowChangeSource::class])
+        open fun cdcOutboxPostgresSource(
+            postgresConfiguration: PostgresConfiguration,
+            replicationConfiguration: ReplicationConfiguration,
+            connectionProvider: ConnectionProvider,
+        ): CdcSource =
+            PgLogicalReplicationCdcSource(
+                postgresConfiguration = postgresConfiguration,
+                replicationConfiguration = replicationConfiguration,
+                connectionProvider = connectionProvider,
+                objectMapper = defaultMapper,
+            )
+    }
 
     // LongParameterList: same rationale as the legacy factory — Spring
     // wires collaborators by type, not by aggregate; a wrapper object
@@ -185,93 +228,152 @@ open class CdcOutboxHexagonalAutoConfiguration {
         CdcProcessorLifecycle(cdcOutboxProcessor)
 
     /**
-     * Postgres [LagProbe] — wired only when the consumer registered
-     * a [PgWalRowChangeSource]. Reuses the shared
-     * [ConnectionProvider] / [PostgresConfiguration] so the SQL hits
-     * the same query-mode pool as the rest of the chain.
-     *
-     * Mutually exclusive with the MySQL probe at the
-     * `@ConditionalOnBean(LagProbe::class)` level: whichever runs
-     * first wins, and a consumer who needs both should wire their
-     * own probe bean.
+     * Isolated in its own nested [Configuration], gated by
+     * [ConditionalOnClass]: [LagProbeScheduler] (and [PostgresLagProbe]
+     * / [MysqlLagProbe], used in the method bodies below) live in the
+     * optional `:lag-probes` module, `compileOnly` in this starter and
+     * a *separate* Maven coordinate a consumer must add explicitly
+     * (see README § Tabela de coordenadas). `lag.enabled` defaults to
+     * `true`, so without this isolation every minimal consumer who
+     * skips `cdc-outbox-lag-probes` — e.g. the README's own "Setup
+     * mínimo — Postgres → SNS" — would crash the whole hexagonal
+     * auto-config: `cdcOutboxLagProbeScheduler`'s return type
+     * ([LagProbeScheduler]) makes `Class.getDeclaredMethods()` throw
+     * for the *enclosing* class the moment Spring introspects it for
+     * any other `@Bean` method's condition, not just this one's.
      */
-    @Bean("cdcOutboxPostgresLagProbe")
-    @ConditionalOnProperty(
-        prefix = "cdc.outbox.lag",
-        name = ["enabled"],
-        havingValue = "true",
-        matchIfMissing = true,
-    )
-    @ConditionalOnBean(PgWalRowChangeSource::class)
-    @ConditionalOnMissingBean(LagProbe::class)
-    open fun cdcOutboxPostgresLagProbe(
-        postgresConfiguration: PostgresConfiguration,
-        connectionProvider: ConnectionProvider,
-        properties: CdcOutboxProperties,
-    ): LagProbe =
-        PostgresLagProbe(
-            postgresConfiguration = postgresConfiguration,
-            connectionProvider = connectionProvider,
-            slotName = properties.replication.slotName,
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(LagProbeScheduler::class)
+    open class LagProbeConfiguration {
+        /**
+         * Postgres [LagProbe] — wired only when the consumer registered
+         * a [PgWalRowChangeSource]. Reuses the shared
+         * [ConnectionProvider] / [PostgresConfiguration] so the SQL hits
+         * the same query-mode pool as the rest of the chain.
+         *
+         * Mutually exclusive with the MySQL probe at the
+         * `@ConditionalOnBean(LagProbe::class)` level: whichever runs
+         * first wins, and a consumer who needs both should wire their
+         * own probe bean.
+         */
+        @Bean("cdcOutboxPostgresLagProbe")
+        @ConditionalOnProperty(
+            prefix = "cdc.outbox.lag",
+            name = ["enabled"],
+            havingValue = "true",
+            matchIfMissing = true,
         )
+        @ConditionalOnBean(PgWalRowChangeSource::class)
+        @ConditionalOnMissingBean(LagProbe::class)
+        open fun cdcOutboxPostgresLagProbe(
+            postgresConfiguration: PostgresConfiguration,
+            connectionProvider: ConnectionProvider,
+            properties: CdcOutboxProperties,
+        ): LagProbe =
+            PostgresLagProbe(
+                postgresConfiguration = postgresConfiguration,
+                connectionProvider = connectionProvider,
+                slotName = properties.replication.slotName,
+            )
+
+        /**
+         * Background sampler that feeds the `cdc.outbox.source.lag_bytes`
+         * Micrometer gauge. Started in `init-method` and stopped in
+         * `destroy-method` so it tracks the Spring context lifecycle
+         * without needing to extend `SmartLifecycle` — the probe is
+         * passive and has no ordering requirement against the
+         * orchestrator.
+         */
+        @Bean(initMethod = "start", destroyMethod = "stop")
+        @ConditionalOnProperty(
+            prefix = "cdc.outbox.lag",
+            name = ["enabled"],
+            havingValue = "true",
+            matchIfMissing = true,
+        )
+        @ConditionalOnBean(LagProbe::class)
+        @ConditionalOnMissingBean(LagProbeScheduler::class)
+        open fun cdcOutboxLagProbeScheduler(
+            lagProbe: LagProbe,
+            metrics: CdcOutboxMetrics,
+            properties: CdcOutboxProperties,
+        ): LagProbeScheduler =
+            LagProbeScheduler(
+                probe = lagProbe,
+                metrics = metrics,
+                interval = properties.lag.interval,
+            )
+
+        /**
+         * MySQL [LagProbe] — nested one level further. In practice
+         * `:lag-probes` declares `api(project(":source-mysql"))`, so
+         * [MySqlBinlogRowChangeSource] is always on the classpath
+         * whenever [LagProbeScheduler] is; this [ConditionalOnClass] is
+         * defensive rather than guarding an actually-reachable gap —
+         * against a consumer-side Gradle `exclude` on the transitive
+         * dependency, or a future `:lag-probes` split that drops the
+         * `api` coupling. Cheap to keep, mirrors the same technique
+         * used one level up in [LagProbeConfiguration].
+         */
+        @Configuration(proxyBeanMethods = false)
+        @ConditionalOnClass(MySqlBinlogRowChangeSource::class)
+        open class MysqlLagProbeConfiguration {
+            /**
+             * Wired only when the consumer registered a
+             * [MySqlBinlogRowChangeSource] AND a [CheckpointStore] AND a
+             * [DataSource]. The checkpoint store dependency is explicit
+             * because the probe reads the `binlog:<serverId>` key the
+             * binlog source persists on every ack — without it, lag is
+             * unrecoverable from the consumer side and the probe would
+             * always return `null`.
+             */
+            @Bean("cdcOutboxMysqlLagProbe")
+            @ConditionalOnProperty(
+                prefix = "cdc.outbox.lag",
+                name = ["enabled"],
+                havingValue = "true",
+                matchIfMissing = true,
+            )
+            @ConditionalOnBean(value = [MySqlBinlogRowChangeSource::class, CheckpointStore::class, DataSource::class])
+            @ConditionalOnMissingBean(LagProbe::class)
+            open fun cdcOutboxMysqlLagProbe(
+                dataSource: DataSource,
+                checkpointStore: CheckpointStore,
+                mySqlBinlogRowChangeSource: MySqlBinlogRowChangeSource,
+            ): LagProbe =
+                MysqlLagProbe(
+                    dataSource = dataSource,
+                    checkpointStore = checkpointStore,
+                    // The binlog source's serverId is the source of truth
+                    // for the checkpoint key; reading it back here keeps
+                    // the two sides aligned without a second property knob.
+                    serverId = mySqlBinlogRowChangeSource.serverId,
+                )
+        }
+    }
 
     /**
-     * MySQL [LagProbe] — wired only when the consumer registered a
-     * [MySqlBinlogRowChangeSource] AND a [CheckpointStore] AND a
-     * [DataSource]. The checkpoint store dependency is explicit
-     * because the probe reads the `binlog:<serverId>` key the binlog
-     * source persists on every ack — without it, lag is
-     * unrecoverable from the consumer side and the probe would
-     * always return `null`.
+     * Isolated in its own nested [Configuration], gated by
+     * [ConditionalOnClass]: [DeadLetterSink] lives in the optional
+     * `:legacy` module, `compileOnly` in this starter. A `@Bean`
+     * method referencing it as a parameter type on the OUTER class
+     * would crash every consumer who doesn't add `cdc-outbox-legacy`
+     * — `Class.getDeclaredMethods()` resolves every method's
+     * signature eagerly when Spring introspects a configuration
+     * class for its OTHER `@Bean` methods, not just the ones whose
+     * conditions evaluate true, so a single unresolvable parameter
+     * type takes down the whole class with a `NoClassDefFoundError`.
+     * `@ConditionalOnClass` on a nested class is checked from ASM
+     * annotation metadata before the class is ever loaded, so the
+     * nested class — and its [DeadLetterSink]-typed method — is
+     * never touched when `:legacy` is absent.
      */
-    @Bean("cdcOutboxMysqlLagProbe")
-    @ConditionalOnProperty(
-        prefix = "cdc.outbox.lag",
-        name = ["enabled"],
-        havingValue = "true",
-        matchIfMissing = true,
-    )
-    @ConditionalOnBean(value = [MySqlBinlogRowChangeSource::class, CheckpointStore::class, DataSource::class])
-    @ConditionalOnMissingBean(LagProbe::class)
-    open fun cdcOutboxMysqlLagProbe(
-        dataSource: DataSource,
-        checkpointStore: CheckpointStore,
-        mySqlBinlogRowChangeSource: MySqlBinlogRowChangeSource,
-    ): LagProbe =
-        MysqlLagProbe(
-            dataSource = dataSource,
-            checkpointStore = checkpointStore,
-            // The binlog source's serverId is the source of truth for
-            // the checkpoint key; reading it back here keeps the two
-            // sides aligned without a second property knob.
-            serverId = mySqlBinlogRowChangeSource.serverId,
-        )
-
-    /**
-     * Background sampler that feeds the `cdc.outbox.source.lag_bytes`
-     * Micrometer gauge. Started in `init-method` and stopped in
-     * `destroy-method` so it tracks the Spring context lifecycle
-     * without needing to extend `SmartLifecycle` — the probe is
-     * passive and has no ordering requirement against the
-     * orchestrator.
-     */
-    @Bean(initMethod = "start", destroyMethod = "stop")
-    @ConditionalOnProperty(
-        prefix = "cdc.outbox.lag",
-        name = ["enabled"],
-        havingValue = "true",
-        matchIfMissing = true,
-    )
-    @ConditionalOnBean(LagProbe::class)
-    @ConditionalOnMissingBean(LagProbeScheduler::class)
-    open fun cdcOutboxLagProbeScheduler(
-        lagProbe: LagProbe,
-        metrics: CdcOutboxMetrics,
-        properties: CdcOutboxProperties,
-    ): LagProbeScheduler =
-        LagProbeScheduler(
-            probe = lagProbe,
-            metrics = metrics,
-            interval = properties.lag.interval,
-        )
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(DeadLetterSink::class)
+    open class LegacyDeadLetterAdapterConfiguration {
+        @Bean
+        @ConditionalOnBean(DeadLetterSink::class)
+        @ConditionalOnMissingBean(DeadLetterPort::class)
+        open fun cdcOutboxDeadLetterPort(legacy: DeadLetterSink): DeadLetterPort = LegacyDeadLetterPortAdapter(legacy)
+    }
 }

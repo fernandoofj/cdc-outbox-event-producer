@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: cdc-outbox-sample-orders
+  datasource:
+    url: jdbc:postgresql://localhost:5432/orders
+    username: postgres
+    password: postgres
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  cloud:
+    aws:
+      region:
+        static: us-east-1
+      credentials:
+        access-key: test
+        secret-key: test
+      sns:
+        endpoint: http://localhost:4566
+
+cdc:
+  outbox:
+    postgres:
+      host: localhost
+      port: "5432"
+      database: orders
+      username: postgres
+      password: postgres
+    replication:
+      slot-name: orders_outbox_slot
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

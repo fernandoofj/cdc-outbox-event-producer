@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: 'debezium/postgres:14-alpine'
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=orders
+    networks:
+      - sample
+
+  localstack:
+    # Pinned, not `:latest` — newer LocalStack tags gate startup behind a
+    # Pro license token even for community-tier services like SNS.
+    image: localstack/localstack:3.8.1
+    ports:
+      - "127.0.0.1:4566:4566"
+    environment:
+      # sqs: only for the sample's self-check subscription
+      # (shell-scripts/localstack/02_subscribe_queue.sh), not part of
+      # the producer flow itself.
+      - SERVICES=sns,sqs
+    volumes:
+      - "./shell-scripts/localstack:/etc/localstack/init/ready.d"
+    networks:
+      - sample
+
+networks:
+  sample:
+    driver: bridge

@@ -132,6 +132,17 @@ subprojects {
             System.getenv(name)?.let { value -> environment(name, value) }
         }
         System.getenv("DOCKER_API_VERSION")?.let { systemProperty("api.version", it) }
+
+        // Test.environment is NOT tracked as a task input by Gradle's
+        // up-to-date check, so flipping RUN_TESTCONTAINERS between
+        // runs (the switch that gates every `*IT.kt`/`*E2EIT.kt` via
+        // `@EnabledIfEnvironmentVariable`) leaves this task UP-TO-DATE
+        // against a stale result — `RUN_TESTCONTAINERS=1 ./gradlew
+        // test` after a plain `./gradlew test` silently reports the
+        // CACHED non-Testcontainers result instead of actually running
+        // the gated suites, unless the caller remembers `--rerun`.
+        // Declaring it explicitly as an input closes that gap.
+        inputs.property("runTestContainers", System.getenv("RUN_TESTCONTAINERS") ?: "")
     }
 
     dependencies {

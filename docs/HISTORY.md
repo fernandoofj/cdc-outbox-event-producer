@@ -9,6 +9,256 @@ file records the actual delivery and the Tech Lead verdict per round.
 > external release scheme. They're kept here as-is because they're
 > the actual identifiers used in the corresponding commits and PRs.
 
+## Round 25 — Sample consumer app (NF2) + 5 real starter bugs it uncovered
+
+Closes items 1, 2, 4, 5 of the post-Round-24 pending-tasks list (item
+3, a git-history commit-message rewrite, landed separately and isn't
+code). Small doc/dedup items first, then the sample app, then what
+actually running it end-to-end turned up.
+
+  * **`POSTGRES_PORT = 5432` deduplicated** (item 1) across
+    `IntegrationBase.kt`, `PostgresSnsE2EIT.kt`, `AtLeastOnceDeliveryIT.kt`
+    — all three now reference `PostgreSQLContainer.POSTGRESQL_PORT`
+    (Testcontainers' own public constant) instead of a repeated
+    literal.
+  * **Dead `ALREADY_EXISTS_SQL_STATE` branch removed** (item 2) from
+    `IntegrationBase.setUpBegin()`: since Round 24 every test class
+    boots its own dedicated Testcontainers Postgres, so the
+    replication slot this code creates can never already exist.
+    Verified the premise (not just asserted it): `E2EContainers.newPostgres()`
+    returns a fresh, not-yet-started container on every call with no
+    shared/cached field, `@TestInstance(PER_CLASS)` gives one instance
+    per test class, and both subclasses call `setUpBegin()` from
+    `@BeforeAll` (never `@BeforeEach`).
+  * **Maven Central checklist domain corrected** (item 4): `fltech.com`
+    → `fltech.com.br` in `CONTRIBUTING.md`, per the maintainer. The
+    rest of the checklist (Sonatype account, GPG key, Gradle wiring)
+    stays undone as before — none of those manual steps have been
+    taken yet.
+  * **NF2 — sample consumer app** (item 5): `examples/spring-boot-postgres-sns/`,
+    a **standalone** Gradle project (own `settings.gradle.kts`, own
+    wrapper regenerated to Gradle 8.14.1 — the root's 8.10.2 doesn't
+    meet the Spring Boot Gradle plugin's minimum) consuming
+    `cdc-outbox-*` via `mavenLocal()` Maven coordinates, not
+    `project(":...")`, the way an external project actually would.
+    Demonstrates the README's own "Setup mínimo — Postgres → SNS":
+    `POST /orders` does a JPA insert + `pg_logical_emit_message` in one
+    transaction; `cdc-outbox-spring-boot-starter`, wired into the same
+    process, reads the slot and publishes to a LocalStack SNS topic.
+
+Per this project's own rule ("test the golden path... before
+reporting complete"), the sample wasn't just written — it was run.
+That surfaced **five real bugs in `spring-boot-starter`**, all
+pre-existing, all now fixed:
+
+  1. **`CdcOutboxHexagonalAutoConfiguration.cdcOutboxDeadLetterPort`**
+     sat directly on the outer `@AutoConfiguration` class with a
+     `DeadLetterSink` (`:legacy`-only, `compileOnly`) parameter.
+     `Class.getDeclaredMethods()` resolves every method's signature
+     eagerly the moment Spring introspects the class for *any* other
+     bean's condition — one unresolvable parameter type crashes the
+     whole class with `NoClassDefFoundError`, not just the one
+     condition that would've evaluated false anyway. The hexagonal
+     (default!) processor path was unusable without also adding the
+     deprecated `:legacy` module. Fixed by moving the bean into a
+     nested `@Configuration(proxyBeanMethods = false) @ConditionalOnClass(DeadLetterSink::class)`
+     class — the same pattern `CdcOutboxSinkAutoConfiguration` already
+     used per-broker.
+  2. **Same file**, same pattern: the lag-probe beans referenced
+     `:lag-probes`/`:source-mysql` types unconditionally, and
+     `cdc.outbox.lag.enabled` defaults to `true`. Nested under a new
+     `LagProbeConfiguration` (`@ConditionalOnClass(LagProbeScheduler::class)`),
+     with the MySQL-specific probe one level deeper still
+     (`@ConditionalOnClass(MySqlBinlogRowChangeSource::class)`).
+  3. **The most severe one**: `CdcOutboxAutoConfiguration` itself was
+     gated by `@ConditionalOnClass(SlotReaderMessageProducer::class)`
+     — a `:legacy`-only marker — but produces `PostgresConfiguration`
+     / `ReplicationConfiguration` / `ConnectionProvider` /
+     `CdcOutboxMetrics` / both `BackOff` beans that the hexagonal
+     (default) chain also depends on. The default processor could not
+     start *at all* without the deprecated legacy module on the
+     classpath, contradicting the project's own docs. Fixed by
+     dropping the class-level gate (now `cdc.outbox.enabled=true`
+     only) and moving the legacy-only beans into a nested
+     `LegacyProducerConfiguration`. Fixing this fully also required
+     nesting `PostgresConfiguration`/`ReplicationConfiguration`/`ConnectionProvider`
+     themselves into a `PostgresConnectionConfiguration`
+     (`@ConditionalOnClass(PostgresConfiguration::class)`, since those
+     three are `:source-postgres`-only) and splitting
+     `CdcOutboxHexagonalAutoConfiguration.cdcOutboxSource` into an
+     outer-class bean (wraps a consumer `RowChangeSource` — `core`
+     types only, always safe) plus a nested, gated Postgres-fallback
+     bean — otherwise the README's *other* documented combo, "Setup
+     MySQL binlog + Kafka" (no `:source-postgres`), hit the identical
+     crash. The mutual-exclusion between the two `cdcOutboxSource`
+     beans can't rely on registration order (Spring processes a
+     configuration class's nested member classes *before* its own
+     `@Bean` methods — the opposite of what seemed intuitive at
+     first, confirmed by writing the fix, watching it fail, and fixing
+     the actual condition instead of the ordering) — the Postgres
+     fallback checks `RowChangeSource` absence explicitly instead.
+  4. **`cdc-outbox-sink-composition`** (providing `DefaultEventSinkRegistry`)
+     was `compileOnly` in the starter, but
+     `CdcOutboxSinkAutoConfiguration.cdcOutboxSinkRegistry`
+     unconditionally builds one regardless of sink count. The
+     README's "Setup mínimo" and "Setup MySQL binlog + Kafka" blocks
+     never mentioned needing it (only "Setup completo" did) — promoted
+     to `implementation`, a zero-cost change since `sink-composition`
+     depends on nothing but `core`.
+  5. **`CdcOutboxSinkAutoConfiguration`** had no `@AutoConfigureAfter`
+     ordering against the brokers' own autoconfiguration.
+     `@ConditionalOnBean` only sees bean definitions registered by
+     auto-configs processed so far — without the hint, this class's
+     `SnsSinkConfig#snsEventSink` was evaluated *before* Spring Cloud
+     AWS registered `SnsTemplate`, so the sink silently never wired
+     even with `io.awspring.cloud:spring-cloud-aws-starter-sns`
+     correctly on the classpath (`EventSinkRegistry` always reported
+     zero known schemes; every publish exhausted retries against
+     `NoSinkForSchemeException`). Fixed with
+     `@AutoConfigureAfter(name = [...])` (string form, no compile-time
+     dependency on the optional autoconfig classes). First attempt
+     used Spring Boot 3-era FQNs
+     (`org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration`)
+     that don't exist in Boot 4 — `AutoConfigurationSorter` silently
+     ignores unresolvable names, so this would have been a no-op for
+     Kafka/RabbitMQ specifically. Caught by Tech Lead review before
+     merge, not by any test; correct FQNs
+     (`org.springframework.boot.kafka.autoconfigure.KafkaAutoConfiguration`,
+     `org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration`)
+     confirmed by decompiling the real Boot 4.0.6 jars with `javap`
+     rather than guessing again.
+
+Verification: placed a real order via `curl -X POST localhost:8080/orders`
+against the running sample (Postgres + LocalStack via `docker compose`)
+and confirmed `AWS sns.Publish => 200` in LocalStack's own request
+log, then confirmed the exact event body (`OrderPlaced`, `order:1`
+payload) by reading it back from an SQS queue subscribed to the topic
+(`shell-scripts/localstack/02_subscribe_queue.sh`, added so the
+sample is self-verifying instead of "tail the logs and trust it").
+New regression tests: `SinkAutoConfigurationOrderingTest` (bug 5,
+against the *real* `io.awspring.cloud.autoconfigure.sns.SnsAutoConfiguration`/
+`SqsAutoConfiguration`, not a test double, deliberately listed after
+`CdcOutboxSinkAutoConfiguration` in configuration order to prove the
+fix doesn't depend on argument order, asserting both `sns` and `sqs`
+schemes resolve) and `OptionalModuleAbsentTest` (wiring correctness —
+`ApplicationContextRunner` + `FilteredClassLoader` simulating
+`:legacy`/`:lag-probes`/`:source-mysql`/`:source-postgres` absence,
+confirming the context still starts and picks the right `CdcSource`).
+Every new test was verified failing against the pre-fix code and
+passing against the fix, not just written and trusted.
+
+**Second Tech Lead pass caught that `FilteredClassLoader` doesn't
+actually reproduce bugs 1–3's failure mode.** It only intercepts
+explicit `Class.forName` lookups — what `@ConditionalOnClass` uses —
+not the JVM's own eager resolution of an *already-loaded* class's
+declared method signatures, and in an `ApplicationContextRunner` test
+the declaring class is always loaded by the real, unfiltered test
+classloader first. Proven empirically: reverting the bug 1/2/3 fixes
+back to their pre-fix shape and rerunning `OptionalModuleAbsentTest`
+stayed green. Fixed by adding
+`AutoConfigurationClassLoadingTest` — builds a `URLClassLoader` over
+the real test classpath (168 entries, resolved as actual per-module
+jars, confirmed by inspecting `java.class.path` directly) minus the
+target module's jar, loads the declaring class fresh through it, and
+calls `getDeclaredMethods()` — the exact call that threw
+`NoClassDefFoundError` before the fix. All 6 assertions, covering 3
+declaring classes across 6 non-uniform module combinations, verified
+failing individually against a deliberately-reintroduced pre-fix probe
+method and passing once removed — 3 by the worker during
+implementation, the remaining 3 by the third Tech Lead pass as part of
+its own independent verification.
+
+Also fixed during the second pass:
+
+  * **README's other two quick-start blocks had the identical bug**
+    the round exists to fix, confirmed by static analysis (not
+    end-to-end, unlike the SNS case): `sink-kafka`/`source-mysql`
+    declare `spring-kafka`/`mysql-connector-j`/`mysql-binlog-connector-java`
+    `compileOnly` — non-transitive by definition — so "Setup MySQL
+    binlog + Kafka" and "Setup completo" produced a runtime classpath
+    with no `KafkaTemplate` class and no MySQL driver at all. Added
+    `spring-boot-starter-kafka`/`spring-boot-starter-amqp`/
+    `spring-cloud-aws-starter-sqs` plus the MySQL driver jars to both
+    blocks, mirroring the verified SNS fix. Flagged as based on solid
+    static analysis (`compileOnly` non-transitivity is a Gradle fact),
+    not an independent live Kafka/MySQL run — that distinction is
+    called out inline in the README itself.
+  * **`RUN_TESTCONTAINERS` wasn't a tracked Gradle task input**
+    (`build.gradle.kts`'s `tasks.withType<Test>` block only called
+    `environment(name, value)`, which Gradle's up-to-date check
+    ignores) — `RUN_TESTCONTAINERS=1 ./gradlew test` right after a
+    plain `./gradlew test` silently returned the cached
+    non-Testcontainers result instead of running the gated suites,
+    unless the caller remembered `--rerun`. Every `RUN_TESTCONTAINERS=1`
+    verification claim earlier in this project's history rode on that
+    silent gap. Fixed with one `inputs.property(...)` line; verified
+    by confirming the task actually executes (not `UP-TO-DATE`) on a
+    second `RUN_TESTCONTAINERS=1` run with no `--rerun`.
+  * KDoc on `cdcOutboxRowChangeSource` now documents a real, narrower
+    residual risk the split introduced: unlike the pre-split code
+    (which resolved the row source via `ObjectProvider` at
+    bean-*creation* time, after every bean definition is already
+    registered), the new `@ConditionalOnBean(RowChangeSource::class)`
+    is evaluated at bean-*definition* time, in auto-configuration
+    processing order. A consumer's `RowChangeSource` must come from a
+    plain `@Configuration`/`@Bean` or `@SpringBootApplication`-scanned
+    component (what every adapter this project ships expects) — one
+    supplied by a third-party auto-configuration with no explicit
+    `@AutoConfigureBefore` could silently lose the race and fall
+    through to the Postgres WAL default with no error, log, or
+    counter.
+  * Example's `README.md` had contradictory prose about whether the
+    starter runs "as its own process" or in-process (it's in-process —
+    the whole point of the demo); the wrong script was credited for
+    the self-verification queue (`01_create_topics.sh` → the actual
+    `02_subscribe_queue.sh`); `MysqlLagProbeConfiguration`'s KDoc
+    claimed a scenario (`:lag-probes` without `:source-mysql`) that
+    `lag-probes`'s own `api(project(":source-mysql"))` dependency makes
+    impossible in practice — corrected to describe the nesting as
+    defensive, not load-bearing.
+
+`./gradlew clean build` (zero exclusions) and
+`RUN_TESTCONTAINERS=1 ./gradlew test` (genuinely re-executing, not
+cached) both green: **256 tests, 0 failures, 0 errors, 0 skipped**.
+
+Not fixed, flagged separately (`spawn_task`, not this round's diff):
+the root `docker-compose.yml`'s LocalStack `:latest` tag now requires
+a paid license token and fails to start (`exit code 55`) — doesn't
+block any real test suite (they all boot their own Testcontainers
+LocalStack, already pinned to `3.8.1`) but breaks the README's manual
+`./gradlew startDockerCompose` workflow. The sample's own
+`docker-compose.yml` pins `3.8.1` and is the intended fix for the root
+file too.
+
+Tech Lead: FAIL → fix → FAIL → fix → PASS. First pass caught: wrong
+Boot-4 FQNs in the `@AutoConfigureAfter` fix (bug 5, BLOCKER — would
+have silently no-op'd for Kafka/RabbitMQ); the `CdcOutboxAutoConfiguration`
+fix half-applied, leaving `:source-postgres`-typed beans unguarded on
+the outer class (MAJOR); no *working* regression test for bugs 1–3
+(MAJOR); README/HISTORY not updated to reflect what the round actually
+found (MAJOR). Second pass, after all four were addressed, caught
+that the bugs-1–3 regression test was itself a no-op (MAJOR — proven
+by mutation, not suspected) plus the sibling README blocks broken by
+the identical defect (MAJOR) and three MINORs (stale test count, an
+untracked Gradle input silently invalidating the round's own
+verification claims, a wrong script name). Third pass, after all six
+were addressed: independently re-verified every one by experiment
+(mutation-tested all 6 `AutoConfigurationClassLoadingTest` assertions
+itself, resolved the README's added Kafka/MySQL/RabbitMQ coordinates
+in a scratch project and confirmed every template/autoconfiguration
+class the starter's conditions look for is actually present on the
+resulting classpath, reproduced the `RUN_TESTCONTAINERS` fix at the
+root level) — zero BLOCKER, zero MAJOR. **PASS**, with three MINOR
+doc-accuracy items (stale test count in two places, a KDoc in
+`examples/spring-boot-postgres-sns/OrderController.kt` still saying
+"process running alongside this app" instead of in-process, a
+verification-claim rounded up in this file) and three NITs (a test's
+name overclaiming its own isolation scope, one more pre-existing
+unguarded-optional-type construction in `cdcOutboxCheckpointStore`
+found in the same file this round already audited, README pinning
+versions a Boot app's own BOM will override) fixed inline rather than
+deferred, given how cheap they were relative to three review cycles.
+
 ## Round 24 — ktlint backlog cleared, hard-coded-port IT fixed, remaining pool config
 
 Closes items 1–5 of the pending-tasks list surfaced after Round 23

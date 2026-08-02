@@ -1,6 +1,6 @@
 // Spring Boot starter — the only module that knows the full surface.
 // Wires the auto-configs that pick up adapters present on the
-// classpath via `@ConditionalOnBean` / `@ConditionalOnClass`. All
+// classpath via `@ConditionalOnBean` / `@ConditionalOnClass`. Most
 // adapter modules are `compileOnly` so consumers can drop the ones
 // they don't use without classpath bloat.
 plugins {
@@ -10,11 +10,18 @@ plugins {
 dependencies {
     api(project(":core"))
 
+    // Not compileOnly like the adapters below: CdcOutboxSinkAutoConfiguration's
+    // cdcOutboxSinkRegistry bean unconditionally builds a
+    // DefaultEventSinkRegistry, regardless of how many sinks end up
+    // wired — the hexagonal (default) chain cannot start without it,
+    // so a consumer who only declares `starter` + `source-postgres` +
+    // `sink-aws` (README's own "Setup mínimo") must get it for free.
+    implementation(project(":sink-composition"))
+
     compileOnly(project(":checkpoint-file"))
     compileOnly(project(":source-postgres"))
     compileOnly(project(":source-mysql"))
     compileOnly(project(":source-stubs"))
-    compileOnly(project(":sink-composition"))
     compileOnly(project(":sink-aws"))
     compileOnly(project(":sink-kafka"))
     compileOnly(project(":sink-rabbitmq"))
@@ -36,6 +43,14 @@ dependencies {
     compileOnly("org.springframework.kafka:spring-kafka:4.0.5")
     compileOnly("org.springframework.amqp:spring-rabbit:4.0.3")
 
+    // Test-only: the real Spring Cloud AWS autoconfiguration classes,
+    // to regression-test that CdcOutboxSinkAutoConfiguration's
+    // @AutoConfigureAfter ordering against them is actually correct —
+    // a fake test double's @AutoConfiguration wouldn't prove anything
+    // about the real SnsAutoConfiguration/SqsAutoConfiguration's own
+    // bean registration timing.
+    testImplementation("io.awspring.cloud:spring-cloud-aws-autoconfigure:4.0.2")
+
     compileOnly("com.mysql:mysql-connector-j:8.4.0")
     compileOnly("com.zendesk:mysql-binlog-connector-java:0.29.2")
     compileOnly("org.springframework.security:spring-security-web:7.0.5")
@@ -46,7 +61,6 @@ dependencies {
     testImplementation(project(":sink-aws"))
     testImplementation(project(":sink-kafka"))
     testImplementation(project(":sink-rabbitmq"))
-    testImplementation(project(":sink-composition"))
     testImplementation(project(":lag-probes"))
     testImplementation(project(":legacy"))
     testImplementation(project(":dlq-replay"))

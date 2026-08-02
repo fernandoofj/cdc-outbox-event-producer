@@ -811,8 +811,17 @@ dependencies {
     implementation("br.com.fltech.outbox:cdc-outbox-spring-boot-starter")
     implementation("br.com.fltech.outbox:cdc-outbox-source-postgres")
     implementation("br.com.fltech.outbox:cdc-outbox-sink-aws")
+
+    // Não é coordenada cdc-outbox-*: o starter só enxerga a classe
+    // SnsTemplate via @ConditionalOnClass; é o Spring Cloud AWS
+    // *starter* (não o `spring-cloud-aws-sns` base) quem de fato
+    // registra o bean SnsTemplate a partir de `spring.cloud.aws.*`.
+    // Sem isso o EventSinkRegistry sobe com zero schemes conhecidos.
+    implementation("io.awspring.cloud:spring-cloud-aws-starter-sns:4.0.2")
 }
 ```
+
+Setup completo e testado (incluindo `docker-compose.yml` + `application.yml`) em [`examples/spring-boot-postgres-sns/`](examples/spring-boot-postgres-sns/).
 
 ### Setup MySQL binlog + Kafka
 
@@ -823,6 +832,19 @@ dependencies {
     implementation("br.com.fltech.outbox:cdc-outbox-source-mysql")
     implementation("br.com.fltech.outbox:cdc-outbox-sink-kafka")
     implementation("br.com.fltech.outbox:cdc-outbox-checkpoint-file")
+
+    // Não são coordenadas cdc-outbox-*, e `source-mysql`/`sink-kafka`
+    // as declaram `compileOnly` (não-transitivo, de propósito — quem
+    // não usa MySQL/Kafka não paga o custo). `spring-boot-starter-kafka`,
+    // não só `spring-kafka`: é o `-starter-` quem registra o bean
+    // KafkaTemplate via KafkaAutoConfiguration a partir de
+    // `spring.kafka.*` — mesmo motivo do `spring-cloud-aws-starter-sns`
+    // no setup mínimo acima. (Levantado por revisão estática — sem
+    // teste end-to-end com Kafka real neste round; o padrão é idêntico
+    // ao caso SNS, que foi verificado de ponta a ponta.)
+    implementation("org.springframework.boot:spring-boot-starter-kafka:4.0.6")
+    implementation("com.mysql:mysql-connector-j:8.4.0")
+    implementation("com.zendesk:mysql-binlog-connector-java:0.29.2")
 }
 ```
 
@@ -837,11 +859,20 @@ dependencies {
     implementation("br.com.fltech.outbox:cdc-outbox-sink-aws")
     implementation("br.com.fltech.outbox:cdc-outbox-sink-kafka")
     implementation("br.com.fltech.outbox:cdc-outbox-sink-rabbitmq")
-    implementation("br.com.fltech.outbox:cdc-outbox-sink-composition")
     implementation("br.com.fltech.outbox:cdc-outbox-checkpoint-file")
     implementation("br.com.fltech.outbox:cdc-outbox-lag-probes")
     implementation("br.com.fltech.outbox:cdc-outbox-dlq-replay")
     implementation("br.com.fltech.outbox:cdc-outbox-replay-source")
+
+    // Templates + autoconfig dos brokers/driver — mesmo motivo do
+    // setup MySQL + Kafka acima; `cdc-outbox-sink-composition` some
+    // desta lista porque entra transitivamente pelo starter (Round 25).
+    implementation("io.awspring.cloud:spring-cloud-aws-starter-sns:4.0.2")
+    implementation("io.awspring.cloud:spring-cloud-aws-starter-sqs:4.0.2")
+    implementation("org.springframework.boot:spring-boot-starter-kafka:4.0.6")
+    implementation("org.springframework.boot:spring-boot-starter-amqp:4.0.6")
+    implementation("com.mysql:mysql-connector-j:8.4.0")
+    implementation("com.zendesk:mysql-binlog-connector-java:0.29.2")
 }
 ```
 
@@ -858,7 +889,7 @@ dependencies {
 | `cdc-outbox-sink-aws` | SNS + SQS |
 | `cdc-outbox-sink-kafka` | Kafka |
 | `cdc-outbox-sink-rabbitmq` | RabbitMQ |
-| `cdc-outbox-sink-composition` | Composite + scheme-router (entra transitivamente quando há ≥2 sinks) |
+| `cdc-outbox-sink-composition` | Composite + scheme-router + `DefaultEventSinkRegistry` — sempre entra transitivamente via `spring-boot-starter` (Round 25: virou `implementation`, não `compileOnly`, porque a chain hexagonal precisa dela mesmo com 1 sink só) |
 | `cdc-outbox-checkpoint-file` | File-backed checkpoint persistido |
 | `cdc-outbox-lag-probes` | Lag gauge + scheduler (Postgres + MySQL) |
 | `cdc-outbox-dlq-replay` | Actuator endpoint `/actuator/cdcOutboxDlq` |
@@ -1055,12 +1086,13 @@ com split hexagonal). Debezium Engine resolve um problema parecido
 | 16 | **Wave 7 — Multi-artifact Maven publish (F1)** | Done (Round 17). Cada um dos 15 módulos Gradle agora é publicado como coordenada Maven própria (`cdc-outbox-<module>`) + 1 BOM (`cdc-outbox-bom`) que pina versões. Consumidor importa o BOM via `platform(...)` e declara só as coordenadas que vai usar — versões vêm do BOM. Coordinate antigo `cdc-outbox-event-producer` foi descontinuado; bump pra `0.1.0` é breaking change explícito. Padrão idêntico ao `spring-boot-dependencies` / `aws-bom` / `spring-cloud-aws-dependencies`. Auto-configs continuam idênticos (`@ConditionalOnClass`) — quem usa o classpath enxuto só ativa adapters que declarou; quem quer modulith declara todas as coordenadas. **Não muda topologia de deploy**: ainda é 1 JVM por consumidor; mudança é só de packaging Maven. | Wave 7 — done |
 | 17 | **Round 18 — Suppress cleanup** | Done (Round 18). Auditoria das 51 `@Suppress` inline; **17 removidas via refactor real** (MaxLineLength → fixture pra resource file; LongMethod → extract helpers; NestedBlockDepth → extract helper; LoopWithTooManyJumpStatements → sealed-class result + `when`; TooGenericExceptionCaught → narrow pra `Exception` + `UncaughtExceptionHandler` em threads-próprias). 37 mantidas como idiomas documentados (ReturnCount guard-clauses, LongParameterList em Spring/Jackson, TooManyFunctions em adapters, MagicNumber em `@ConfigurationProperties`). Zero mudança comportamental, 230 testes verde. | Suppress cleanup — done |
 | 18 | **Round 19 — NF parallel deliveries (NF1+NF4+NF6+NF9)** | Done (Round 19). Quatro entregas "não-funcionais" via 4 worker agents paralelos em git worktrees, mergeados em streaming conforme cada um concluiu. **NF1** GitHub Actions CI (`.github/workflows/ci.yml`): build + detekt + test sweep em push/PR; publish gated em tag `v*` — **desativado no Round 20** (ver linha abaixo), os workflows continuam no repo mas não rodam. **NF4** Mermaid diagrams refresh: 8 diagramas atualizados/adicionados pra refletir Wave 6+7 (15 módulos + BOM). **NF6** Operability bundle: Grafana dashboard (20 panels), AlertManager rules (8 alerts), `CdcOutboxInfoContributor` em `/actuator/info` (com sensitive-data filter exercitado por teste). **NF9** Dependabot config: weekly grouped updates por família (Spring, AWS SDK, Jackson, Testcontainers, Kotlin, Micrometer). Sweep final 233/233/0/0. | NF wave — done |
-| 19 | **Backlog priorizado pós-MVP** | (NF2) Sample consumer app em `examples/` ~3h; (NF5) JMH benchmark suite ~1d; (NF11) Maven Central publish — checklist em `CONTRIBUTING.md` (Round 24), falta conta Sonatype + verificação de domínio + chave GPG, tudo manual; (F4) HA / leader election via `pg_try_advisory_lock` ~2-3d; (F5) partition-based parallelism + AckCoordinator ~2-4d + fault injection; (F12) OpenTelemetry tracing spans poll/publish/ack ~2d; (F10) GraalVM native-image hints ~2d. F11 (Spring Boot 4) **entregue no Round 22** — não é mais bloqueio. **Player de DB/fila novo (F2/F3/F9) está fora deste backlog** por escolha explícita do mantenedor. | open |
+| 19 | **Backlog priorizado pós-MVP** | (NF5) JMH benchmark suite ~1d; (NF11) Maven Central publish — checklist em `CONTRIBUTING.md` (Round 24), falta conta Sonatype + verificação de domínio (`fltech.com.br`) + chave GPG, tudo manual; (F4) HA / leader election via `pg_try_advisory_lock` ~2-3d; (F5) partition-based parallelism + AckCoordinator ~2-4d + fault injection; (F12) OpenTelemetry tracing spans poll/publish/ack ~2d; (F10) GraalVM native-image hints ~2d. F11 (Spring Boot 4) **entregue no Round 22** — não é mais bloqueio. NF2 (sample app) **entregue no Round 25**. **Player de DB/fila novo (F2/F3/F9) está fora deste backlog** por escolha explícita do mantenedor. | open |
 | 20 | **Round 20 — Open-source readiness** | Done. Repo público (`fernandoofj/cdc-outbox-event-producer`): `LICENSE` (MIT) + `CONTRIBUTING.md` + `CODE_OF_CONDUCT.md` + `SECURITY.md`; 53 links mortos em `README.md`/`docs/ARCHITECTURE.md` corrigidos (`src/main/kotlin/...` pré-Wave-6). GitHub Actions desativado repo-wide; branch protection em `main` (bloqueia force-push/deleção, sem PR review obrigatório — preserva o fluxo solo de merge local); topics, Discussions, secret scanning + push protection + Dependabot security updates habilitados; `pull_request_creation_policy` aberta pra `all` (forks externos conseguem abrir PR). Package rename `br.com.fltech.cdc.outbox` → `br.com.fltech.outbox` (`cdc` removido, 15 módulos + BOM). Detalhe completo em `docs/HISTORY.md`. | Open-source readiness — done |
 | 21 | **Round 21 — Dependabot batch** | Done. 9 dos 11 PRs abertos avaliados e testados localmente (build completo antes de cada merge): aws-sdk, testcontainers, kotlin/kapt 2.3.21 + detekt (ktlint plugin segurado em 12.1.1 — bump de 2 majors nunca validado, pioraria um gate já vermelho), micrometer + slf4j, jackson, ben-manes.versions, org.json, HikariCP 7.0.2, GitHub Actions pins. **#2/#3 (Spring Boot 3→4) propositalmente não mergeados neste round** — ver Round 22. Achados corrigidos: bug no PR do Kotlin (kapt bumpado, `kotlin("jvm")` esquecido — corrigido + migração pra DSL `compilerOptions`); K2 mudando annotation-default-target silenciosamente nos DTOs do wal2json/DLQ (pinado `-Xannotation-default-target=first-only`); HikariCP 7 ligando keepalive por default (2min) onde antes era desligado — `PoolConfig.keepaliveTime` agora explícito. Version bump `0.1.0` → `0.2.0` (breaking: group mudou + Kotlin/Micrometer à frente do que Spring Boot 3.3.5 resolveria sozinho). Validado com as 5 suítes Testcontainers reais (`RUN_TESTCONTAINERS=1`), não só testes unitários mockados. Detalhe completo em `docs/HISTORY.md`. | Dependency batch — done |
 | 22 | **Round 22 — Spring Boot 4 migration** | Done. #2/#3 do Round 21 (Spring Boot 3.3.5 → 4.0.6, Spring Framework 7, spring-kafka 4, spring-rabbit 4, spring-cloud-aws 4) mergeados após confirmar que o bloqueio externo do F11 (SCA 4 GA) parece resolvido. **JVM baseline 17 → 21** (baseline mínimo do próprio Boot 4) — quebra consumidores em JRE 17, confirmado explicitamente antes de aplicar. `HealthIndicator` mudou de módulo inteiro (`spring-boot-actuator` → novo `spring-boot-health`, pacote `org.springframework.boot.health.contributor`) — 8 arquivos atualizados. `spring-amqp` 4.x quebrou a sintaxe de propriedade Kotlin de `MessageProperties` (nullability JSpecify divergente entre getter/setter) — trocado por chamadas de setter explícitas. Version bump `0.2.0` → `0.3.0`, a maior mudança quebrando compatibilidade até agora. Validado com build completo + as 5 suítes Testcontainers reais, incluindo as 2 que carregam o contexto Spring completo (`MysqlRabbitMqE2EIT`, `PostgresSnsE2EIT`). Detalhe completo em `docs/HISTORY.md`. | Spring Boot 4 — done |
 | 23 | **Round 23 — Backlog polish** | Done (5 de 6 itens; limpeza de branches locais ficou pendente — ver `docs/HISTORY.md`). Itens MINOR/NIT adiados nos Rounds 21–22 fechados: `PoolConfig.keepaliveTime` exposto via `cdc.outbox.pool.keepalive-time` (documentado no README/ARCHITECTURE.md; 1 teste novo verifica via reflection que o valor chega no `PoolConfig` real do `HikariCPConnectionProvider`, não só no binding de properties); `JsonHelper` movido de `core` pra `:legacy` (único chamador, marcado `internal`) — `core` não expõe mais `org.json`; checagem de anônimo nos endpoints de replay/DLQ trocada de `javaClass.simpleName == "..."` pra `is AnonymousAuthenticationToken` (type-safe, comportamento idêntico — os 5 testes de cada endpoint continuam verdes); `spring-security-test:7.0.5` não-usado removido de `dlq-replay`; ordem das linhas do Roadmap corrigida (12/19 tinham ido parar no fim da tabela). Validado com build completo (ktlint + as 2 ITs de `:legacy` que precisam de Postgres local excluídas, como nos Rounds 21–22) + as 5 suítes Testcontainers reais. Detalhe completo em `docs/HISTORY.md`. | Backlog polish — done |
 | 24 | **Round 24 — ktlint backlog + hard-coded-port ITs** | Done. `ktlintCheck` zerado nos 15 módulos (débito que vinha desde antes do Round 21) — `.editorconfig` adicionado (`max_line_length=120`) porque ktlint e detekt discordavam no limite de linha e ficavam desfazendo a correção um do outro. `PostgresConnectorIT`/`SlotReaderMessageProducerIT` paravam de rodar sempre que outra coisa ocupava a porta 5432 local — agora sobem seu próprio Postgres via Testcontainers e ganharam o gate `RUN_TESTCONTAINERS=1` que toda outra IT do projeto já tinha. `PoolConfig.autoCommit` exposto via `cdc.outbox.pool.auto-commit`, mesmo rigor de teste do `keepaliveTime`. `./gradlew clean build` **sem nenhuma exclusão** é verde pela primeira vez. Maven Central (NF11) documentado em checklist no `CONTRIBUTING.md`, não implementado — depende de conta Sonatype + verificação de domínio que só o mantenedor pode fazer. Detalhe completo em `docs/HISTORY.md`. | ktlint + IT fix — done |
+| 25 | **Round 25 — sample app (NF2) + 5 bugs reais no starter** | Done. `POSTGRES_PORT` deduplicado (3 arquivos) via `PostgreSQLContainer.POSTGRESQL_PORT`; branch morta `ALREADY_EXISTS_SQL_STATE` removida de `IntegrationBase`; domínio Maven Central corrigido pra `fltech.com.br`. **NF2**: sample standalone em `examples/spring-boot-postgres-sns/` (Postgres → SNS, consome coordenadas Maven via `mavenLocal()`, não `project(...)`) — rodá-lo de ponta a ponta (não só compilar) achou **5 bugs reais no `spring-boot-starter`** que quebravam o próprio "Setup mínimo" do README: (1) `CdcOutboxHexagonalAutoConfiguration` tinha um bean tipado em `DeadLetterSink` (`:legacy`) direto na classe externa — `Class.getDeclaredMethods()` derruba a introspecção da classe inteira quando o tipo referenciado não existe no classpath, não só a condição daquele bean; isolado num `@Configuration` aninhado com `@ConditionalOnClass`. (2) mesmo padrão nos beans de lag-probe (`:lag-probes`/`:source-mysql`), também isolados. (3) **o mais grave**: `CdcOutboxAutoConfiguration` inteira era gateada por `@ConditionalOnClass(SlotReaderMessageProducer::class)` (tipo só de `:legacy`) — mas produzia beans (`PostgresConfiguration`, `ConnectionProvider`, etc.) que a chain hexagonal (default!) também precisa; a chain default não subia sem o módulo legado, deprecado. Gate removido da classe externa; beans legado-específicos isolados num `LegacyProducerConfiguration` aninhado; os beans de `:source-postgres` isolados num `PostgresConnectionConfiguration` aninhado (mesmo padrão, terceira ocorrência); `CdcOutboxHexagonalAutoConfiguration.cdcOutboxSource` também dividido em dois beans pra funcionar sem `:source-postgres` (setup MySQL-only). (4) `cdc-outbox-sink-composition` era `compileOnly` no starter mas `DefaultEventSinkRegistry` é exigida incondicionalmente pela chain hexagonal — virou `implementation`. (5) `CdcOutboxSinkAutoConfiguration` não tinha `@AutoConfigureAfter` contra as auto-configs dos brokers (Spring Cloud AWS, Kafka, RabbitMQ) — `@ConditionalOnBean(SnsTemplate::class)` era avaliado antes do Spring Cloud AWS registrar o bean, então nenhum sink jamais conectava (`EventSinkRegistry` sempre com zero schemes). Corrigido com `@AutoConfigureAfter(name = [...])`; a primeira tentativa usou FQNs do Boot 3 (`org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration`), que não existem no Boot 4 — Tech Lead pegou antes do merge; FQNs corretos confirmados via `javap` nos jars reais do Boot 4 (`org.springframework.boot.kafka.autoconfigure.KafkaAutoConfiguration`, `org.springframework.boot.amqp.autoconfigure.RabbitAutoConfiguration`). Validado end-to-end de verdade: `POST /orders` → insert JPA + `pg_logical_emit_message` numa transação → slot lido pelo mesmo processo → `AWS sns.Publish => 200` no LocalStack → mensagem confirmada numa fila SQS assinada ao tópico. Regressão coberta por `SinkAutoConfigurationOrderingTest` (achado 5, contra as autoconfigs reais do Spring Cloud AWS), `OptionalModuleAbsentTest` (correção de wiring via `ApplicationContextRunner` + `FilteredClassLoader`) e `AutoConfigurationClassLoadingTest` (achados 1–3, via `URLClassLoader` isolado sobre um classpath reduzido — `FilteredClassLoader` intercepta só lookups explícitos tipo `@ConditionalOnClass`, não o `getDeclaredMethods()` cru que causa o crash real; a revisão do Tech Lead pegou essa lacuna de cobertura antes do merge). Cada teste verificado falhando sem o fix e passando com ele. `./gradlew clean build` sem exclusões + `RUN_TESTCONTAINERS=1 ./gradlew test` (sem `--rerun` — a env var virou input rastreado da task `Test`) verdes (256 testes, 0 falhas, 0 skipped). Detalhe completo em `docs/HISTORY.md`. | Sample app + starter fixes — done |
 
 Wave boundaries are deliberate so each wave merges to `main`
 independently and the library stays usable in between.
