@@ -31,10 +31,10 @@ dependencies {
     compileOnly("org.springframework.boot:spring-boot-health:4.0.6")
     kapt("org.springframework.boot:spring-boot-configuration-processor:4.0.6")
 
-    compileOnly("io.awspring.cloud:spring-cloud-aws-sns:4.0.2")
-    compileOnly("io.awspring.cloud:spring-cloud-aws-sqs:4.0.2")
-    compileOnly("org.springframework.kafka:spring-kafka:4.0.5")
-    compileOnly("org.springframework.amqp:spring-rabbit:4.0.3")
+    compileOnly("io.awspring.cloud:spring-cloud-aws-sns:4.1.0")
+    compileOnly("io.awspring.cloud:spring-cloud-aws-sqs:4.1.0")
+    compileOnly("org.springframework.kafka:spring-kafka:4.1.0")
+    compileOnly("org.springframework.amqp:spring-rabbit:4.1.0")
 
     compileOnly("com.mysql:mysql-connector-j:8.4.0")
     compileOnly("com.zendesk:mysql-binlog-connector-java:0.29.2")
