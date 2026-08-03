@@ -8,10 +8,10 @@ dependencies {
     api(project(":source-postgres"))
     api(project(":sink-aws"))
     implementation("org.json:json:20251224")
-    compileOnly("io.awspring.cloud:spring-cloud-aws-sns:4.0.2")
-    compileOnly("io.awspring.cloud:spring-cloud-aws-sqs:4.0.2")
+    compileOnly("io.awspring.cloud:spring-cloud-aws-sns:4.1.0")
+    compileOnly("io.awspring.cloud:spring-cloud-aws-sqs:4.1.0")
 
-    testImplementation("io.awspring.cloud:spring-cloud-aws-sns:4.0.2")
-    testImplementation("io.awspring.cloud:spring-cloud-aws-sqs:4.0.2")
+    testImplementation("io.awspring.cloud:spring-cloud-aws-sns:4.1.0")
+    testImplementation("io.awspring.cloud:spring-cloud-aws-sqs:4.1.0")
     testImplementation(project(":test-support"))
 }
