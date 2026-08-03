@@ -136,7 +136,7 @@ subprojects {
 
     dependencies {
         "testImplementation"(kotlin("test"))
-        "testImplementation"("io.mockk:mockk:1.13.13")
+        "testImplementation"("io.mockk:mockk:1.14.11")
         "testRuntimeOnly"("org.slf4j:slf4j-simple:2.0.18")
     }
 
