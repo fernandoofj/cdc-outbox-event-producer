@@ -13,8 +13,8 @@ plugins {
     // others; see docs/HISTORY.md); the 14.x engine adds ~19% more findings
     // across more modules and was never actually run before this bump would
     // have landed. Re-evaluate once the existing ktlint debt is cleaned up.
-    id("org.jlleitschuh.gradle.ktlint") version "12.1.1" apply false
-    id("org.jetbrains.kotlin.kapt") version "2.3.21" apply false
+    id("org.jlleitschuh.gradle.ktlint") version "14.2.0" apply false
+    id("org.jetbrains.kotlin.kapt") version "2.4.10" apply false
     id("org.sonarqube") version "5.1.0.4882"
     id("com.github.ben-manes.versions") version "0.54.0"
     id("com.gorylenko.gradle-git-properties") version "2.4.2" apply false
