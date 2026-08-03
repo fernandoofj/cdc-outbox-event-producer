@@ -9,6 +9,6 @@
 dependencies {
     api("org.slf4j:slf4j-api:2.0.18")
     api("io.micrometer:micrometer-core:1.16.5")
-    api("com.fasterxml.jackson.module:jackson-module-kotlin:2.21.3")
-    api("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.21.3")
+    api("com.fasterxml.jackson.module:jackson-module-kotlin:2.22.1")
+    api("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.22.1")
 }

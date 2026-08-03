@@ -18,7 +18,7 @@ dependencies {
     api(project(":core"))
 
     implementation("software.amazon.awssdk:sqs:2.44.7")
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.21.3")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.22.1")
 
     compileOnly("org.springframework.boot:spring-boot-actuator:4.0.6")
     compileOnly("org.springframework.boot:spring-boot-autoconfigure:4.0.6")
