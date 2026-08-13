@@ -2292,18 +2292,18 @@ Tech Lead: PASS (commit `c1d1d45`).
     NIT checklist).
   * `README.md` row 7 added: configurable table / field mapping
     (Wave 3.5).
-  * Completed the `shop.inventa.pg2sns4k` → `br.com.fltech.cdc.outbox.publisher`
+  * Completed the legacy package → `br.com.fltech.cdc.outbox.publisher`
     package rewrite that round 2 had left half-applied.
 
 (commit `561cc71`)
 
 ## Round 2 — Package rename
 
-`shop.inventa.pg2sns4k` → `br.com.fltech.cdc.outbox.publisher`; Maven
+Legacy package → `br.com.fltech.cdc.outbox.publisher`; Maven
 `group` aligned. (commit `25dcf78`)
 
 ## Round 1 — Rebrand + GitHub
 
-Fork from `inventa-shop/kotlin-postgres-cdc-to-sns-module` set up as a
-private repo `fernandoofj/cdc-outbox-event-producer`. README rewritten
+Fork from an archived public repository, set up as a private repo
+`fernandoofj/cdc-outbox-event-producer`. README rewritten
 top to bottom. (commit `4fb8819`)

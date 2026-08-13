@@ -3,10 +3,9 @@
 ![Dependabot](https://img.shields.io/badge/dependabot-active-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-> **Status:** repositório revivido a partir do arquivo público
-> [`inventa-shop/kotlin-postgres-cdc-to-sns-module`](https://github.com/inventa-shop/kotlin-postgres-cdc-to-sns-module)
-> (último commit Fev/2024) e republicado privadamente para evoluir o
-> desenho. A partir da Onda 3 o projeto se reorganizou em hexagonal e
+> **Status:** repositório revivido a partir de um projeto público
+> arquivado (último commit Fev/2024) e republicado privadamente para
+> evoluir o desenho. A partir da Onda 3 o projeto se reorganizou em hexagonal e
 > ganhou suporte a múltiplas origens (Postgres / MySQL) e múltiplos
 > brokers (SNS / SQS / Kafka / RabbitMQ).
 
