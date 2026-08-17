@@ -26,6 +26,6 @@ dependencies {
     api("io.awspring.cloud:spring-cloud-aws-sns:4.0.2")
     api("io.awspring.cloud:spring-cloud-aws-sqs:4.0.2")
     api("org.springframework.amqp:spring-rabbit:4.0.3")
-    api("org.springframework.boot:spring-boot-autoconfigure:4.0.6")
-    api("org.springframework.boot:spring-boot-test:4.0.6")
+    api("org.springframework.boot:spring-boot-autoconfigure:4.1.0")
+    api("org.springframework.boot:spring-boot-test:4.1.0")
 }

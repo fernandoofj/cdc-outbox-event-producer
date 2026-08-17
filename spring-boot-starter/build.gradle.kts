@@ -30,13 +30,13 @@ dependencies {
     compileOnly(project(":dlq-replay"))
     compileOnly(project(":replay-source"))
 
-    compileOnly("org.springframework.boot:spring-boot-autoconfigure:4.0.6")
-    compileOnly("org.springframework.boot:spring-boot-actuator:4.0.6")
-    compileOnly("org.springframework.boot:spring-boot-actuator-autoconfigure:4.0.6")
+    compileOnly("org.springframework.boot:spring-boot-autoconfigure:4.1.0")
+    compileOnly("org.springframework.boot:spring-boot-actuator:4.1.0")
+    compileOnly("org.springframework.boot:spring-boot-actuator-autoconfigure:4.1.0")
     // Boot 4 extracted Health from spring-boot-actuator into its own
     // module; HealthIndicator now lives under org.springframework.boot.health.contributor.
-    compileOnly("org.springframework.boot:spring-boot-health:4.0.6")
-    kapt("org.springframework.boot:spring-boot-configuration-processor:4.0.6")
+    compileOnly("org.springframework.boot:spring-boot-health:4.1.0")
+    kapt("org.springframework.boot:spring-boot-configuration-processor:4.1.0")
 
     compileOnly("io.awspring.cloud:spring-cloud-aws-sns:4.0.2")
     compileOnly("io.awspring.cloud:spring-cloud-aws-sqs:4.0.2")
@@ -67,12 +67,12 @@ dependencies {
     testImplementation(project(":replay-source"))
     testImplementation(project(":test-support"))
 
-    testImplementation("org.springframework.boot:spring-boot-autoconfigure:4.0.6")
-    testImplementation("org.springframework.boot:spring-boot-actuator:4.0.6")
-    testImplementation("org.springframework.boot:spring-boot-actuator-autoconfigure:4.0.6")
-    testImplementation("org.springframework.boot:spring-boot-health:4.0.6")
-    testImplementation("org.springframework.boot:spring-boot-test:4.0.6")
-    testImplementation("org.springframework.boot:spring-boot-test-autoconfigure:4.0.6")
+    testImplementation("org.springframework.boot:spring-boot-autoconfigure:4.1.0")
+    testImplementation("org.springframework.boot:spring-boot-actuator:4.1.0")
+    testImplementation("org.springframework.boot:spring-boot-actuator-autoconfigure:4.1.0")
+    testImplementation("org.springframework.boot:spring-boot-health:4.1.0")
+    testImplementation("org.springframework.boot:spring-boot-test:4.1.0")
+    testImplementation("org.springframework.boot:spring-boot-test-autoconfigure:4.1.0")
     testImplementation("org.assertj:assertj-core:3.25.3")
     testImplementation("com.zaxxer:HikariCP:7.0.2")
     testImplementation("io.micrometer:micrometer-test:1.16.5")
