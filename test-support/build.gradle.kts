@@ -12,12 +12,12 @@ dependencies {
     api(project(":checkpoint-file"))
 
     api("org.junit.jupiter:junit-jupiter:5.10.3")
-    api("org.testcontainers:testcontainers:1.21.4")
-    api("org.testcontainers:junit-jupiter:1.21.4")
-    api("org.testcontainers:postgresql:1.21.4")
-    api("org.testcontainers:localstack:1.21.4")
-    api("org.testcontainers:mysql:1.21.4")
-    api("org.testcontainers:rabbitmq:1.21.4")
+    api("org.testcontainers:testcontainers:2.0.5")
+    api("org.testcontainers:junit-jupiter:2.0.5")
+    api("org.testcontainers:postgresql:2.0.5")
+    api("org.testcontainers:localstack:2.0.5")
+    api("org.testcontainers:mysql:2.0.5")
+    api("org.testcontainers:rabbitmq:2.0.5")
     api("org.awaitility:awaitility:4.2.2")
 
     api("com.mysql:mysql-connector-j:8.4.0")
